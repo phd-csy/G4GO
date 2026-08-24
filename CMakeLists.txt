@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(CLI11)
 FetchContent_Declare(
     optix_dev
     GIT_REPOSITORY https://github.com/NVIDIA/optix-dev.git
-    GIT_TAG main
+    GIT_TAG v9.1.0
     GIT_SHALLOW TRUE
 )
 
