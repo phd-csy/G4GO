@@ -1,6 +1,6 @@
 # G4GO
 
-G4GO 是一个以 Geant4 为物理基线、支持 CPU 参考传输和 CUDA/OptiX 光学传输的 MVP 工程。当前 optical backend 使用统一的 photon/event bridge，保持原有 `cellHit` 和 `pulse` ROOT ntuple 接口。
+G4GO 是一个以 Geant4 为物理基线、支持 CPU 参考传输和 CUDA/OptiX 光学传输的 MVP 工程。当前 optical backend 使用统一的 photon/event bridge，输出 `CrystalHit` 和 `pulse` ROOT ntuple。
 
 ## 构建
 
@@ -16,7 +16,9 @@ ctest --test-dir build --output-on-failure
 
 配置阶段会自动检查 CUDA compiler、CUDA Toolkit、`bin2c` 和 vendored OptiX headers。依赖完整时，`build/g4go` 包含 OptiX 和 CPU 两套 optical transport；依赖缺失时，CMake 保留 CPU backend 并继续完成构建。
 
-配置或构建后，`scripts/` 中的所有 `.mac` 宏会平铺复制到 `build/` 根目录，不会生成 `build/scripts/` 子目录。
+配置后，`scripts/` 中的所有 `.mac` 宏会以普通文件形式复制到 `build/` 根目录，不会生成 `build/scripts/` 子目录。宏文件通过 `configure_file()` 纳入 CMake 的配置依赖；保存宏后执行构建目标时，构建系统会自动重新运行 CMake，并将最新内容复制到 `build/`。
+
+每个宏的 ROOT 输出文件名都使用对应宏文件名去掉 `.mac` 后的名称，例如 `run_smoke.mac` 输出 `run_smoke.root`。
 
 可以显式关闭 OptiX：
 
@@ -103,7 +105,7 @@ OptiX backend 将 device program 编译为 OptiX IR，使用 custom primitive AA
 ```bash
 cmake --build build --target g4go-format-check
 ctest --test-dir build --output-on-failure
-rootls -t build/smoke.root
+rootls -t build/run_smoke.root
 ```
 
 `build/run_optical_smoke.mac` 使用一个从 core 内部发射的 deterministic optical photon，适合验证初始化、capture、transport、SensorHC 和 ROOT 输出。`build/run_smoke.mac` 保留一个 gamma event 的源链路 smoke，gamma 是否发生能量沉积由 Geant4 随机过程决定；`build/run_regression.mac` 保留原有 1000 event 基线。

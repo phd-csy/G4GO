@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(G4GO LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 20)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
@@ -239,7 +241,16 @@ set(G4GO_SCRIPT_DIR ${PROJECT_SOURCE_DIR}/scripts)
 file(GLOB G4GO_MACRO_FILES CONFIGURE_DEPENDS
     ${G4GO_SCRIPT_DIR}/*.mac
 )
-file(COPY ${G4GO_MACRO_FILES} DESTINATION ${PROJECT_BINARY_DIR})
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${G4GO_MACRO_FILES}
+)
+
+foreach(macroFile IN LISTS G4GO_MACRO_FILES)
+    get_filename_component(macroName "${macroFile}" NAME)
+    set(macroOutput "${PROJECT_BINARY_DIR}/${macroName}")
+    configure_file("${macroFile}" "${macroOutput}" COPYONLY)
+endforeach()
 
 if(G4GO_ENABLE_FORMAT_TARGETS)
     find_program(G4GO_CLANG_FORMAT_EXECUTABLE NAMES clang-format)

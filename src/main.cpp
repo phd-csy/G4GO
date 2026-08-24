@@ -26,7 +26,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace {
@@ -38,34 +37,17 @@ struct CommandLineOptions {
     bool help{};
 };
 
-auto ParseBackend(std::string_view value) -> G4GO::Optical::Backend {
-    if (value == "auto") {
-        return G4GO::Optical::Backend::Auto;
-    }
-    if (value == "geant4") {
-        return G4GO::Optical::Backend::Geant4;
-    }
-    if (value == "capture") {
-        return G4GO::Optical::Backend::Capture;
-    }
-    if (value == "cpu") {
-        return G4GO::Optical::Backend::Cpu;
-    }
-    if (value == "optix") {
-        return G4GO::Optical::Backend::Optix;
-    }
-    throw std::invalid_argument("invalid value for --backend: " +
-                                std::string(value));
-}
+} // namespace
 
-auto ConfigureArguments(
-    CLI::App& app,
-    CommandLineOptions& options,
-    std::string& backendName,
-    std::string& macroFile) -> void {
+auto main(int argc, char** argv) -> int {
+    CLI::App app{"G4GO optical photon simulation", argv[0]};
+    CommandLineOptions options{};
+    std::string backendName{
+        G4GO::Optical::BackendName(options.transportConfig.fBackend)};
+    std::string macroFile{};
+
     app.set_help_flag("");
     app.add_flag("-h,--help", options.help, "Print this help message");
-
     app.add_option(
            "--backend", backendName, "Optical photon transport backend")
         ->check(CLI::IsMember({"auto", "geant4", "capture", "cpu", "optix"}))
@@ -90,52 +72,45 @@ auto ConfigureArguments(
         ->capture_default_str();
     app.add_option("macro", macroFile, "Geant4 macro file")
         ->expected(0, 1);
-}
 
-auto ParseArguments(CLI::App& app, int argc, char** argv)
-    -> CommandLineOptions {
-    CommandLineOptions options{};
-    auto backendName{
-        std::string{G4GO::Optical::BackendName(options.transportConfig.fBackend)}};
-    std::string macroFile{};
-
-    ConfigureArguments(app, options, backendName, macroFile);
-    app.parse(argc, argv);
-
-    options.transportConfig.fBackend = ParseBackend(backendName);
-    if (!macroFile.empty()) {
-        options.macroFile = std::move(macroFile);
-    }
-
-    if (options.transportConfig.fBackend != G4GO::Optical::Backend::Geant4 &&
-        options.threads > 1) {
-        throw std::invalid_argument(
-            "auto, capture, cpu and optix backends require one Geant4 worker");
-    }
-    return options;
-}
-
-auto PrintUsage(const CLI::App& app) -> void {
-    G4cout << app.help() << G4endl;
-}
-
-} // namespace
-
-auto main(int argc, char** argv) -> int {
-    CLI::App app{"G4GO optical photon simulation", argv[0]};
-    CommandLineOptions options{};
     try {
-        options = ParseArguments(app, argc, argv);
+        app.parse(argc, argv);
+
+        if (backendName == "auto") {
+            options.transportConfig.fBackend = G4GO::Optical::Backend::Auto;
+        } else if (backendName == "geant4") {
+            options.transportConfig.fBackend = G4GO::Optical::Backend::Geant4;
+        } else if (backendName == "capture") {
+            options.transportConfig.fBackend = G4GO::Optical::Backend::Capture;
+        } else if (backendName == "cpu") {
+            options.transportConfig.fBackend = G4GO::Optical::Backend::Cpu;
+        } else if (backendName == "optix") {
+            options.transportConfig.fBackend = G4GO::Optical::Backend::Optix;
+        } else {
+            throw std::invalid_argument(
+                "invalid value for --backend: " + backendName);
+        }
+
+        if (!macroFile.empty()) {
+            options.macroFile = std::move(macroFile);
+        }
+
+        if (options.transportConfig.fBackend !=
+                G4GO::Optical::Backend::Geant4 &&
+            options.threads > 1) {
+            throw std::invalid_argument(
+                "auto, capture, cpu and optix backends require one Geant4 worker");
+        }
     } catch (const CLI::ParseError& error) {
         return app.exit(error);
     } catch (const std::exception& exception) {
         G4cerr << "[g4go] " << exception.what() << G4endl;
-        PrintUsage(app);
+        G4cout << app.help() << G4endl;
         return 1;
     }
 
     if (options.help) {
-        PrintUsage(app);
+        G4cout << app.help() << G4endl;
         return 0;
     }
 
@@ -151,7 +126,7 @@ auto main(int argc, char** argv) -> int {
     }
 #else
     if (!options.macroFile) {
-        PrintUsage(app);
+        G4cout << app.help() << G4endl;
         delete timer;
         return 1;
     }
