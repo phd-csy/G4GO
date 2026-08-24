@@ -2,7 +2,6 @@
 
 #include "G4OpticalPhoton.hh"
 #include "G4Step.hh"
-#include "G4VTouchable.hh"
 #include "g4go/detector/SensorHit.hpp"
 
 namespace G4GO::Detector {

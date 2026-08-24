@@ -19,6 +19,9 @@
 
 namespace G4GO::Detector {
 
+DetectorConstruction::DetectorConstruction() :
+    fCheckOverlap{false} {}
+
 auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     const auto nist{G4NistManager::Instance()};
 
@@ -110,7 +113,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
             nullptr,
             false,
             0,
-            true)};
+            fCheckOverlap)};
 
     const auto coupleThickness{0.1 * mm};
     const auto windowThickness{1 * mm};
@@ -129,7 +132,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
         logicalWorld,
         false,
         0,
-        true);
+        fCheckOverlap);
 
     const auto solidWindow{
         new G4Box(
@@ -145,11 +148,11 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
         logicalWorld,
         false,
         0,
-        true);
+        fCheckOverlap);
 
     const auto solidCrystal{new G4Box("Crystal", crystalWidth / 2, crystalWidth / 2, crystalLength / 2)};
     const auto logicalCrystal{new G4LogicalVolume(solidCrystal, cesiumIodide, "Crystal")};
-    const auto physicalCrystal{new G4PVPlacement(G4Transform3D{}, logicalCrystal, "Crystal", logicalWorld, false, 0, true)};
+    const auto physicalCrystal{new G4PVPlacement(G4Transform3D{}, logicalCrystal, "Crystal", logicalWorld, false, 0, fCheckOverlap)};
 
     const auto solidSiPM{new G4Box("SiPM", sipmWidth / 2, sipmWidth / 2, sipmThickness / 2)};
     const auto logicalSiPM{new G4LogicalVolume(solidSiPM, silicon, "SiPM")};
@@ -167,7 +170,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
                 logicalWorld,
                 false,
                 i * sipmArraySize + j,
-                true);
+                fCheckOverlap);
         }
     }
 
@@ -177,13 +180,6 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     const auto reflectorSurface{new G4OpticalSurface("Reflector", unified, polished, dielectric_metal)};
     new G4LogicalBorderSurface("ReflectorSurface", physicalCrystal, physicalWorld, reflectorSurface);
     reflectorSurface->SetMaterialPropertiesTable(reflectorSurfacePropertiesTable);
-
-    // const auto couplerSurfacePropertiesTable{new G4MaterialPropertiesTable};
-    // couplerSurfacePropertiesTable->AddProperty("TRANSMITTANCE", {minPhotonEnergy, maxPhotonEnergy}, {1., 1.});
-
-    // const auto couplerSurface = new G4OpticalSurface("coupler", unified, polished, dielectric_dielectric);
-    // new G4LogicalBorderSurface("couplerSurface", physicalCrystal, physicalCouple, couplerSurface);
-    // couplerSurface->SetMaterialPropertiesTable(couplerSurfacePropertiesTable);
 
     const auto coatingSurfacePropertiesTable{new G4MaterialPropertiesTable};
     coatingSurfacePropertiesTable->AddProperty("REFLECTIVITY", {minPhotonEnergy, maxPhotonEnergy}, {0., 0.});
@@ -200,7 +196,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     cathodeSurface->SetMaterialPropertiesTable(cathodeSurfacePropertiesTable);
     new G4LogicalSkinSurface("cathodeSkinSurface", logicalSiPM, cathodeSurface);
 
-    ++cellNumber;
+    ++moduleID;
 
     return physicalWorld;
 }

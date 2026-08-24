@@ -3,7 +3,6 @@
 #include "G4OpticalPhoton.hh"
 #include "G4RunManager.hh"
 #include "G4Step.hh"
-#include "G4VTouchable.hh"
 #include "g4go/detector/DetectorConstruction.hpp"
 #include "g4go/detector/ScintillatorHit.hpp"
 
@@ -18,14 +17,14 @@ auto ScintillatorSD::Initialize(G4HCofThisEvent* hcOfThisEvent) -> void {
     const auto* detectorConstruction{
         static_cast<const DetectorConstruction*>(
             G4RunManager::GetRunManager()->GetUserDetectorConstruction())};
-    const auto cellNumberTotal{detectorConstruction->GetCellNumber()};
+    const auto moduleID{detectorConstruction->ModuleID()};
 
     hc = new ScintillatorHC(SensitiveDetectorName, collectionName[0]);
     if (hcID < 0) {
         hcID = GetCollectionID(0);
     }
     hcOfThisEvent->AddHitsCollection(hcID, hc);
-    for (auto i{0}; i < cellNumberTotal; ++i) {
+    for (auto i{0}; i < moduleID; ++i) {
         hc->insert(new ScintillatorHit());
     }
 }

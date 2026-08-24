@@ -45,12 +45,12 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
 
     auto analysisManager{G4AnalysisManager::Instance()};
 
-    const auto cellNumberTotal{static_cast<const G4GO::Detector::DetectorConstruction*>(
+    const auto moduleID{static_cast<const G4GO::Detector::DetectorConstruction*>(
                                    G4RunManager::GetRunManager()->GetUserDetectorConstruction())
-                                   ->GetCellNumber()};
+                                   ->ModuleID()};
     auto eventID{event->GetEventID()};
 
-    for (auto i{0}; i < cellNumberTotal; i++) {
+    for (auto i{0}; i < moduleID; i++) {
 
         auto energyDeposit{(*scintHC)[i]->GetEnergyDeposit()};
 
