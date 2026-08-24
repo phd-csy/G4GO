@@ -6,10 +6,10 @@
 
 /gps/particle gamma
 /gps/ene/mono 0.511 MeV
-/gps/pos/centre 0. 0. -20. cm
+/gps/pos/centre 0 0 -10 cm
 /gps/direction 0 0 1
 
-/analysis/setFileName mono
+/analysis/setFileName source_beam
 
 /run/printProgress 1000
 /run/beamOn 10000

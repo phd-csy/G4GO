@@ -22,7 +22,7 @@
 /gps/ene/mono 0.
 /gps/pos/centre 0. 0. -5. cm
 
-/analysis/setFileName source
+/analysis/setFileName source_default
 
 /run/printProgress 10000
 /run/beamOn 1000000

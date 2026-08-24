@@ -19,7 +19,7 @@
 /gps/ion 19 40
 /gps/pos/centre 0. 0. -5. cm
 
-/analysis/setFileName bkg
+/analysis/setFileName source_background
 
 /run/printProgress 10000
 /run/beamOn 1000000

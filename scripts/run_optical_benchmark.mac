@@ -6,5 +6,5 @@
 /gps/direction 0 0 1
 /gps/polarization 1 0 0
 
-/analysis/setFileName optical_benchmark
+/analysis/setFileName run_optical_benchmark
 /run/beamOn 1000

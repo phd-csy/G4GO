@@ -12,5 +12,5 @@
 /gps/direction 0 0 1
 /gps/polarization 1 0 0
 
-/analysis/setFileName optical_smoke
+/analysis/setFileName run_optical_smoke
 /run/beamOn 1

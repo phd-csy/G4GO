@@ -22,10 +22,10 @@ RunAction::RunAction(
     }
 #endif
 
-    analysisManager->CreateNtuple("cellHit", "result");
+    analysisManager->CreateNtuple("CrystalHit", "result");
     analysisManager->CreateNtupleIColumn("cellID");
-    analysisManager->CreateNtupleDColumn("energyDeposit");
-    analysisManager->CreateNtupleIColumn("nPhotons");
+    analysisManager->CreateNtupleDColumn("Edep");
+    analysisManager->CreateNtupleIColumn("nOptPho");
     analysisManager->FinishNtuple();
 
     analysisManager->CreateNtuple("pulse", "result");

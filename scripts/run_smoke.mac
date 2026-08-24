@@ -10,5 +10,5 @@
 /gps/pos/centre 0. 0. -20. cm
 /gps/direction 0 0 1
 
-/analysis/setFileName smoke
+/analysis/setFileName run_smoke
 /run/beamOn 1

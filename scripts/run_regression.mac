@@ -10,7 +10,7 @@
 /gps/pos/centre 0. 0. -20. cm
 /gps/direction 0 0 1
 
-/analysis/setFileName test
+/analysis/setFileName run_regression
 
 /run/printProgress 100
 /run/beamOn 1000

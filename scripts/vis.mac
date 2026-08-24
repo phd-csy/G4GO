@@ -9,35 +9,56 @@
 
 /gps/particle e+
 /gps/ene/mono 5 MeV
-/gps/pos/centre 0. 10. 0. cm
-/gps/direction 0 -1 0
+/gps/pos/centre 0 0 -10 cm
+/gps/direction 0 0 1
 
 /analysis/setFileName vis
-
-/run/beamOn 1
 
 #############################################################################
 # Visualization settings
 #############################################################################
 
-/vis/open OGL
+/vis/open OGL 600x600-0+0
 /vis/viewer/set/autoRefresh false
 /vis/verbose errors
 /vis/drawVolume
 
-/vis/viewer/set/viewpointVector -1 0.5 -1
-/vis/viewer/set/lightsVector -1 1 1
+/vis/viewer/set/targetPoint 0 0 0 cm
+/vis/viewer/set/viewpointVector 1 0.5 1
+/vis/viewer/set/rotationStyle freeRotation
 /vis/viewer/set/projection p
 /vis/viewer/set/style s
 /vis/viewer/set/auxiliaryEdge no
-/vis/viewer/zoom 2.5
+/vis/viewer/zoom 1.5
 
-/vis/geometry/set/visibility World 0 false
+/vis/geometry/set/visibility World              0 no
+/vis/geometry/set/visibility Coupler            0 no
+/vis/geometry/set/visibility Window             0 no
+
+/vis/geometry/set/colour Crystal    0     1     1     1     0.1
+/vis/geometry/set/colour SiPM       0     1     1     1     0.1
 
 /vis/scene/add/date
-/vis/scene/add/axes 0 0 0 10 cm
+/vis/scene/add/axes 0 0 0 5 cm
 /vis/scene/add/trajectories smooth
 /vis/scene/add/hits
+
+/vis/filtering/trajectories/create/particleFilter
+/vis/filtering/trajectories/particleFilter-0/add mu+
+/vis/filtering/trajectories/particleFilter-0/add mu-
+/vis/filtering/trajectories/particleFilter-0/add muonium
+/vis/filtering/trajectories/particleFilter-0/add anti_muonium
+/vis/filtering/trajectories/particleFilter-0/add e+
+/vis/filtering/trajectories/particleFilter-0/add e-
+/vis/filtering/trajectories/particleFilter-0/add gamma
+/vis/filtering/trajectories/particleFilter-0/add opticalphoton
+/vis/filtering/trajectories/particleFilter-0/add neutron
+/vis/filtering/trajectories/particleFilter-0/add anti_neutron
+/vis/filtering/trajectories/particleFilter-0/add proton
+/vis/filtering/trajectories/particleFilter-0/add anti_proton
+/vis/filtering/trajectories/particleFilter-0/add pi+
+/vis/filtering/trajectories/particleFilter-0/add pi-
+/vis/filtering/trajectories/particleFilter-0/add pi0
 
 /vis/modeling/trajectories/create/drawByParticleID
 /vis/modeling/trajectories/drawByParticleID-0/default/setDrawAuxPts no
@@ -55,3 +76,5 @@
 
 /vis/verbose warnings
 /vis/viewer/set/autoRefresh yes
+
+/run/beamOn 10
