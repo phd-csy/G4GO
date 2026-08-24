@@ -82,6 +82,11 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     airPropertiesTable->AddProperty("RINDEX", {minPhotonEnergy, maxPhotonEnergy}, {1., 1.});
     air->SetMaterialPropertiesTable(airPropertiesTable);
 
+    const auto siliconeGreasePropertiesTable{new G4MaterialPropertiesTable};
+    siliconeGreasePropertiesTable->AddProperty("RINDEX", {minPhotonEnergy, maxPhotonEnergy}, {1.46, 1.46});
+    siliconeGreasePropertiesTable->AddProperty("ABSLENGTH", {minPhotonEnergy, maxPhotonEnergy}, {100 * cm, 100 * cm});
+    siliconeGrease->SetMaterialPropertiesTable(siliconeGreasePropertiesTable);
+
     const auto epoxyPropertiesTable{new G4MaterialPropertiesTable};
     epoxyPropertiesTable->AddProperty("RINDEX", {minPhotonEnergy, maxPhotonEnergy}, {1.57, 1.57});
     epoxy->SetMaterialPropertiesTable(epoxyPropertiesTable);
@@ -111,13 +116,16 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     const auto windowThickness{1 * mm};
     const auto sipmWidth{3 * mm};
     const auto sipmThickness{0.1 * mm};
+    const auto sipmArraySize{8};
+    const auto sipmPitch{sipmWidth + 0.2 * mm};
+    const auto sipmArrayOffset{(sipmArraySize - 1) * sipmPitch / 2};
 
-    const auto solidCoupler{new G4Box("coupler", sipmWidth / 2, sipmWidth / 2, coupleThickness / 2)};
-    const auto logicalCoupler{new G4LogicalVolume(solidCoupler, siliconeGrease, "CrystalCoupler")};
+    const auto solidCoupler{new G4Box("Coupler", sipmWidth / 2, sipmWidth / 2, coupleThickness / 2)};
+    const auto logicalCoupler{new G4LogicalVolume(solidCoupler, siliconeGrease, "Coupler")};
     new G4PVPlacement(
         transform(coupleThickness / 2),
         logicalCoupler,
-        "CrystalCoupler",
+        "Coupler",
         logicalWorld,
         false,
         0,
@@ -125,47 +133,60 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
 
     const auto solidWindow{
         new G4Box(
-            "window",
+            "Window",
             sipmWidth / 2,
             sipmWidth / 2,
             windowThickness / 2)};
-    const auto logicalWindow{new G4LogicalVolume(solidWindow, epoxy, "window")};
+    const auto logicalWindow{new G4LogicalVolume(solidWindow, epoxy, "Window")};
     new G4PVPlacement(
         transform(coupleThickness + windowThickness / 2),
         logicalWindow,
-        "window",
+        "Window",
         logicalWorld,
         false,
         0,
         true);
+
+    const auto solidCrystal{new G4Box("Crystal", crystalWidth / 2, crystalWidth / 2, crystalLength / 2)};
+    const auto logicalCrystal{new G4LogicalVolume(solidCrystal, cesiumIodide, "Crystal")};
+    const auto physicalCrystal{new G4PVPlacement(G4Transform3D{}, logicalCrystal, "Crystal", logicalWorld, false, 0, true)};
+
+    const auto solidSiPM{new G4Box("SiPM", sipmWidth / 2, sipmWidth / 2, sipmThickness / 2)};
+    const auto logicalSiPM{new G4LogicalVolume(solidSiPM, silicon, "SiPM")};
+    const auto sipmPositionZ{crystalLength / 2 + coupleThickness + windowThickness + sipmThickness / 2};
+    for (auto i{0}; i < sipmArraySize; ++i) {
+        for (auto j{0}; j < sipmArraySize; ++j) {
+            const auto sipmPositionX{sipmArrayOffset - i * sipmPitch};
+            const auto sipmPositionY{sipmArrayOffset - j * sipmPitch};
+            new G4PVPlacement(
+                G4Translate3D{
+                    G4ThreeVector{sipmPositionX, sipmPositionY, sipmPositionZ}
+            },
+                logicalSiPM,
+                "SiPM",
+                logicalWorld,
+                false,
+                i * sipmArraySize + j,
+                true);
+        }
+    }
 
     const auto reflectorSurfacePropertiesTable{new G4MaterialPropertiesTable};
     reflectorSurfacePropertiesTable->AddProperty("REFLECTIVITY", {minPhotonEnergy, maxPhotonEnergy}, {0.99, 0.99});
 
-    const auto couplerSurfacePropertiesTable{new G4MaterialPropertiesTable};
-    couplerSurfacePropertiesTable->AddProperty("TRANSMITTANCE", {minPhotonEnergy, maxPhotonEnergy}, {1., 1.});
+    const auto reflectorSurface{new G4OpticalSurface("Reflector", unified, polished, dielectric_metal)};
+    new G4LogicalBorderSurface("ReflectorSurface", physicalCrystal, physicalWorld, reflectorSurface);
+    reflectorSurface->SetMaterialPropertiesTable(reflectorSurfacePropertiesTable);
+
+    // const auto couplerSurfacePropertiesTable{new G4MaterialPropertiesTable};
+    // couplerSurfacePropertiesTable->AddProperty("TRANSMITTANCE", {minPhotonEnergy, maxPhotonEnergy}, {1., 1.});
+
+    // const auto couplerSurface = new G4OpticalSurface("coupler", unified, polished, dielectric_dielectric);
+    // new G4LogicalBorderSurface("couplerSurface", physicalCrystal, physicalCouple, couplerSurface);
+    // couplerSurface->SetMaterialPropertiesTable(couplerSurfacePropertiesTable);
 
     const auto coatingSurfacePropertiesTable{new G4MaterialPropertiesTable};
     coatingSurfacePropertiesTable->AddProperty("REFLECTIVITY", {minPhotonEnergy, maxPhotonEnergy}, {0., 0.});
-
-    const auto solidCrystal{new G4Box("crystal", crystalWidth / 2, crystalWidth / 2, crystalLength / 2)};
-    const auto logicalCrystal{new G4LogicalVolume(solidCrystal, cesiumIodide, "crystal")};
-    const auto physicalCrystal{new G4PVPlacement(G4Transform3D{}, logicalCrystal, "crystal", logicalWorld, false, 0, true)};
-
-    const auto solidSiPM{new G4Box("sipm", sipmWidth / 2, sipmWidth / 2, sipmThickness / 2)};
-    const auto logicalSiPM{new G4LogicalVolume(solidSiPM, silicon, "sipm")};
-    new G4PVPlacement(
-        transform(coupleThickness + windowThickness + sipmThickness / 2),
-        logicalSiPM,
-        "sipm",
-        logicalWorld,
-        false,
-        0,
-        true);
-
-    const auto reflectorSurface{new G4OpticalSurface("Reflector", unified, polished, dielectric_metal)};
-    new G4LogicalSkinSurface("ReflectorSurface", logicalCrystal, reflectorSurface);
-    reflectorSurface->SetMaterialPropertiesTable(reflectorSurfacePropertiesTable);
 
     const auto coatingSurface{new G4OpticalSurface("Coating", unified, polished, dielectric_metal)};
     new G4LogicalBorderSurface("CoatingSurface", physicalWorld, physicalCrystal, coatingSurface);
@@ -188,12 +209,12 @@ auto DetectorConstruction::ConstructSDandField() -> void {
     auto scintillatorSD{
         new ScintillatorSD("ScintillatorSD", "ScintillatorHitsCollection")};
     G4SDManager::GetSDMpointer()->AddNewDetector(scintillatorSD);
-    SetSensitiveDetector("core", scintillatorSD, true);
+    SetSensitiveDetector("Crystal", scintillatorSD, true);
 
     auto sensorSD{
         new SensorSD("SensorSD", "SensorHitsCollection")};
     G4SDManager::GetSDMpointer()->AddNewDetector(sensorSD);
-    SetSensitiveDetector("sipm", sensorSD, true);
+    SetSensitiveDetector("SiPM", sensorSD, true);
 }
 
 } // namespace G4GO::Detector

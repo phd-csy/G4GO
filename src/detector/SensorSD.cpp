@@ -20,23 +20,27 @@ auto SensorSD::Initialize(G4HCofThisEvent* hcOfThisEvent) -> void {
     hcOfThisEvent->AddHitsCollection(hcID, hc);
 }
 
-auto SensorSD::ProcessHits(G4Step* step, G4TouchableHistory*) -> G4bool {
-    auto particleDefinition{step->GetTrack()->GetDefinition()};
-    if (particleDefinition == G4OpticalPhoton::Definition()) {
-        step->GetTrack()->SetTrackStatus(fStopAndKill);
+auto SensorSD::ProcessHits(G4Step* theStep, G4TouchableHistory*) -> G4bool {
+    const auto& step{*theStep};
+    const auto& track{*step.GetTrack()};
+    const auto& particle{*track.GetDefinition()};
 
-        auto hit{new SensorHit()};
-        const auto* postStepPoint{step->GetPostStepPoint()};
-        const auto touchable{postStepPoint->GetTouchableHandle()};
-        const auto globalTime{postStepPoint->GetGlobalTime()};
-        const auto copyNo{touchable->GetCopyNumber()};
-        hit->SetGlobalTime(globalTime);
-        hit->SetCopyNo(copyNo);
-        hc->insert(hit);
-
-        return true;
+    if (&particle != G4OpticalPhoton::Definition()) {
+        return false;
     }
-    return false;
+
+    step.GetTrack()->SetTrackStatus(fStopAndKill);
+
+    auto hit{new SensorHit()};
+    const auto* postStepPoint{step.GetPostStepPoint()};
+    const auto touchable{postStepPoint->GetTouchableHandle()};
+    const auto globalTime{postStepPoint->GetGlobalTime()};
+    const auto copyNo{touchable->GetCopyNumber()};
+    hit->SetGlobalTime(globalTime);
+    hit->SetCopyNo(copyNo);
+    hc->insert(hit);
+
+    return true;
 }
 
 auto SensorSD::EndOfEvent(G4HCofThisEvent*) -> void {}
