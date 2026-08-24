@@ -50,7 +50,7 @@ auto main(int argc, char** argv) -> int {
     app.add_flag("-h,--help", options.help, "Print this help message");
     app.add_option(
            "--backend", backendName, "Optical photon transport backend")
-        ->check(CLI::IsMember({"auto", "geant4", "capture", "cpu", "optix"}))
+        ->check(CLI::IsMember({"auto", "geant4", "optix"}))
         ->capture_default_str();
     app.add_option(
            "--seed", options.transportConfig.fSeed, "Random seed")
@@ -80,10 +80,6 @@ auto main(int argc, char** argv) -> int {
             options.transportConfig.fBackend = G4GO::Optical::Backend::Auto;
         } else if (backendName == "geant4") {
             options.transportConfig.fBackend = G4GO::Optical::Backend::Geant4;
-        } else if (backendName == "capture") {
-            options.transportConfig.fBackend = G4GO::Optical::Backend::Capture;
-        } else if (backendName == "cpu") {
-            options.transportConfig.fBackend = G4GO::Optical::Backend::Cpu;
         } else if (backendName == "optix") {
             options.transportConfig.fBackend = G4GO::Optical::Backend::Optix;
         } else {
@@ -99,7 +95,7 @@ auto main(int argc, char** argv) -> int {
                 G4GO::Optical::Backend::Geant4 &&
             options.threads > 1) {
             throw std::invalid_argument(
-                "auto, capture, cpu and optix backends require one Geant4 worker");
+                "auto and optix backends require one Geant4 worker");
         }
     } catch (const CLI::ParseError& error) {
         return app.exit(error);

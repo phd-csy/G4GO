@@ -11,8 +11,6 @@ namespace G4GO::Optical {
 enum class Backend : std::uint8_t {
     Auto,
     Geant4,
-    Capture,
-    Cpu,
     Optix,
 };
 
@@ -22,10 +20,6 @@ constexpr auto BackendName(Backend backend) -> std::string_view {
         return "auto";
     case Backend::Geant4:
         return "geant4";
-    case Backend::Capture:
-        return "capture";
-    case Backend::Cpu:
-        return "cpu";
     case Backend::Optix:
         return "optix";
     }

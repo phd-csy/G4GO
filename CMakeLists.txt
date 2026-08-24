@@ -62,18 +62,18 @@ if(G4GO_ENABLE_OPTIX)
                 message(STATUS "G4GO OptiX build: enabled")
             else()
                 message(STATUS
-                    "G4GO OptiX build dependencies are incomplete; using CPU fallback")
+                    "G4GO OptiX build dependencies are incomplete; using Geant4 fallback")
             endif()
         else()
             message(STATUS
-                "G4GO OptiX build dependencies are incomplete; using CPU fallback")
+                "G4GO OptiX build dependencies are incomplete; using Geant4 fallback")
         endif()
     else()
         message(STATUS
-            "CUDA compiler was not detected; using CPU fallback")
+            "CUDA compiler was not detected; using Geant4 fallback")
     endif()
 else()
-    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; using CPU fallback")
+    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; using Geant4 fallback")
 endif()
 
 if(G4GO_BUILD_UIVIS)
@@ -112,13 +112,6 @@ add_library(g4go_optical_core STATIC
     ${G4GO_OPTICAL_CORE_HEADERS}
 )
 g4go_configure_cpp_target(g4go_optical_core)
-
-add_library(g4go_optical_cpu STATIC
-    src/optical/cpu/Transport.cpp
-    include/g4go/optical/cpu/Transport.hpp
-)
-g4go_configure_cpp_target(g4go_optical_cpu)
-target_link_libraries(g4go_optical_cpu PUBLIC g4go_optical_core)
 
 if(G4GO_OPTIX_AVAILABLE)
     set(G4GO_OPTIX_GENERATED_DIR ${PROJECT_BINARY_DIR}/generated)
@@ -186,7 +179,7 @@ add_library(g4go_optical_geant4 STATIC
 )
 g4go_configure_cpp_target(g4go_optical_geant4)
 target_link_libraries(g4go_optical_geant4
-    PUBLIC g4go_optical_cpu
+    PUBLIC g4go_optical_core
     PRIVATE ${Geant4_LIBRARIES})
 
 if(G4GO_OPTIX_AVAILABLE)
@@ -260,8 +253,6 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             src/main.cpp
             ${G4GO_OPTICAL_CORE_SOURCES}
             ${G4GO_OPTICAL_CORE_HEADERS}
-            src/optical/cpu/Transport.cpp
-            include/g4go/optical/cpu/Transport.hpp
             src/optical/geant4/EventBridge.cpp
             src/optical/geant4/SceneExporter.cpp
             src/optical/geant4/SceneExporter.hpp
@@ -318,19 +309,9 @@ endif()
 install(TARGETS g4go RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
-    add_executable(g4go_optical_core_tests tests/optical/CoreTest.cpp)
-    g4go_configure_cpp_target(g4go_optical_core_tests)
-    target_link_libraries(g4go_optical_core_tests PRIVATE g4go_optical_cpu)
-
-    add_test(NAME g4go_optical_core_tests
-             COMMAND g4go_optical_core_tests)
-    add_test(NAME g4go_smoke_cpu
-             COMMAND $<TARGET_FILE:g4go>
-                     --backend cpu
-                     ${PROJECT_BINARY_DIR}/run_optical_smoke.mac)
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
                      ${PROJECT_BINARY_DIR}/run_optical_smoke.mac)
-    set_tests_properties(g4go_smoke_cpu g4go_smoke_auto PROPERTIES
+    set_tests_properties(g4go_smoke_auto PROPERTIES
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 endif()

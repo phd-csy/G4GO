@@ -12,7 +12,6 @@
 #include "G4ios.hh"
 #include "SceneExporter.hpp"
 #include "g4go/optical/Transport.hpp"
-#include "g4go/optical/cpu/Transport.hpp"
 
 #ifdef G4GO_ENABLE_OPTIX
 #    include "g4go/optical/optix/Transport.hpp"
@@ -43,12 +42,11 @@ auto OpticalEventBridge::BeginRun() -> void {
 #ifdef G4GO_ENABLE_OPTIX
         fConfig.fBackend = Backend::Optix;
 #else
-        fConfig.fBackend = Backend::Cpu;
+        fConfig.fBackend = Backend::Geant4;
 #endif
     }
 
-    if (fConfig.fBackend != Backend::Cpu &&
-        fConfig.fBackend != Backend::Optix) {
+    if (fConfig.fBackend != Backend::Optix) {
         return;
     }
 
@@ -66,11 +64,6 @@ auto OpticalEventBridge::BeginRun() -> void {
         return;
     }
 
-    if (fConfig.fBackend == Backend::Cpu) {
-        fTransport = std::make_unique<CpuOpticalTransport>(fConfig);
-        return;
-    }
-
 #ifdef G4GO_ENABLE_OPTIX
     try {
         if (fConfig.fBackend == Backend::Optix) {
@@ -80,9 +73,8 @@ auto OpticalEventBridge::BeginRun() -> void {
         if (fRequestedBackend == Backend::Auto) {
             G4cout << "[g4go] OptiX initialization failed: "
                    << exception.what()
-                   << "; falling back to CPU backend" << G4endl;
-            fConfig.fBackend = Backend::Cpu;
-            fTransport = std::make_unique<CpuOpticalTransport>(fConfig);
+                   << "; falling back to Geant4 backend" << G4endl;
+            fConfig.fBackend = Backend::Geant4;
             return;
         }
 
