@@ -22,16 +22,16 @@ RunAction::RunAction(
     }
 #endif
 
-    analysisManager->CreateNtuple("CrystalHit", "result");
-    analysisManager->CreateNtupleIColumn("cellID");
+    analysisManager->CreateNtuple("CrystalHit", "crystal hit results");
+    analysisManager->CreateNtupleIColumn("moduleID");
     analysisManager->CreateNtupleDColumn("Edep");
     analysisManager->CreateNtupleIColumn("nOptPho");
     analysisManager->FinishNtuple();
 
-    analysisManager->CreateNtuple("pulse", "result");
+    analysisManager->CreateNtuple("SensorHit", "sensor hit results");
     analysisManager->CreateNtupleIColumn("eventID");
     analysisManager->CreateNtupleIColumn("sensorID");
-    analysisManager->CreateNtupleDColumn("nToF");
+    analysisManager->CreateNtupleDColumn("timeOfFlight");
     analysisManager->FinishNtuple();
 }
 
