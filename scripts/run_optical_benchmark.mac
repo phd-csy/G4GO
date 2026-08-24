@@ -1,0 +1,10 @@
+/run/initialize
+/gps/particle opticalphoton
+/gps/ene/mono 2.5 eV
+/gps/pos/type Point
+/gps/pos/centre 0. 0. 0.
+/gps/direction 0 0 1
+/gps/polarization 1 0 0
+
+/analysis/setFileName optical_benchmark
+/run/beamOn 1000
