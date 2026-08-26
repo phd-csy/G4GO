@@ -4,12 +4,12 @@
 /tracking/verbose 0
 /run/initialize
 
-/gps/particle gamma
+/gps/particle e-
 /gps/ene/mono 5 MeV
 /gps/pos/centre 0 0 -10 cm
 /gps/direction 0 0 1
 
-/analysis/setFileName source_beam
+/analysis/setFileName run_beam_eminus
 
 /run/printProgress 1000
-/run/beamOn 5000
+/run/beamOn 2000
