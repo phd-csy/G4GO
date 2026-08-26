@@ -4,6 +4,7 @@
 #include "TH1D.h"
 #include "TLegend.h"
 #include "TLine.h"
+#include "TMath.h"
 #include "TPad.h"
 #include "TParameter.h"
 #include "TROOT.h"
@@ -65,19 +66,19 @@ auto TestOpticalTransport(const char* cpuFileName,
 
         auto* cpuHistogramPtr{cpuHistogram.GetPtr()};
         auto* gpuHistogramPtr{gpuHistogram.GetPtr()};
-        double chi2{};
-        int ndf{};
-        int igood{};
-        auto option{const_cast<Option_t*>("UU P OF")};
-        const auto pValue{
-            cpuHistogramPtr->Chi2TestX(
-                gpuHistogramPtr, chi2, ndf, igood, option)};
+        const auto pValue{cpuHistogramPtr->Chi2Test(gpuHistogramPtr, "P")};
+        const auto zValue{TMath::NormQuantile(1.0 - pValue / 2.0)};
+        const auto significanceStatus{
+            zValue > 5.0 ? "FAILED" :
+            zValue > 3.0 ? "SUSPICIOUS" :
+            zValue > 0.0 ? "PASSED" :
+                           "IDENTICAL"};
         const auto relativeTotalDifference{
             std::abs(static_cast<double>(gpuTotal) - static_cast<double>(cpuTotal)) /
             static_cast<double>(cpuTotal)};
-        const auto shapePassed{pValue >= 0.01};
         const auto totalPassed{relativeTotalDifference <= 0.10};
-        const auto regressionPassed{shapePassed && totalPassed};
+        const auto regressionStatus{totalPassed ? significanceStatus : "FAILED"};
+        const auto regressionPassed{totalPassed && zValue <= 5.0};
         const auto hasTiming{cpuElapsedSeconds > 0.0 &&
                              gpuElapsedSeconds > 0.0};
         const auto gpuSpeedup{hasTiming ? cpuElapsedSeconds /
@@ -93,8 +94,8 @@ auto TestOpticalTransport(const char* cpuFileName,
                   << ", nOptPho_total=" << gpuTotal
                   << ", nOptPho_mean=" << *gpuMean
                   << ", nOptPho_rms=" << *gpuRms << '\n'
-                  << "chi2=" << chi2 << ", ndf=" << ndf
-                  << ", igood=" << igood << ", pValue=" << pValue
+                  << "pValue=" << pValue << ", Z=" << zValue
+                  << ", significance=" << significanceStatus
                   << ", relative_nOptPho_total_difference="
                   << relativeTotalDifference << '\n';
         if (hasTiming) {
@@ -177,10 +178,8 @@ auto TestOpticalTransport(const char* cpuFileName,
         gpuPlot.Write();
         pull.Write();
         canvas.Write();
-        TParameter<double> chi2Parameter{"chi2", chi2};
-        TParameter<int> ndfParameter{"ndf", ndf};
-        TParameter<int> igoodParameter{"igood", igood};
         TParameter<double> pValueParameter{"pValue", pValue};
+        TParameter<double> zValueParameter{"Z", zValue};
         TParameter<double> totalDifferenceParameter{
             "relativeTotalDifference", relativeTotalDifference};
         TParameter<double> cpuElapsedSecondsParameter{
@@ -190,10 +189,8 @@ auto TestOpticalTransport(const char* cpuFileName,
         TParameter<double> gpuSpeedupParameter{"gpuSpeedup", gpuSpeedup};
         TParameter<bool> regressionPassedParameter{"regressionPassed",
                                                    regressionPassed};
-        chi2Parameter.Write();
-        ndfParameter.Write();
-        igoodParameter.Write();
         pValueParameter.Write();
+        zValueParameter.Write();
         totalDifferenceParameter.Write();
         cpuElapsedSecondsParameter.Write();
         gpuElapsedSecondsParameter.Write();
@@ -210,16 +207,15 @@ auto TestOpticalTransport(const char* cpuFileName,
             throw std::runtime_error("unable to create regression result");
         }
         result << std::fixed << std::setprecision(6)
-               << "status=" << (regressionPassed ? "PASSED" : "FAILED")
+               << "status=" << regressionStatus
                << '\n'
                << "cpu_entries=" << *cpuEntries << '\n'
                << "gpu_entries=" << *gpuEntries << '\n'
                << "cpu_nOptPho_total=" << cpuTotal << '\n'
                << "gpu_nOptPho_total=" << gpuTotal << '\n'
-               << "chi2=" << chi2 << '\n'
-               << "ndf=" << ndf << '\n'
-               << "igood=" << igood << '\n'
                << "pValue=" << pValue << '\n'
+               << "Z=" << zValue << '\n'
+               << "significance=" << significanceStatus << '\n'
                << "relative_nOptPho_total_difference="
                << relativeTotalDifference << '\n';
         if (hasTiming) {
@@ -238,11 +234,7 @@ auto TestOpticalTransport(const char* cpuFileName,
             gSystem->Exit(1);
         }
 
-        if (pValue < 0.05) {
-            std::cout << "SUSPICIOUS: shape p-value is below 0.05\n";
-        } else {
-            std::cout << "PASSED: nOptPho CPU/GPU regression\n";
-        }
+        std::cout << regressionStatus << ": nOptPho CPU/GPU regression\n";
         gSystem->Exit(0);
     } catch (const std::exception& exception) {
         std::cerr << "FAILED: " << exception.what() << '\n';

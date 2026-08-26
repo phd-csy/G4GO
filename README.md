@@ -245,7 +245,7 @@ cmake --build build -j
 ctest --test-dir build -V -R '^g4go_noptpho_regression$'
 ```
 
-测试使用 `test/TestOpticalTransport.C` 比较 `CrystalHit.nOptPho` 谱。ROOT 宏执行未加权直方图的卡方形状检验，要求 `pValue >= 0.01`，并要求 CPU/GPU 的 `nOptPho` 总量相对差异不超过 10%。测试同时生成以下文件：
+测试使用 `test/TestOpticalTransport.C` 比较 `CrystalHit.nOptPho` 谱。ROOT 宏先通过 `Chi2Test(..., "P")` 得到 p-value，再使用 `TMath::NormQuantile(1 - pValue / 2)` 换算双侧 Gaussian significance，并按 Z 值输出 `FAILED`、`SUSPICIOUS`、`PASSED` 或 `IDENTICAL`。`Z > 5` 或 CPU/GPU 的 `nOptPho` 总量相对差异超过 10% 时测试失败；`3 < Z <= 5` 标记为可疑，其余状态通过测试。测试同时生成以下文件：
 
 - `noptpho_cpu.root` 和 `noptpho_gpu.root`：CPU/GPU 输入结果。
 - `noptpho_comparison.png`：200 个 bin 的原始计数 CPU/GPU 谱和 pull 图，图例中标注 GPU 加速比。
