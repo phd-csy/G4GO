@@ -1,6 +1,5 @@
 #include "SceneExporter.hpp"
 
-#include "G4Box.hh"
 #include "G4LogicalBorderSurface.hh"
 #include "G4LogicalSkinSurface.hh"
 #include "G4LogicalSurface.hh"
@@ -9,16 +8,16 @@
 #include "G4MaterialPropertiesTable.hh"
 #include "G4MaterialPropertyVector.hh"
 #include "G4OpticalSurface.hh"
-#include "G4PVPlacement.hh"
+#include "G4Polyhedron.hh"
 #include "G4SystemOfUnits.hh"
-#include "G4Tubs.hh"
 #include "G4VPhysicalVolume.hh"
+#include "G4VSolid.hh"
 #include "g4go/optical/Geometry.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <initializer_list>
-#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -30,23 +29,47 @@ namespace {
 
 class SceneBuilder final {
 public:
+    explicit SceneBuilder(std::uint32_t meshRotationSteps) :
+        meshRotationSteps{meshRotationSteps} {}
+
     auto Build(const G4VPhysicalVolume* world) -> Scene {
         if (world == nullptr) {
             throw std::invalid_argument("Geant4 scene export requires a world");
         }
 
-        AddVolume(world, {}, 0);
-        AddBorderSurfaces();
-        scene.SetWorldVolumeID(world->GetInstanceID());
+        const auto previousRotationSteps{
+            G4Polyhedron::GetNumberOfRotationSteps()};
+        if (meshRotationSteps < 8 || meshRotationSteps > 4096) {
+            throw std::invalid_argument(
+                "mesh rotation steps must be in [8, 4096]");
+        }
+        G4Polyhedron::SetNumberOfRotationSteps(
+            static_cast<G4int>(meshRotationSteps));
+        try {
+            AddVolume(world, {}, InvalidID, 0);
+            AddBorderSurfaces();
+            scene.SetWorldVolumeID(world->GetInstanceID());
+        } catch (...) {
+            G4Polyhedron::SetNumberOfRotationSteps(previousRotationSteps);
+            throw;
+        }
+        G4Polyhedron::SetNumberOfRotationSteps(previousRotationSteps);
         return std::move(scene);
     }
 
 private:
     auto AddVolume(const G4VPhysicalVolume* physicalVolume,
                    Transform parentTransform,
+                   std::uint32_t parentVolumeID,
                    std::uint32_t depth) -> void {
         if (physicalVolume == nullptr) {
             return;
+        }
+        if (physicalVolume->IsParameterised() ||
+            physicalVolume->IsReplicated()) {
+            throw std::runtime_error(
+                "GPU mesh backend requires explicit placement volumes; "
+                "parameterised and replica volumes are not supported yet");
         }
         const auto transform{Compose(parentTransform, physicalVolume)};
         const auto* logicalVolume{physicalVolume->GetLogicalVolume()};
@@ -54,30 +77,105 @@ private:
             throw std::runtime_error("physical volume has no logical volume");
         }
 
+        const auto geometryID{AddGeometry(logicalVolume->GetSolid())};
         const auto materialID{AddMaterial(logicalVolume->GetMaterial())};
-        auto solid{AddSolid(physicalVolume, logicalVolume->GetSolid(),
-                            materialID, transform, depth)};
+
+        Volume volume{};
+        volume.fName = physicalVolume->GetName();
+        volume.fVolumeID = static_cast<std::uint32_t>(
+            std::max(physicalVolume->GetInstanceID(), 0));
+        volume.fCopyNo = static_cast<std::uint32_t>(
+            std::max(physicalVolume->GetCopyNo(), 0));
+        volume.fGeometryID = geometryID;
+        volume.fMaterialID = materialID;
+        volume.fParentVolumeID = parentVolumeID;
+        volume.fDepth = depth;
+        volume.fTransform = transform;
+        volume.fMayHaveCoincidentBoundary =
+            physicalVolume->GetMotherLogical() != nullptr &&
+            physicalVolume->GetMotherLogical()->GetNoDaughters() > 1;
+        if (logicalVolume->GetSensitiveDetector() != nullptr) {
+            volume.fSensorID = volume.fCopyNo;
+        }
 
         if (const auto* skinSurface{
                 G4LogicalSkinSurface::GetSurface(logicalVolume)};
             skinSurface != nullptr) {
-            const auto surfaceID{
-                AddSurface(skinSurface->GetSurfaceProperty())};
-            solid.fSkinSurfaceID = surfaceID;
-            if (const auto* surface{scene.FindSurface(surfaceID)};
-                surface != nullptr && surface->fSensor) {
-                solid.fSensorID = static_cast<std::uint32_t>(
-                    std::max(physicalVolume->GetCopyNo(), 0));
-            }
+            volume.fSkinSurfaceID =
+                AddSurface(skinSurface->GetSurfaceProperty());
         }
 
-        volumeIDs.emplace(physicalVolume, solid.fVolumeID);
-        scene.AddSolid(std::move(solid));
+        volumeIDs.emplace(physicalVolume, volume.fVolumeID);
+        scene.AddVolume(std::move(volume));
 
         for (auto index{std::size_t{}};
              index < logicalVolume->GetNoDaughters(); ++index) {
-            AddVolume(logicalVolume->GetDaughter(index), transform, depth + 1);
+            AddVolume(logicalVolume->GetDaughter(index), transform,
+                      static_cast<std::uint32_t>(
+                          std::max(physicalVolume->GetInstanceID(), 0)),
+                      depth + 1);
         }
+    }
+
+    auto AddGeometry(const G4VSolid* solid) -> std::uint32_t {
+        if (solid == nullptr) {
+            throw std::runtime_error("logical volume has no solid");
+        }
+        if (const auto found{geometryIDs.find(solid)};
+            found != geometryIDs.end()) {
+            return found->second;
+        }
+
+        auto* polyhedron{solid->CreatePolyhedron()};
+        if (polyhedron == nullptr) {
+            throw std::runtime_error("unable to create polyhedron for solid " +
+                                     std::string{solid->GetName()});
+        }
+
+        Geometry geometry{};
+        geometry.fName = solid->GetName();
+        geometry.fMesh.fName = solid->GetName();
+        const auto facetCount{polyhedron->GetNoFacets()};
+        for (auto face{1}; face <= facetCount; ++face) {
+            G4int count{};
+            std::array<G4Point3D, 16> points{};
+            polyhedron->GetFacet(face, count, points.data());
+            if (count < 3 || count > static_cast<G4int>(points.size())) {
+                delete polyhedron;
+                throw std::runtime_error("invalid polyhedron facet for solid " +
+                                         std::string{solid->GetName()});
+            }
+
+            const auto faceNormal{polyhedron->GetUnitNormal(face)};
+            for (auto point{1}; point + 1 < count; ++point) {
+                const auto first{points[0]};
+                auto second{points[point]};
+                auto third{points[point + 1]};
+                const auto edge0{second - first};
+                const auto edge1{third - first};
+                const auto cross{edge0.cross(edge1)};
+                if (cross.dot(faceNormal) < 0.0) {
+                    std::swap(second, third);
+                }
+                const auto base{static_cast<std::uint32_t>(
+                    geometry.fMesh.fVerticesMm.size())};
+                geometry.fMesh.fVerticesMm.insert(
+                    geometry.fMesh.fVerticesMm.end(),
+                    {ToVector(first), ToVector(second), ToVector(third)});
+                geometry.fMesh.fIndices.insert(
+                    geometry.fMesh.fIndices.end(), {base, base + 1, base + 2});
+                geometry.fMesh.fTriangleFlags.push_back(0);
+            }
+        }
+        delete polyhedron;
+
+        if (geometry.fMesh.fIndices.empty()) {
+            throw std::runtime_error("polyhedron has no triangles for solid " +
+                                     std::string{solid->GetName()});
+        }
+        const auto geometryID{scene.AddGeometry(std::move(geometry))};
+        geometryIDs.emplace(solid, geometryID);
+        return geometryID;
     }
 
     auto AddMaterial(const G4Material* material) -> std::uint32_t {
@@ -120,109 +218,99 @@ private:
         const auto* opticalSurface{
             dynamic_cast<const G4OpticalSurface*>(property)};
         if (opticalSurface == nullptr) {
-            throw std::runtime_error("MVP requires G4OpticalSurface");
-        }
-        if (opticalSurface->GetModel() != unified &&
-            opticalSurface->GetModel() != glisur) {
-            throw std::runtime_error("MVP supports unified and glisur models only");
+            throw std::runtime_error("G4GO requires G4OpticalSurface");
         }
 
         Surface surface{};
         surface.fName = opticalSurface->GetName();
-        if (opticalSurface->GetType() == dielectric_metal) {
-            surface.fKind = SurfaceKind::DielectricMetal;
-        } else if (opticalSurface->GetType() == dielectric_dielectric) {
-            surface.fKind = SurfaceKind::DielectricDielectric;
-        } else {
-            throw std::runtime_error("unsupported Geant4 optical surface type");
+        switch (opticalSurface->GetType()) {
+        case dielectric_metal:
+            surface.fType = SurfaceType::DielectricMetal;
+            break;
+        case dielectric_dielectric:
+            surface.fType = SurfaceType::DielectricDielectric;
+            break;
+        default:
+            throw std::runtime_error(
+                "GPU mesh backend requires dielectric_metal or "
+                "dielectric_dielectric optical surfaces");
         }
 
+        switch (opticalSurface->GetModel()) {
+        case glisur:
+            surface.fModel = SurfaceModel::Glisur;
+            break;
+        case unified:
+            surface.fModel = SurfaceModel::Unified;
+            break;
+        default:
+            throw std::runtime_error(
+                "GPU mesh backend supports only glisur and unified "
+                "optical surface models");
+        }
+
+        surface.fModelValue = static_cast<float>(
+            opticalSurface->GetModel() == glisur
+                ? opticalSurface->GetPolish()
+                : opticalSurface->GetSigmaAlpha());
         switch (opticalSurface->GetFinish()) {
         case polished:
-        case polishedfrontpainted:
-        case polishedbackpainted:
             surface.fFinish = SurfaceFinish::Polished;
             break;
+        case polishedfrontpainted:
+            surface.fFinish = SurfaceFinish::PolishedFrontPainted;
+            break;
+        case polishedbackpainted:
+            surface.fFinish = SurfaceFinish::PolishedBackPainted;
+            break;
         case ground:
-        case groundfrontpainted:
-        case groundbackpainted:
             surface.fFinish = SurfaceFinish::Ground;
             break;
         default:
             throw std::runtime_error(
-                "unsupported Geant4 optical surface finish");
+                "GPU mesh backend supports only polished and ground "
+                "optical surface finishes");
         }
 
         if (const auto* table{
                 opticalSurface->GetMaterialPropertiesTable()};
             table != nullptr) {
-            RejectUnsupportedProperties(
-                table,
-                {"TRANSMITTANCE", "SPECULARLOBECONSTANT",
-                 "SPECULARSPIKECONSTANT", "BACKSCATTERCONSTANT", "RINDEX",
-                 "REALRINDEX", "IMAGINARYRINDEX", "COATEDRINDEX"},
-                "surface " + opticalSurface->GetName());
             surface.fReflectivity = ReadProperty(table, "REFLECTIVITY", 1.0);
             surface.fEfficiency = ReadProperty(table, "EFFICIENCY", 1.0);
+            surface.fTransmittance = ReadProperty(table, "TRANSMITTANCE", 1.0);
+            surface.fRindex = ReadProperty(table, "RINDEX", 1.0);
+            surface.fRealRindex = ReadProperty(table, "REALRINDEX", 1.0);
+            surface.fImaginaryRindex =
+                ReadProperty(table, "IMAGINARYRINDEX", 1.0);
+            surface.fCoatedRindex = ReadProperty(table, "COATEDRINDEX", 1.0);
+            surface.fSpecularLobe =
+                ReadProperty(table, "SPECULARLOBECONSTANT", 1.0);
+            surface.fSpecularSpike =
+                ReadProperty(table, "SPECULARSPIKECONSTANT", 1.0);
+            surface.fBackscatter =
+                ReadProperty(table, "BACKSCATTERCONSTANT", 1.0);
+            if (table->ConstPropertyExists("SURFACEROUGHNESS")) {
+                surface.fSurfaceRoughness.fValues.push_back(static_cast<float>(
+                    table->GetConstProperty("SURFACEROUGHNESS")));
+            }
+            if (table->ConstPropertyExists("COATEDTHICKNESS")) {
+                surface.fCoatedThicknessMm = static_cast<float>(
+                    table->GetConstProperty("COATEDTHICKNESS") / mm);
+            }
+            if (table->ConstPropertyExists(
+                    "COATEDFRUSTRATEDTRANSMISSION")) {
+                surface.fCoatedFrustratedTransmission =
+                    table->GetConstProperty("COATEDFRUSTRATEDTRANSMISSION") !=
+                    0.0;
+            }
         }
-        surface.fSensor = std::any_of(
-            surface.fEfficiency.fValues.begin(),
-            surface.fEfficiency.fValues.end(),
-            [](auto efficiency) { return efficiency > 0.0F; });
 
         const auto surfaceID{scene.AddSurface(std::move(surface))};
         surfaceIDs.emplace(property, surfaceID);
         return surfaceID;
     }
 
-    auto AddSolid(const G4VPhysicalVolume* physicalVolume,
-                  const G4VSolid* geometry,
-                  std::uint32_t materialID,
-                  Transform transform,
-                  std::uint32_t depth) const -> Solid {
-        if (geometry == nullptr) {
-            throw std::runtime_error("logical volume has no solid");
-        }
-
-        Solid solid{};
-        solid.fName = physicalVolume->GetName();
-        solid.fVolumeID = static_cast<std::uint32_t>(
-            std::max(physicalVolume->GetInstanceID(), 0));
-        solid.fMaterialID = materialID;
-        solid.fTransform = transform;
-        solid.fDepth = depth;
-
-        if (const auto* box{dynamic_cast<const G4Box*>(geometry)};
-            box != nullptr) {
-            solid.fKind = SolidKind::Box;
-            solid.fHalfSizeMm = {
-                static_cast<float>(box->GetXHalfLength() / mm),
-                static_cast<float>(box->GetYHalfLength() / mm),
-                static_cast<float>(box->GetZHalfLength() / mm),
-            };
-            return solid;
-        }
-
-        if (const auto* tub{dynamic_cast<const G4Tubs*>(geometry)};
-            tub != nullptr) {
-            if (std::abs(tub->GetDeltaPhiAngle() -
-                         2.0 * std::numbers::pi_v<double>) >
-                1.0e-9) {
-                throw std::runtime_error("MVP supports full-phi G4Tubs only");
-            }
-            solid.fKind = SolidKind::Tub;
-            solid.fInnerRadiusMm = static_cast<float>(tub->GetInnerRadius() / mm);
-            solid.fOuterRadiusMm = static_cast<float>(tub->GetOuterRadius() / mm);
-            solid.fHalfLengthMm = static_cast<float>(tub->GetZHalfLength() / mm);
-            solid.fStartPhi = static_cast<float>(tub->GetStartPhiAngle());
-            solid.fDeltaPhi = static_cast<float>(tub->GetDeltaPhiAngle());
-            return solid;
-        }
-
-        throw std::runtime_error("MVP encountered an unsupported Geant4 solid");
-    }
-
-    auto AddBorderSurfaces() -> void {
+    void AddBorderSurfaces() {
         const auto* table{G4LogicalBorderSurface::GetSurfaceTable()};
         if (table == nullptr) {
             return;
@@ -240,6 +328,14 @@ private:
                 AddSurface(surface->GetSurfaceProperty()),
             });
         }
+    }
+
+    static auto ToVector(const G4Point3D& point) -> Vector3 {
+        return {
+            static_cast<float>(point.x() / mm),
+            static_cast<float>(point.y() / mm),
+            static_cast<float>(point.z() / mm),
+        };
     }
 
     static auto ReadProperty(const G4MaterialPropertiesTable* table,
@@ -301,8 +397,8 @@ private:
         return {
             composedRotation,
             {parent.fTranslationMm.fX + translated.fX,
-              parent.fTranslationMm.fY + translated.fY,
-              parent.fTranslationMm.fZ + translated.fZ},
+             parent.fTranslationMm.fY + translated.fY,
+             parent.fTranslationMm.fZ + translated.fZ},
         };
     }
 
@@ -324,13 +420,15 @@ private:
     Scene scene{};
     std::unordered_map<const G4Material*, std::uint32_t> materialIDs{};
     std::unordered_map<const G4SurfaceProperty*, std::uint32_t> surfaceIDs{};
+    std::unordered_map<const G4VSolid*, std::uint32_t> geometryIDs{};
     std::unordered_map<const G4VPhysicalVolume*, std::uint32_t> volumeIDs{};
+    std::uint32_t meshRotationSteps{};
 };
 
 } // namespace
 
 auto Geant4SceneExporter::Export(const G4VPhysicalVolume* world) const -> Scene {
-    return SceneBuilder{}.Build(world);
+    return SceneBuilder{fMeshRotationSteps}.Build(world);
 }
 
 } // namespace G4GO::Optical

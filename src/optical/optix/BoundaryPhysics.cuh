@@ -15,7 +15,8 @@ namespace G4GO::Optical::BoundaryPhysics {
 enum class SurfaceOutcome : unsigned char {
     Absorb,
     Detect,
-    Reflect,
+    DirectTransmit,
+    SurfaceInteraction,
 };
 
 struct FresnelResult {
@@ -101,14 +102,32 @@ G4GO_OPTICAL_HD inline auto ReflectPolarization(DeviceVector3 polarization,
     return ProjectPolarization(reflected, direction);
 }
 
-G4GO_OPTICAL_HD inline auto EvaluateSurface(float efficiency,
-                                            float reflectivity,
-                                            bool sensor,
+G4GO_OPTICAL_HD inline auto ClassifySurface(float reflectivity,
+                                            float transmittance,
+                                            bool hasReflectivity,
+                                            bool hasTransmittance,
                                             float sample) -> SurfaceOutcome {
-    if (sensor) {
-        return sample < ClampProbability(efficiency) ? SurfaceOutcome::Detect : SurfaceOutcome::Absorb;
+    const auto directTransmission{ClampProbability(transmittance)};
+    const auto surfaceInteraction{
+        hasReflectivity
+            ? (1.0F - directTransmission) * ClampProbability(reflectivity)
+            : (hasTransmittance ? 0.0F : 1.0F)};
+    if (sample < directTransmission) {
+        return SurfaceOutcome::DirectTransmit;
     }
-    return sample < ClampProbability(reflectivity) ? SurfaceOutcome::Reflect : SurfaceOutcome::Absorb;
+    if (sample < directTransmission + surfaceInteraction) {
+        return SurfaceOutcome::SurfaceInteraction;
+    }
+    return SurfaceOutcome::Absorb;
+}
+
+G4GO_OPTICAL_HD inline auto EvaluateAbsorption(float efficiency,
+                                               bool sensor,
+                                               float sample) -> SurfaceOutcome {
+    if (sensor && sample < ClampProbability(efficiency)) {
+        return SurfaceOutcome::Detect;
+    }
+    return SurfaceOutcome::Absorb;
 }
 
 G4GO_OPTICAL_HD inline auto SampleLambertian(DeviceVector3 normal,

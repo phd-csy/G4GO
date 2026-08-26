@@ -214,6 +214,7 @@ CMake 将模块编译为内部静态库：`g4go_optical_core`、可选的 `g4go_
 - `--threads UINT32`：`cpu` backend 的 worker 数量；默认使用 `G4Threading::G4GetNumberOfCores()` 的结果，显式传入该参数可以覆盖默认值；`auto` 和 `gpu` 使用串行 Geant4 事件驱动。
 - `--max-photons UINT32`：单事件 photon capture 上限，默认 `5'000'000`。
 - `--max-bounces UINT32`：单 photon 最大边界交互次数，默认 `4096`。
+- `--mesh-rotation-steps UINT32`：`G4Polyhedron` mesh 转换的旋转采样数，默认 `360`，有效范围为 `8` 到 `4096`。
 
 ## Backend 结构
 
@@ -223,13 +224,17 @@ CMake 将模块编译为内部静态库：`g4go_optical_core`、可选的 `g4go_
 | `cpu` | 由 Geant4 跟踪 | Geant4 | Geant4 SD |
 | `gpu` | 捕获后终止 Geant4 光子 | OptiX 9.1 | `SensorHC` / `SensorHit` |
 
-OptiX scene exporter 当前支持 `G4Box`、full-phi `G4Tubs`、材料 `RINDEX/GROUPVEL/ABSLENGTH`，以及 polished/ground unified/glisur optical surface。边界 surface 查找遵循 directed border surface、daughter skin surface、current skin surface 的优先级。
+Geant4 是 geometry truth source。scene exporter 使用每个 solid 的 `CreatePolyhedron()` 生成 triangle mesh，保存 Geant4 的 placement、material、surface、copy number 和 parent topology；相同 `G4VSolid` 的 mesh 可以复用，physical volume 仍然独立建立 OptiX instance。OptiX 只负责 triangle traversal 和求交，G4GO 负责拓扑解析、光学边界过程和 hit 生成。当前默认 mesh 后端覆盖能生成 polyhedron 的 Geant4 solid，解析 primitive 求交保留给后续性能优化。
 
-无显式 optical surface 的透明材料边界使用包含 S/P 偏振分量的 Fresnel 反射、折射和全反射计算；下一材料缺少 `RINDEX` 时按非透明边界吸收。显式 sensor surface 使用 `EFFICIENCY` 决定探测或吸收，普通显式 surface 使用 `REFLECTIVITY` 决定反射或吸收；polished surface 采用镜面反射，ground surface 采用 Lambertian 漫反射。达到 `--max-bounces` 的 photon 单独计入 `truncated`，不会混入物理吸收统计。
+`--mesh-rotation-steps 360` 是 correctness-first 默认值。复杂几何正式 profiling 时应比较 `90/180/360/720` 对 mesh 误差、triangle 数量、GAS build time、显存和 transport time 的影响。
 
-GPU scene export 会拒绝当前未实现的 Rayleigh、Mie、WLS，以及 `TRANSMITTANCE`、UNIFIED specular/backscatter、复折射率和 coated surface 属性，避免忽略配置后继续产生结果。
+边界 surface 查找遵循 directed border surface、daughter skin surface、current skin surface 的优先级。参数化和 replica volume 当前会被显式拒绝，避免将多个 copy 错误压缩为同一个 volume；支持它们需要同时扩展 copy-aware photon volume key 和逐 copy mesh/placement 导出。
 
-OptiX backend 将 device program 编译为 OptiX IR，使用 custom primitive AABB GAS。每个 photon 对应一个 raygen launch slot，hit 结果通过稳定的 photon slot 回读，随机数使用 host/device 一致的 Philox4x32-10。
+无显式 optical surface 的透明材料边界使用包含 S/P 偏振分量的 Fresnel 反射、折射和全反射计算；下一材料缺少 `RINDEX` 时按非透明边界吸收。显式 surface 先由 `REFLECTIVITY/TRANSMITTANCE` 分类为 absorption、direct transmission 或 surface-specific interaction；进入 surface-specific interaction 后再根据 dielectric type、surface model 和 finish 执行 Fresnel 或金属反射。`EFFICIENCY` 仅在 absorption 路径中决定 Detection 或普通 Absorption。polished surface 采用镜面反射，ground surface 采用 Lambertian 漫反射。达到 `--max-bounces` 的 photon 单独计入 `truncated`，不会混入物理吸收统计。
+
+GPU scene export 会拒绝当前未实现的 Rayleigh、Mie、WLS、LUT/DAVIS/dichroic/coated surface type 或 model，以及 painted finish，避免忽略配置后继续产生结果。基础 surface metadata 和 `TRANSMITTANCE` 已纳入 scene/device 数据结构。
+
+OptiX backend 将 device program 编译为 OptiX IR，使用每个唯一 mesh geometry 的 triangle GAS 和 volume instance 的 IAS。正常边界解析使用一次 closest-hit；标记为可能存在 sibling/touching 歧义的 volume 才进行第二次 `[t0-tolerance,t0+tolerance]` any-hit candidate trace，并按 parent topology 排序。transport 使用 triangle winding 的 face normal，同时用于 entering/leaving、Fresnel、反射/折射和 boundary offset；G4Polyhedron normal 只参与导出时的 winding 校验。每个 photon 对应一个 raygen launch slot，hit 结果通过稳定的 photon slot 回读，随机数使用 host/device 一致的 Philox4x32-10。
 
 ## ROOT 输出
 

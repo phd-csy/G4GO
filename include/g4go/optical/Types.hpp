@@ -91,6 +91,7 @@ struct TransportConfig {
     std::uint32_t fMaxPhotonCount{5'000'000};
     std::uint32_t fMaxBounceCount{4096};
     float fBoundaryEpsilonMm{1.0e-4F};
+    std::uint32_t fMeshRotationSteps{360};
 };
 
 static_assert(std::is_trivially_copyable_v<Photon>);

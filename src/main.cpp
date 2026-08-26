@@ -70,6 +70,12 @@ auto main(int argc, char** argv) -> int {
            "Maximum number of optical photon bounces")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
+    app.add_option(
+           "--mesh-rotation-steps",
+           options.transportConfig.fMeshRotationSteps,
+           "Number of Geant4 polyhedron rotation steps")
+        ->check(CLI::Range(8U, 4096U))
+        ->capture_default_str();
     app.add_option("macro", macroFile, "Geant4 macro file")
         ->expected(0, 1);
 

@@ -55,7 +55,7 @@ auto OpticalEventBridge::BeginRun() -> void {
             ->GetNavigatorForTracking()
             ->GetWorldVolume()};
     try {
-        fScene = Geant4SceneExporter{}.Export(world);
+        fScene = Geant4SceneExporter{fConfig.fMeshRotationSteps}.Export(world);
     } catch (const std::exception& exception) {
         G4ExceptionDescription description{};
         description << "Optical scene export failed: " << exception.what();
