@@ -73,6 +73,7 @@ struct TransportStats {
     std::uint64_t fDetectedCount{};
     std::uint64_t fAbsorbedCount{};
     std::uint64_t fEscapedCount{};
+    std::uint64_t fTruncatedCount{};
     std::uint64_t fMaxBounceCount{};
     std::uint64_t fInvalidStateCount{};
     std::uint64_t fZeroStepCount{};

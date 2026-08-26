@@ -112,6 +112,7 @@ auto OpticalEventBridge::EndEvent() -> void {
         fEventStats.fDetectedCount = result.fStats.fDetectedCount;
         fEventStats.fAbsorbedCount = result.fStats.fAbsorbedCount;
         fEventStats.fEscapedCount = result.fStats.fEscapedCount;
+        fEventStats.fTruncatedCount = result.fStats.fTruncatedCount;
         fEventStats.fMaxBounceCount = result.fStats.fMaxBounceCount;
         fEventStats.fInvalidStateCount = result.fStats.fInvalidStateCount;
         fEventStats.fZeroStepCount = result.fStats.fZeroStepCount;
@@ -209,6 +210,7 @@ auto OpticalEventBridge::AddEventStatsToRun() -> void {
     fRunStats.fDetectedCount += fEventStats.fDetectedCount;
     fRunStats.fAbsorbedCount += fEventStats.fAbsorbedCount;
     fRunStats.fEscapedCount += fEventStats.fEscapedCount;
+    fRunStats.fTruncatedCount += fEventStats.fTruncatedCount;
     fRunStats.fMaxBounceCount =
         std::max(fRunStats.fMaxBounceCount, fEventStats.fMaxBounceCount);
     fRunStats.fInvalidStateCount += fEventStats.fInvalidStateCount;

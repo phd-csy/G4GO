@@ -330,6 +330,7 @@ public:
         result.fStats.fDetectedCount = deviceStats.fDetectedCount;
         result.fStats.fAbsorbedCount = deviceStats.fAbsorbedCount;
         result.fStats.fEscapedCount = deviceStats.fEscapedCount;
+        result.fStats.fTruncatedCount = deviceStats.fTruncatedCount;
         result.fStats.fMaxBounceCount = deviceStats.fMaxBounceCount;
         result.fStats.fInvalidStateCount = deviceStats.fInvalidStateCount;
         result.fStats.fZeroStepCount = deviceStats.fZeroStepCount;
@@ -502,7 +503,9 @@ private:
         for (const auto& surface : scene.Surfaces()) {
             surfaces.push_back({
                 static_cast<std::uint8_t>(surface.fKind),
-                {},
+                static_cast<std::uint8_t>(surface.fFinish),
+                static_cast<std::uint8_t>(surface.fSensor),
+                0,
                 UploadProperty(surface.fReflectivity, sceneAllocations),
                 UploadProperty(surface.fEfficiency, sceneAllocations),
             });

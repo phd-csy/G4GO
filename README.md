@@ -223,7 +223,11 @@ CMake 将模块编译为内部静态库：`g4go_optical_core`、可选的 `g4go_
 | `cpu` | 由 Geant4 跟踪 | Geant4 | Geant4 SD |
 | `gpu` | 捕获后终止 Geant4 光子 | OptiX 9.1 | `SensorHC` / `SensorHit` |
 
-OptiX scene exporter 当前支持 `G4Box`、full-phi `G4Tubs`、材料 `RINDEX/GROUPVEL/ABSLENGTH`，以及 polished unified/glisur optical surface。边界 surface 查找遵循 directed border surface、daughter skin surface、current skin surface 的优先级。
+OptiX scene exporter 当前支持 `G4Box`、full-phi `G4Tubs`、材料 `RINDEX/GROUPVEL/ABSLENGTH`，以及 polished/ground unified/glisur optical surface。边界 surface 查找遵循 directed border surface、daughter skin surface、current skin surface 的优先级。
+
+无显式 optical surface 的透明材料边界使用包含 S/P 偏振分量的 Fresnel 反射、折射和全反射计算；下一材料缺少 `RINDEX` 时按非透明边界吸收。显式 sensor surface 使用 `EFFICIENCY` 决定探测或吸收，普通显式 surface 使用 `REFLECTIVITY` 决定反射或吸收；polished surface 采用镜面反射，ground surface 采用 Lambertian 漫反射。达到 `--max-bounces` 的 photon 单独计入 `truncated`，不会混入物理吸收统计。
+
+GPU scene export 会拒绝当前未实现的 Rayleigh、Mie、WLS，以及 `TRANSMITTANCE`、UNIFIED specular/backscatter、复折射率和 coated surface 属性，避免忽略配置后继续产生结果。
 
 OptiX backend 将 device program 编译为 OptiX IR，使用 custom primitive AABB GAS。每个 photon 对应一个 raygen launch slot，hit 结果通过稳定的 photon slot 回读，随机数使用 host/device 一致的 Philox4x32-10。
 
@@ -264,6 +268,8 @@ cmake --build build --target g4go-format-check
 ctest --test-dir build --output-on-failure
 rootls -t build/run_smoke.root
 ```
+
+`g4go_optical_boundary` 专项测试覆盖正入射 Fresnel、Brewster 角、全反射、显式表面概率和 Lambertian 反射方向。
 
 `build/run_optical_smoke.mac` 使用一个从 core 内部发射的 deterministic optical photon，适合验证初始化、OptiX transport、SensorHC 和 ROOT 输出。`build/run_smoke.mac` 保留一个 gamma event 的源链路 smoke，gamma 是否发生能量沉积由 Geant4 随机过程决定；`build/run_regression.mac` 保留原有 1000 event 基线。
 `build/run_optical_benchmark.mac` 使用单个 run 中的 1000 个直接光子，用于检查 OptiX 的传输统计。

@@ -53,7 +53,9 @@ struct DeviceMaterial {
 
 struct DeviceSurface {
     std::uint8_t fKind{};
-    std::uint8_t fReserved[3]{};
+    std::uint8_t fFinish{};
+    std::uint8_t fSensor{};
+    std::uint8_t fReserved{};
     DeviceProperty fReflectivity{};
     DeviceProperty fEfficiency{};
 };
@@ -110,6 +112,7 @@ struct DeviceTransportStats {
     unsigned long long fDetectedCount{};
     unsigned long long fAbsorbedCount{};
     unsigned long long fEscapedCount{};
+    unsigned long long fTruncatedCount{};
     unsigned long long fMaxBounceCount{};
     unsigned long long fInvalidStateCount{};
     unsigned long long fZeroStepCount{};

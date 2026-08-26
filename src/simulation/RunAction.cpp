@@ -56,6 +56,7 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                    << ", detected: " << stats.fDetectedCount
                    << ", absorbed: " << stats.fAbsorbedCount
                    << ", escaped: " << stats.fEscapedCount
+                   << ", truncated: " << stats.fTruncatedCount
                    << ", invalid: " << stats.fInvalidStateCount
                    << ", max_bounce: " << stats.fMaxBounceCount
                    << ", transport_ms: " << stats.fTransportTimeMs << G4endl;

@@ -21,6 +21,11 @@ enum class SurfaceKind : std::uint8_t {
     DielectricMetal,
 };
 
+enum class SurfaceFinish : std::uint8_t {
+    Polished,
+    Ground,
+};
+
 struct Rotation {
     float fXX{1.0F};
     float fXY{};
@@ -57,6 +62,8 @@ struct Material {
 struct Surface {
     std::string fName{};
     SurfaceKind fKind{SurfaceKind::DielectricDielectric};
+    SurfaceFinish fFinish{SurfaceFinish::Polished};
+    bool fSensor{};
     PropertyTable fReflectivity{};
     PropertyTable fEfficiency{};
 };

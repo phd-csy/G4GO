@@ -132,6 +132,7 @@ if(G4GO_OPTIX_AVAILABLE)
         DEPENDS
             src/optical/optix/DeviceProgram.cu
             src/optical/optix/DeviceTypes.cuh
+            src/optical/optix/BoundaryPhysics.cuh
         COMMENT "Compiling OptiX device program"
         VERBATIM
     )
@@ -155,6 +156,7 @@ if(G4GO_OPTIX_AVAILABLE)
     add_library(g4go_optical_optix STATIC
         src/optical/optix/Transport.cpp
         include/g4go/optical/optix/Transport.hpp
+        src/optical/optix/BoundaryPhysics.cuh
         src/optical/optix/DeviceTypes.cuh
         ${G4GO_OPTIX_IR_HEADER}
     )
@@ -261,8 +263,10 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             include/g4go/optical/geant4/StackingAction.hpp
             src/optical/optix/Transport.cpp
             src/optical/optix/DeviceProgram.cu
+            src/optical/optix/BoundaryPhysics.cuh
             src/optical/optix/DeviceTypes.cuh
             include/g4go/optical/optix/Transport.hpp
+            test/OpticalBoundaryPhysicsTests.cpp
             src/detector/DetectorConstruction.cpp
             src/detector/ScintillatorSD.cpp
             src/detector/SensorSD.cpp
@@ -310,6 +314,14 @@ endif()
 install(TARGETS g4go RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
+    add_executable(g4go_optical_boundary_tests
+        test/OpticalBoundaryPhysicsTests.cpp)
+    g4go_configure_cpp_target(g4go_optical_boundary_tests)
+    target_include_directories(g4go_optical_boundary_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/optical/optix)
+    add_test(NAME g4go_optical_boundary
+             COMMAND $<TARGET_FILE:g4go_optical_boundary_tests>)
+
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
                      ${PROJECT_BINARY_DIR}/run_optical_smoke.mac)
