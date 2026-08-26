@@ -476,8 +476,8 @@ private:
             break;
         default:
             throw std::runtime_error(
-                "GPU mesh backend supports only polished and ground "
-                "optical surface finishes");
+                "GPU mesh backend supports polished and ground finishes "
+                "only; painted finishes are unsupported");
         }
 
         if (const auto* table{
