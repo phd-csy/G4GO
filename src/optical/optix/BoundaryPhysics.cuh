@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DeviceTypes.cuh"
+#include "OptixTransportTypes.cuh"
 
 #include <cmath>
 
@@ -105,10 +105,18 @@ G4GO_OPTICAL_HD inline auto EvaluateSurface(float efficiency,
                                             float reflectivity,
                                             bool sensor,
                                             float sample) -> SurfaceOutcome {
-    if (sensor) {
-        return sample < ClampProbability(efficiency) ? SurfaceOutcome::Detect : SurfaceOutcome::Absorb;
+    reflectivity = ClampProbability(reflectivity);
+    efficiency = ClampProbability(efficiency);
+    sample = ClampProbability(sample);
+    if (sample < reflectivity) {
+        return SurfaceOutcome::Reflect;
     }
-    return sample < ClampProbability(reflectivity) ? SurfaceOutcome::Reflect : SurfaceOutcome::Absorb;
+    if (sensor) {
+        const auto detectionProbability{
+            reflectivity + (1.0F - reflectivity) * efficiency};
+        return sample < detectionProbability ? SurfaceOutcome::Detect : SurfaceOutcome::Absorb;
+    }
+    return SurfaceOutcome::Absorb;
 }
 
 G4GO_OPTICAL_HD inline auto SampleLambertian(DeviceVector3 normal,

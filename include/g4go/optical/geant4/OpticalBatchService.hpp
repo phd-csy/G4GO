@@ -61,7 +61,9 @@ private:
     TransportConfig fConfig{};
     Backend fBackend{Backend::Auto};
     Scene fScene{};
+#ifdef G4GO_ENABLE_OPTIX
     std::unique_ptr<class OptixOpticalTransport> fTransport{};
+#endif
 
     mutable std::mutex fMutex{};
     std::condition_variable fCondition{};

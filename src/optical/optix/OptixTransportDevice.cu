@@ -16,6 +16,7 @@ namespace {
 
 constexpr auto invalidID{0xffffffffU};
 constexpr auto boxKind{0U};
+constexpr auto dielectricMetal{1U};
 constexpr auto groundFinish{1U};
 constexpr auto speedOfLightMmPerNs{299.792458F};
 constexpr auto pi{3.14159265358979323846F};
@@ -557,7 +558,7 @@ __global__ void __raygen__rg() {
         auto reflected{false};
         auto detected{false};
         auto surfaceAbsorbed{false};
-        if (surface != nullptr) {
+        if (surface != nullptr && surface->fKind == dielectricMetal) {
             const auto reflectivity{fminf(
                 fmaxf(SampleProperty(surface->fReflectivity, photon.fEnergyEv,
                                      0.0F),
@@ -614,8 +615,22 @@ __global__ void __raygen__rg() {
                                     bounce, 2U, 0U) >
                             fresnel.fTransmittance;
                 if (reflected) {
-                    direction = fresnel.fReflectedDirection;
-                    polarization = fresnel.fReflectedPolarization;
+                    if (surface != nullptr && surface->fFinish == groundFinish) {
+                        const auto oldDirection{direction};
+                        direction = BoundaryPhysics::SampleLambertian(
+                            normal,
+                            Uniform(gLaunchParams.fSeed,
+                                    PhotonRandomID(photon), bounce, 1U, 1U),
+                            Uniform(gLaunchParams.fSeed,
+                                    PhotonRandomID(photon), bounce, 1U, 2U));
+                        const auto facetNormal{
+                            Normalize(Subtract(direction, oldDirection))};
+                        polarization = BoundaryPhysics::ReflectPolarization(
+                            polarization, facetNormal, direction);
+                    } else {
+                        direction = fresnel.fReflectedDirection;
+                        polarization = fresnel.fReflectedPolarization;
+                    }
                 } else {
                     direction = fresnel.fTransmittedDirection;
                     polarization = fresnel.fTransmittedPolarization;

@@ -7,7 +7,7 @@
 #include "SceneExporter.hpp"
 
 #ifdef G4GO_ENABLE_OPTIX
-#    include "DeviceTypes.cuh"
+#    include "OptixTransportTypes.cuh"
 #    include "cuda_runtime_api.h"
 #    include "g4go/optical/optix/Transport.hpp"
 #endif
@@ -126,8 +126,15 @@ auto OpticalBatchService::EndRun() -> void {
     if (fGpuThread.joinable()) {
         fGpuThread.join();
     }
+#ifdef G4GO_ENABLE_OPTIX
+    fTransport.reset();
+#endif
     std::lock_guard lock{fMutex};
-    fReady = true;
+    fScene = {};
+    fFailure = nullptr;
+    fReady = false;
+    fStarted = false;
+    fStopRequested = false;
 }
 
 auto OpticalBatchService::Submit(std::int32_t eventID,
