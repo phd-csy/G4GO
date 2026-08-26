@@ -554,21 +554,21 @@ __global__ void __raygen__rg() {
 
         const auto nextPosition{Add(position, Scale(direction, distance))};
         photon.fTimeNs += distance / velocity;
-        const auto nextVolumeID{LocateVolume(
-            Add(nextPosition,
-                Scale(direction, gLaunchParams.fBoundaryEpsilonMm)))};
-        if (nextVolumeID == invalidID) {
-            atomicAdd(&gLaunchParams.fStats->fEscapedCount,
-                      static_cast<unsigned long long>(1));
-            break;
-        }
-
         auto normal{Normalize({__uint_as_float(payload1),
                                __uint_as_float(payload2),
                                __uint_as_float(payload3)})};
         if (Dot(direction, normal) > 0.0F) {
             normal = Scale(normal, -1.0F);
         }
+        const auto nextVolumeID{LocateVolume(
+            Add(nextPosition,
+                Scale(normal, -gLaunchParams.fBoundaryEpsilonMm)))};
+        if (nextVolumeID == invalidID) {
+            atomicAdd(&gLaunchParams.fStats->fEscapedCount,
+                      static_cast<unsigned long long>(1));
+            break;
+        }
+
         const auto* nextSolid{FindSolid(nextVolumeID)};
         const auto* nextMaterial{
             nextSolid == nullptr ? nullptr : FindMaterial(nextSolid->fMaterialID)};
@@ -673,8 +673,10 @@ __global__ void __raygen__rg() {
             direction = Reflect(direction, normal);
             polarization = ProjectPolarization(polarization, direction);
         }
-        position = Add(nextPosition,
-                       Scale(direction, gLaunchParams.fBoundaryEpsilonMm));
+        position = Add(
+            nextPosition,
+            Scale(normal,
+                  reflected ? gLaunchParams.fBoundaryEpsilonMm : -gLaunchParams.fBoundaryEpsilonMm));
     }
 
     if (!terminated && bounce >= gLaunchParams.fMaxBounceCount) {
