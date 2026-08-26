@@ -9,7 +9,7 @@
 #ifdef G4GO_ENABLE_OPTIX
 #    include "OptixTransportTypes.cuh"
 #    include "cuda_runtime_api.h"
-#    include "g4go/optical/optix/Transport.hpp"
+#    include "g4go/optical/optix/OptixTransport.hpp"
 #endif
 
 #include <algorithm>

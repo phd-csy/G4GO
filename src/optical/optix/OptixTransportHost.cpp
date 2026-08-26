@@ -1,4 +1,4 @@
-#include "g4go/optical/optix/Transport.hpp"
+#include "g4go/optical/optix/OptixTransport.hpp"
 
 #include "OptixTransportTypes.cuh"
 #include "cuda_runtime_api.h"
