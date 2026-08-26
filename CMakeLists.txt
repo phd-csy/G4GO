@@ -94,22 +94,13 @@ function(g4go_configure_cpp_target target)
     endif()
 endfunction()
 
-set(G4GO_OPTICAL_CORE_SOURCES
-    src/optical/Geometry.cpp
-    src/optical/Scene.cpp
-)
-
-set(G4GO_OPTICAL_CORE_HEADERS
-    include/g4go/optical/Geometry.hpp
-    include/g4go/optical/Random.hpp
-    include/g4go/optical/Scene.hpp
-    include/g4go/optical/Transport.hpp
-    include/g4go/optical/Types.hpp
+file(GLOB G4GO_OPTICAL_CORE_FILES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/optical/*.cpp"
+    "${PROJECT_SOURCE_DIR}/include/g4go/optical/*.hpp"
 )
 
 add_library(g4go_optical_core STATIC
-    ${G4GO_OPTICAL_CORE_SOURCES}
-    ${G4GO_OPTICAL_CORE_HEADERS}
+    ${G4GO_OPTICAL_CORE_FILES}
 )
 g4go_configure_cpp_target(g4go_optical_core)
 
@@ -117,6 +108,15 @@ if(G4GO_OPTIX_AVAILABLE)
     set(G4GO_OPTIX_GENERATED_DIR ${PROJECT_BINARY_DIR}/generated)
     set(G4GO_OPTIX_IR ${G4GO_OPTIX_GENERATED_DIR}/g4go_optical.optixir)
     set(G4GO_OPTIX_IR_HEADER ${G4GO_OPTIX_GENERATED_DIR}/g4go_optix_ir.h)
+    file(GLOB G4GO_OPTIX_DEVICE_FILES CONFIGURE_DEPENDS
+        "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cu"
+        "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cuh"
+    )
+    file(GLOB G4GO_OPTIX_HOST_FILES CONFIGURE_DEPENDS
+        "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cpp"
+        "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cuh"
+        "${PROJECT_SOURCE_DIR}/include/g4go/optical/optix/*.hpp"
+    )
 
     add_custom_command(
         OUTPUT ${G4GO_OPTIX_IR}
@@ -130,9 +130,7 @@ if(G4GO_OPTIX_AVAILABLE)
                 -c ${PROJECT_SOURCE_DIR}/src/optical/optix/OptixTransportDevice.cu
                 -o ${G4GO_OPTIX_IR}
         DEPENDS
-            src/optical/optix/OptixTransportDevice.cu
-            src/optical/optix/BoundaryPhysics.cuh
-            src/optical/optix/OptixTransportTypes.cuh
+            ${G4GO_OPTIX_DEVICE_FILES}
         COMMENT "Compiling OptiX device program"
         VERBATIM
     )
@@ -154,10 +152,7 @@ if(G4GO_OPTIX_AVAILABLE)
     add_custom_target(g4go_optix_module DEPENDS ${G4GO_OPTIX_IR_HEADER})
 
     add_library(g4go_optical_optix STATIC
-        src/optical/optix/OptixTransportHost.cpp
-        include/g4go/optical/optix/Transport.hpp
-        src/optical/optix/OptixTransportTypes.cuh
-        src/optical/optix/BoundaryPhysics.cuh
+        ${G4GO_OPTIX_HOST_FILES}
         ${G4GO_OPTIX_IR_HEADER}
     )
     g4go_configure_cpp_target(g4go_optical_optix)
@@ -171,15 +166,14 @@ if(G4GO_OPTIX_AVAILABLE)
         PRIVATE CUDA::cudart CUDA::cuda_driver)
 endif()
 
+file(GLOB G4GO_OPTICAL_GEANT4_FILES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/optical/geant4/*.cpp"
+    "${PROJECT_SOURCE_DIR}/src/optical/geant4/*.hpp"
+    "${PROJECT_SOURCE_DIR}/include/g4go/optical/geant4/*.hpp"
+)
+
 add_library(g4go_optical_geant4 STATIC
-    src/optical/geant4/EventBridge.cpp
-    src/optical/geant4/OpticalBatchService.cpp
-    src/optical/geant4/SceneExporter.cpp
-    src/optical/geant4/SceneExporter.hpp
-    src/optical/geant4/StackingAction.cpp
-    include/g4go/optical/geant4/EventBridge.hpp
-    include/g4go/optical/geant4/OpticalBatchService.hpp
-    include/g4go/optical/geant4/StackingAction.hpp
+    ${G4GO_OPTICAL_GEANT4_FILES}
 )
 g4go_configure_cpp_target(g4go_optical_geant4)
 target_link_libraries(g4go_optical_geant4
@@ -194,37 +188,35 @@ if(G4GO_OPTIX_AVAILABLE)
         g4go_optical_optix CUDA::cudart)
 endif()
 
+file(GLOB G4GO_DETECTOR_FILES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/detector/*.cpp"
+    "${PROJECT_SOURCE_DIR}/include/g4go/detector/*.hpp"
+)
+
 add_library(g4go_detector STATIC
-    src/detector/DetectorConstruction.cpp
-    src/detector/ScintillatorSD.cpp
-    src/detector/SensorSD.cpp
-    include/g4go/detector/DetectorConstruction.hpp
-    include/g4go/detector/ScintillatorHit.hpp
-    include/g4go/detector/ScintillatorSD.hpp
-    include/g4go/detector/SensorHit.hpp
-    include/g4go/detector/SensorSD.hpp
+    ${G4GO_DETECTOR_FILES}
 )
 g4go_configure_cpp_target(g4go_detector)
 target_link_libraries(g4go_detector PRIVATE ${Geant4_LIBRARIES})
 
+file(GLOB G4GO_SIMULATION_FILES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/simulation/*.cpp"
+    "${PROJECT_SOURCE_DIR}/include/g4go/simulation/*.hpp"
+)
+
 add_library(g4go_simulation STATIC
-    src/simulation/ActionInitialization.cpp
-    src/simulation/EventAction.cpp
-    src/simulation/EventOutput.cpp
-    src/simulation/PrimaryGeneratorAction.cpp
-    src/simulation/RunAction.cpp
-    include/g4go/simulation/ActionInitialization.hpp
-    include/g4go/simulation/EventAction.hpp
-    include/g4go/simulation/EventOutput.hpp
-    include/g4go/simulation/PrimaryGeneratorAction.hpp
-    include/g4go/simulation/RunAction.hpp
+    ${G4GO_SIMULATION_FILES}
 )
 g4go_configure_cpp_target(g4go_simulation)
 target_link_libraries(g4go_simulation
     PUBLIC g4go_detector g4go_optical_geant4
     PRIVATE ${Geant4_LIBRARIES})
 
-add_executable(g4go src/main.cpp)
+file(GLOB G4GO_APPLICATION_FILES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/*.cpp"
+)
+
+add_executable(g4go ${G4GO_APPLICATION_FILES})
 g4go_configure_cpp_target(g4go)
 target_link_libraries(g4go PRIVATE CLI11::CLI11 g4go_simulation ${Geant4_LIBRARIES})
 
@@ -238,63 +230,29 @@ if(G4GO_ENABLE_CLANG_TIDY)
         CXX_CLANG_TIDY "${G4GO_CLANG_TIDY_EXECUTABLE}")
 endif()
 
-set(G4GO_SCRIPT_DIR ${PROJECT_SOURCE_DIR}/scripts)
-
-file(GLOB G4GO_MACRO_FILES CONFIGURE_DEPENDS
-    ${G4GO_SCRIPT_DIR}/*.mac
+set(G4GO_SCRIPT_DIR "${PROJECT_SOURCE_DIR}/scripts")
+file(GLOB G4GO_SCRIPT_FILES CONFIGURE_DEPENDS
+    "${G4GO_SCRIPT_DIR}/*"
 )
-
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${G4GO_MACRO_FILES}
+    ${G4GO_SCRIPT_FILES}
 )
-
-foreach(macroFile IN LISTS G4GO_MACRO_FILES)
-    get_filename_component(macroName "${macroFile}" NAME)
-    set(macroOutput "${PROJECT_BINARY_DIR}/${macroName}")
-    configure_file("${macroFile}" "${macroOutput}" COPYONLY)
-endforeach()
+file(COPY "${G4GO_SCRIPT_DIR}" DESTINATION "${PROJECT_BINARY_DIR}")
 
 if(G4GO_ENABLE_FORMAT_TARGETS)
     find_program(G4GO_CLANG_FORMAT_EXECUTABLE NAMES clang-format)
 
     if(G4GO_CLANG_FORMAT_EXECUTABLE)
-        set(G4GO_FORMAT_FILES
-            src/main.cpp
-            ${G4GO_OPTICAL_CORE_SOURCES}
-            ${G4GO_OPTICAL_CORE_HEADERS}
-            src/optical/geant4/EventBridge.cpp
-            src/optical/geant4/OpticalBatchService.cpp
-            src/optical/geant4/SceneExporter.cpp
-            src/optical/geant4/SceneExporter.hpp
-            src/optical/geant4/StackingAction.cpp
-            include/g4go/optical/geant4/EventBridge.hpp
-            include/g4go/optical/geant4/OpticalBatchService.hpp
-            include/g4go/optical/geant4/StackingAction.hpp
-            src/optical/optix/OptixTransportHost.cpp
-            src/optical/optix/OptixTransportDevice.cu
-            src/optical/optix/OptixTransportTypes.cuh
-            src/optical/optix/BoundaryPhysics.cuh
-            include/g4go/optical/optix/Transport.hpp
-            src/detector/DetectorConstruction.cpp
-            src/detector/ScintillatorSD.cpp
-            src/detector/SensorSD.cpp
-            include/g4go/detector/DetectorConstruction.hpp
-            include/g4go/detector/ScintillatorHit.hpp
-            include/g4go/detector/ScintillatorSD.hpp
-            include/g4go/detector/SensorHit.hpp
-            include/g4go/detector/SensorSD.hpp
-            src/simulation/ActionInitialization.cpp
-            src/simulation/EventAction.cpp
-            src/simulation/EventOutput.cpp
-            src/simulation/PrimaryGeneratorAction.cpp
-            src/simulation/RunAction.cpp
-            include/g4go/simulation/ActionInitialization.hpp
-            include/g4go/simulation/EventAction.hpp
-            include/g4go/simulation/EventOutput.hpp
-            include/g4go/simulation/PrimaryGeneratorAction.hpp
-            include/g4go/simulation/RunAction.hpp
-            test/OpticalBoundaryPhysicsTests.cpp
-            test/TestOpticalTransport.C
+        file(GLOB_RECURSE G4GO_FORMAT_FILES CONFIGURE_DEPENDS
+            "${PROJECT_SOURCE_DIR}/src/*.cpp"
+            "${PROJECT_SOURCE_DIR}/src/*.hpp"
+            "${PROJECT_SOURCE_DIR}/src/*.cu"
+            "${PROJECT_SOURCE_DIR}/src/*.cuh"
+            "${PROJECT_SOURCE_DIR}/include/*.hpp"
+            "${PROJECT_SOURCE_DIR}/include/*.cuh"
+            "${PROJECT_SOURCE_DIR}/test/*.cpp"
+            "${PROJECT_SOURCE_DIR}/test/*.cxx"
+            "${PROJECT_SOURCE_DIR}/test/*.C"
         )
 
         add_custom_target(g4go-format
@@ -326,26 +284,46 @@ install(TARGETS g4go RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
     add_executable(g4go_optical_boundary_tests
-        test/OpticalBoundaryPhysicsTests.cpp)
+        test/TestOpticalBoundaryPhysics.cxx)
     g4go_configure_cpp_target(g4go_optical_boundary_tests)
     target_include_directories(g4go_optical_boundary_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/src/optical/optix)
     add_test(NAME g4go_optical_boundary
              COMMAND $<TARGET_FILE:g4go_optical_boundary_tests>)
+    set_tests_properties(g4go_optical_boundary PROPERTIES
+        LABELS "unit;cpu"
+        TIMEOUT 30)
+
+    set(G4GO_TEST_RUNTIME_FILES
+        "${PROJECT_SOURCE_DIR}/test/TestOpticalTransport.cxx"
+        "${PROJECT_SOURCE_DIR}/test/regression_test.sh"
+    )
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${G4GO_TEST_RUNTIME_FILES}
+    )
+    foreach(test_runtime_file IN LISTS G4GO_TEST_RUNTIME_FILES)
+        get_filename_component(test_runtime_name "${test_runtime_file}" NAME)
+        configure_file(
+            "${test_runtime_file}"
+            "${PROJECT_BINARY_DIR}/test/${test_runtime_name}"
+            COPYONLY)
+    endforeach()
 
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
-                     ${PROJECT_BINARY_DIR}/run_optical_smoke.mac)
+                     ${PROJECT_BINARY_DIR}/scripts/run_optical_smoke.mac)
     set_tests_properties(g4go_smoke_auto PROPERTIES
+        LABELS "smoke;integration;auto"
+        TIMEOUT 60
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 
     find_program(G4GO_BASH_EXECUTABLE NAMES bash REQUIRED)
     add_test(NAME g4go_noptpho_regression
              COMMAND ${G4GO_BASH_EXECUTABLE}
-                     ${PROJECT_SOURCE_DIR}/test/regression_test.sh
+                     ${PROJECT_BINARY_DIR}/test/regression_test.sh
                      --build-dir ${PROJECT_BINARY_DIR})
     set_tests_properties(g4go_noptpho_regression PROPERTIES
-        LABELS "regression;gpu"
+        LABELS "regression;cpu;gpu;slow"
         RUN_SERIAL TRUE
         TIMEOUT 600
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
