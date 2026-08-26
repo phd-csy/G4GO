@@ -41,6 +41,7 @@ public:
                 TransportStats sourceStats) -> EventTransportFuture;
 
     auto BackendType() const -> Backend;
+    auto SceneData() const -> const Scene& { return fScene; }
     auto RunStats() const -> const TransportStats&;
     auto Statistics() const -> const BatchStats&;
 

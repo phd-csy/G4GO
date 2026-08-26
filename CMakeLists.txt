@@ -131,8 +131,8 @@ if(G4GO_OPTIX_AVAILABLE)
                 -o ${G4GO_OPTIX_IR}
         DEPENDS
             src/optical/optix/OptixTransportDevice.cu
-            src/optical/optix/OptixTransportTypes.cuh
             src/optical/optix/BoundaryPhysics.cuh
+            src/optical/optix/OptixTransportTypes.cuh
         COMMENT "Compiling OptiX device program"
         VERBATIM
     )
@@ -275,7 +275,6 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             src/optical/optix/OptixTransportTypes.cuh
             src/optical/optix/BoundaryPhysics.cuh
             include/g4go/optical/optix/Transport.hpp
-            test/OpticalBoundaryPhysicsTests.cpp
             src/detector/DetectorConstruction.cpp
             src/detector/ScintillatorSD.cpp
             src/detector/SensorSD.cpp
@@ -294,6 +293,7 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             include/g4go/simulation/EventOutput.hpp
             include/g4go/simulation/PrimaryGeneratorAction.hpp
             include/g4go/simulation/RunAction.hpp
+            test/OpticalBoundaryPhysicsTests.cpp
             test/TestOpticalTransport.C
         )
 

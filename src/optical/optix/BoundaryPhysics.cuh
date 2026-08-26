@@ -15,7 +15,8 @@ namespace G4GO::Optical::BoundaryPhysics {
 enum class SurfaceOutcome : unsigned char {
     Absorb,
     Detect,
-    Reflect,
+    DirectTransmit,
+    SurfaceInteraction,
 };
 
 struct FresnelResult {
@@ -101,20 +102,30 @@ G4GO_OPTICAL_HD inline auto ReflectPolarization(DeviceVector3 polarization,
     return ProjectPolarization(reflected, direction);
 }
 
-G4GO_OPTICAL_HD inline auto EvaluateSurface(float efficiency,
-                                            float reflectivity,
-                                            bool sensor,
+G4GO_OPTICAL_HD inline auto ClassifySurface(float reflectivity,
+                                            float transmittance,
+                                            bool hasReflectivity,
+                                            bool hasTransmittance,
                                             float sample) -> SurfaceOutcome {
-    reflectivity = ClampProbability(reflectivity);
-    efficiency = ClampProbability(efficiency);
-    sample = ClampProbability(sample);
-    if (sample < reflectivity) {
-        return SurfaceOutcome::Reflect;
+    const auto directTransmission{ClampProbability(transmittance)};
+    const auto surfaceInteraction{
+        hasReflectivity
+            ? (1.0F - directTransmission) * ClampProbability(reflectivity)
+            : (hasTransmittance ? 0.0F : 1.0F)};
+    if (sample < directTransmission) {
+        return SurfaceOutcome::DirectTransmit;
     }
-    if (sensor) {
-        const auto detectionProbability{
-            reflectivity + (1.0F - reflectivity) * efficiency};
-        return sample < detectionProbability ? SurfaceOutcome::Detect : SurfaceOutcome::Absorb;
+    if (sample < directTransmission + surfaceInteraction) {
+        return SurfaceOutcome::SurfaceInteraction;
+    }
+    return SurfaceOutcome::Absorb;
+}
+
+G4GO_OPTICAL_HD inline auto EvaluateAbsorption(float efficiency,
+                                               bool sensor,
+                                               float sample) -> SurfaceOutcome {
+    if (sensor && sample < ClampProbability(efficiency)) {
+        return SurfaceOutcome::Detect;
     }
     return SurfaceOutcome::Absorb;
 }

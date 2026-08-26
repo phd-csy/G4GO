@@ -11,19 +11,32 @@ namespace G4GO::Optical {
 
 constexpr auto InvalidID{std::numeric_limits<std::uint32_t>::max()};
 
-enum class SolidKind : std::uint8_t {
-    Box,
-    Tub,
-};
-
-enum class SurfaceKind : std::uint8_t {
+enum class SurfaceType : std::uint8_t {
     DielectricDielectric,
     DielectricMetal,
+    DielectricLut,
+    DielectricLutDavis,
+    DielectricDichroic,
+    Coated,
+};
+
+enum class SurfaceModel : std::uint8_t {
+    Glisur,
+    Unified,
+    Lut,
+    Davis,
+    Dichroic,
 };
 
 enum class SurfaceFinish : std::uint8_t {
     Polished,
+    PolishedFrontPainted,
+    PolishedBackPainted,
     Ground,
+    GroundFrontPainted,
+    GroundBackPainted,
+    Lut,
+    Davis,
 };
 
 struct Rotation {
@@ -61,28 +74,51 @@ struct Material {
 
 struct Surface {
     std::string fName{};
-    SurfaceKind fKind{SurfaceKind::DielectricDielectric};
+    SurfaceType fType{SurfaceType::DielectricDielectric};
+    SurfaceModel fModel{SurfaceModel::Unified};
     SurfaceFinish fFinish{SurfaceFinish::Polished};
-    bool fSensor{};
+    float fModelValue{1.0F};
     PropertyTable fReflectivity{};
     PropertyTable fEfficiency{};
+    PropertyTable fTransmittance{};
+    PropertyTable fRindex{};
+    PropertyTable fRealRindex{};
+    PropertyTable fImaginaryRindex{};
+    PropertyTable fCoatedRindex{};
+    PropertyTable fSpecularLobe{};
+    PropertyTable fSpecularSpike{};
+    PropertyTable fBackscatter{};
+    PropertyTable fSurfaceRoughness{};
+    PropertyTable fDichroic{};
+    float fCoatedThicknessMm{};
+    bool fCoatedFrustratedTransmission{true};
 };
 
-struct Solid {
+struct MeshGeometry {
     std::string fName{};
-    SolidKind fKind{SolidKind::Box};
-    Transform fTransform{};
-    Vector3 fHalfSizeMm{};
-    float fInnerRadiusMm{};
-    float fOuterRadiusMm{};
-    float fHalfLengthMm{};
-    float fStartPhi{};
-    float fDeltaPhi{};
+    std::vector<Vector3> fVerticesMm{};
+    std::vector<std::uint32_t> fIndices{};
+    std::vector<std::uint8_t> fTriangleFlags{};
+};
+
+struct Geometry {
+    std::string fName{};
+    MeshGeometry fMesh{};
+};
+
+struct Volume {
+    std::string fName{};
     std::uint32_t fVolumeID{InvalidID};
+    std::uint32_t fPhysicalVolumeID{InvalidID};
+    std::uint32_t fCopyNo{};
+    std::uint32_t fGeometryID{InvalidID};
     std::uint32_t fMaterialID{InvalidID};
+    std::uint32_t fParentVolumeID{InvalidID};
     std::uint32_t fSkinSurfaceID{InvalidID};
     std::uint32_t fSensorID{InvalidID};
     std::uint32_t fDepth{};
+    bool fMayHaveCoincidentBoundary{};
+    Transform fTransform{};
 };
 
 struct SurfaceBinding {
@@ -98,12 +134,17 @@ public:
 
     auto AddMaterial(Material material) -> std::uint32_t;
     auto AddSurface(Surface surface) -> std::uint32_t;
-    auto AddSolid(Solid solid) -> std::uint32_t;
+    auto AddGeometry(Geometry geometry) -> std::uint32_t;
+    auto AddVolume(Volume volume) -> std::uint32_t;
     auto AddSurfaceBinding(SurfaceBinding binding) -> void;
 
     auto FindMaterial(std::uint32_t materialID) const -> const Material*;
     auto FindSurface(std::uint32_t surfaceID) const -> const Surface*;
-    auto FindSolid(std::uint32_t volumeID) const -> const Solid*;
+    auto FindGeometry(std::uint32_t geometryID) const -> const Geometry*;
+    auto FindVolume(std::uint32_t volumeID) const -> const Volume*;
+    auto FindVolume(std::uint32_t physicalVolumeID,
+                    std::uint32_t copyNo,
+                    std::uint32_t parentVolumeID) const -> const Volume*;
     auto FindBoundarySurface(std::uint32_t fromVolumeID,
                              std::uint32_t toVolumeID) const
         -> const Surface*;
@@ -112,7 +153,10 @@ public:
         return fMaterials;
     }
     auto Surfaces() const -> const std::vector<Surface>& { return fSurfaces; }
-    auto Solids() const -> const std::vector<Solid>& { return fSolids; }
+    auto Geometries() const -> const std::vector<Geometry>& {
+        return fGeometries;
+    }
+    auto Volumes() const -> const std::vector<Volume>& { return fVolumes; }
     auto SurfaceBindings() const -> const std::vector<SurfaceBinding>& {
         return fSurfaceBindings;
     }
@@ -120,11 +164,14 @@ public:
     auto SetWorldVolumeID(std::uint32_t volumeID) -> void {
         fWorldVolumeID = volumeID;
     }
+    auto SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                            bool value) -> void;
 
 private:
     std::vector<Material> fMaterials{};
     std::vector<Surface> fSurfaces{};
-    std::vector<Solid> fSolids{};
+    std::vector<Geometry> fGeometries{};
+    std::vector<Volume> fVolumes{};
     std::vector<SurfaceBinding> fSurfaceBindings{};
     std::uint32_t fWorldVolumeID{InvalidID};
 };

@@ -54,42 +54,52 @@ struct DeviceMaterial {
 };
 
 struct DeviceSurface {
-    std::uint8_t fKind{};
+    std::uint8_t fType{};
+    std::uint8_t fModel{};
     std::uint8_t fFinish{};
-    std::uint8_t fSensor{};
     std::uint8_t fReserved{};
+    float fModelValue{1.0F};
     DeviceProperty fReflectivity{};
     DeviceProperty fEfficiency{};
+    DeviceProperty fTransmittance{};
+    DeviceProperty fRindex{};
+    DeviceProperty fRealRindex{};
+    DeviceProperty fImaginaryRindex{};
+    DeviceProperty fCoatedRindex{};
+    DeviceProperty fSpecularLobe{};
+    DeviceProperty fSpecularSpike{};
+    DeviceProperty fBackscatter{};
+    DeviceProperty fSurfaceRoughness{};
+    DeviceProperty fDichroic{};
+    float fCoatedThicknessMm{};
+    std::uint8_t fCoatedFrustratedTransmission{1};
+    std::uint8_t fReservedSurface[3]{};
 };
 
-struct DeviceRotation {
-    float fXX{1.0F};
-    float fXY{};
-    float fXZ{};
-    float fYX{};
-    float fYY{1.0F};
-    float fYZ{};
-    float fZX{};
-    float fZY{};
-    float fZZ{1.0F};
+struct DeviceMeshGeometry {
+    const DeviceVector3* fVertices{};
+    const std::uint32_t* fIndices{};
+    const std::uint8_t* fTriangleFlags{};
+    std::uint32_t fVertexCount{};
+    std::uint32_t fTriangleCount{};
 };
 
-struct DeviceSolid {
-    std::uint8_t fKind{};
-    std::uint8_t fReserved[3]{};
-    DeviceRotation fRotation{};
-    DeviceVector3 fTranslationMm{};
-    DeviceVector3 fHalfSizeMm{};
-    float fInnerRadiusMm{};
-    float fOuterRadiusMm{};
-    float fHalfLengthMm{};
-    float fStartPhi{};
-    float fDeltaPhi{};
+struct DeviceGeometry {
+    DeviceMeshGeometry fMesh{};
+};
+
+struct DeviceVolume {
     std::uint32_t fVolumeID{};
+    std::uint32_t fPhysicalVolumeID{};
+    std::uint32_t fCopyNo{};
+    std::uint32_t fGeometryID{};
     std::uint32_t fMaterialID{};
+    std::uint32_t fParentVolumeID{};
     std::uint32_t fSkinSurfaceID{};
     std::uint32_t fSensorID{};
     std::uint32_t fDepth{};
+    std::uint8_t fMayHaveCoincidentBoundary{};
+    std::uint8_t fReserved[3]{};
 };
 
 struct DeviceSurfaceBinding {
@@ -103,8 +113,10 @@ struct DeviceScene {
     std::uint32_t fMaterialCount{};
     const DeviceSurface* fSurfaces{};
     std::uint32_t fSurfaceCount{};
-    const DeviceSolid* fSolids{};
-    std::uint32_t fSolidCount{};
+    const DeviceGeometry* fGeometries{};
+    std::uint32_t fGeometryCount{};
+    const DeviceVolume* fVolumes{};
+    std::uint32_t fVolumeCount{};
     const DeviceSurfaceBinding* fSurfaceBindings{};
     std::uint32_t fSurfaceBindingCount{};
     std::uint32_t fWorldVolumeID{};
@@ -123,6 +135,7 @@ struct DeviceTransportStats {
 struct OptixLaunchParams {
     DevicePhoton* fPhotons{};
     DevicePhotonHit* fHits{};
+    std::uint32_t* fHitFlags{};
     DeviceTransportStats* fStats{};
     DeviceScene fScene{};
     std::uint64_t fTraversable{};

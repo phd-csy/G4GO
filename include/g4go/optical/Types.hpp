@@ -100,6 +100,7 @@ struct TransportConfig {
     std::uint32_t fBatchMaxEvents{10'000};
     std::uint32_t fBatchMaxQueuePhotons{2'000'000};
     std::uint32_t fBatchTimeoutMs{5};
+    std::uint32_t fMeshRotationSteps{360};
 };
 
 static_assert(std::is_trivially_copyable_v<Photon>);

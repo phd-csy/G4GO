@@ -58,7 +58,7 @@ auto OpticalBatchService::BeginRun() -> void {
             ->GetNavigatorForTracking()
             ->GetWorldVolume()};
     try {
-        fScene = Geant4SceneExporter{}.Export(world);
+        fScene = Geant4SceneExporter{fConfig.fMeshRotationSteps}.Export(world);
     } catch (const std::exception& exception) {
         if (fConfig.fBackend == Backend::Auto) {
             fBackend = Backend::Geant4;

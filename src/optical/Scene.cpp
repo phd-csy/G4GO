@@ -50,12 +50,17 @@ auto Scene::AddSurface(Surface surface) -> std::uint32_t {
     return static_cast<std::uint32_t>(fSurfaces.size() - 1);
 }
 
-auto Scene::AddSolid(Solid solid) -> std::uint32_t {
-    if (solid.fVolumeID == InvalidID) {
-        solid.fVolumeID = static_cast<std::uint32_t>(fSolids.size());
+auto Scene::AddGeometry(Geometry geometry) -> std::uint32_t {
+    fGeometries.push_back(std::move(geometry));
+    return static_cast<std::uint32_t>(fGeometries.size() - 1);
+}
+
+auto Scene::AddVolume(Volume volume) -> std::uint32_t {
+    if (volume.fVolumeID == InvalidID) {
+        volume.fVolumeID = static_cast<std::uint32_t>(fVolumes.size());
     }
-    fSolids.push_back(std::move(solid));
-    return static_cast<std::uint32_t>(fSolids.size() - 1);
+    fVolumes.push_back(std::move(volume));
+    return static_cast<std::uint32_t>(fVolumes.size() - 1);
 }
 
 auto Scene::AddSurfaceBinding(SurfaceBinding binding) -> void {
@@ -76,12 +81,42 @@ auto Scene::FindSurface(std::uint32_t surfaceID) const -> const Surface* {
     return &fSurfaces[surfaceID];
 }
 
-auto Scene::FindSolid(std::uint32_t volumeID) const -> const Solid* {
-    const auto solid{std::find_if(
-        fSolids.begin(), fSolids.end(), [&](const auto& candidate) {
+auto Scene::FindGeometry(std::uint32_t geometryID) const -> const Geometry* {
+    if (geometryID >= fGeometries.size()) {
+        return nullptr;
+    }
+    return &fGeometries[geometryID];
+}
+
+auto Scene::FindVolume(std::uint32_t volumeID) const -> const Volume* {
+    const auto volume{std::find_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
             return candidate.fVolumeID == volumeID;
         })};
-    return solid == fSolids.end() ? nullptr : &*solid;
+    return volume == fVolumes.end() ? nullptr : &*volume;
+}
+
+auto Scene::FindVolume(std::uint32_t physicalVolumeID,
+                       std::uint32_t copyNo,
+                       std::uint32_t parentVolumeID) const -> const Volume* {
+    const auto volume{std::find_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
+            return candidate.fPhysicalVolumeID == physicalVolumeID &&
+                   candidate.fCopyNo == copyNo &&
+                   candidate.fParentVolumeID == parentVolumeID;
+        })};
+    return volume == fVolumes.end() ? nullptr : &*volume;
+}
+
+auto Scene::SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                               bool value) -> void {
+    const auto volume{std::find_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
+            return candidate.fVolumeID == volumeID;
+        })};
+    if (volume != fVolumes.end()) {
+        volume->fMayHaveCoincidentBoundary = value;
+    }
 }
 
 auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID,
@@ -96,14 +131,14 @@ auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID,
         return FindSurface(binding->fSurfaceID);
     }
 
-    const auto* toSolid{FindSolid(toVolumeID)};
-    if (toSolid != nullptr && toSolid->fSkinSurfaceID != InvalidID) {
-        return FindSurface(toSolid->fSkinSurfaceID);
+    const auto* toVolume{FindVolume(toVolumeID)};
+    if (toVolume != nullptr && toVolume->fSkinSurfaceID != InvalidID) {
+        return FindSurface(toVolume->fSkinSurfaceID);
     }
 
-    const auto* fromSolid{FindSolid(fromVolumeID)};
-    if (fromSolid != nullptr && fromSolid->fSkinSurfaceID != InvalidID) {
-        return FindSurface(fromSolid->fSkinSurfaceID);
+    const auto* fromVolume{FindVolume(fromVolumeID)};
+    if (fromVolume != nullptr && fromVolume->fSkinSurfaceID != InvalidID) {
+        return FindSurface(fromVolume->fSkinSurfaceID);
     }
     return nullptr;
 }

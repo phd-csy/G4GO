@@ -42,6 +42,9 @@ public:
 private:
     auto PhotonSourceFrom(const G4Track& track) const -> PhotonSource;
     auto LocateVolume(const G4Track& track) const -> const G4VPhysicalVolume*;
+    auto VolumeIDFromTrack(const G4Track& track,
+                           const G4VPhysicalVolume* locatedVolume) const
+        -> std::uint32_t;
     auto AddEventStatsToRun() -> void;
 
     Backend fRequestedBackend{Backend::Auto};

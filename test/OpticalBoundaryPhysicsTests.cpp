@@ -17,7 +17,6 @@ auto Require(bool condition, const std::string& message) -> void {
         throw std::runtime_error(message);
     }
 }
-
 auto RequireNear(float actual,
                  float expected,
                  float tolerance,
@@ -80,24 +79,21 @@ auto TestTotalInternalReflection() -> void {
 }
 
 auto TestSurfaceProbabilities() -> void {
-    Require(Physics::EvaluateSurface(0.3F, 0.9F, true, 0.2F) ==
-                Physics::SurfaceOutcome::Reflect,
-            "sensor surface must reflect below reflectivity");
-    Require(Physics::EvaluateSurface(0.3F, 0.9F, true, 0.92F) ==
-                Physics::SurfaceOutcome::Detect,
-            "sensor surface must detect after reflection");
-    Require(Physics::EvaluateSurface(0.3F, 0.9F, true, 0.95F) ==
+    Require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.05F) ==
+                Physics::SurfaceOutcome::DirectTransmit,
+            "transmittance must select direct transmission first");
+    Require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.5F) ==
+                Physics::SurfaceOutcome::SurfaceInteraction,
+            "reflectivity must select surface interaction after transmission");
+    Require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.95F) ==
                 Physics::SurfaceOutcome::Absorb,
-            "sensor surface must absorb after detection");
-    Require(Physics::EvaluateSurface(0.3F, 0.0F, true, 0.2F) ==
+            "remaining surface probability must absorb");
+    Require(Physics::EvaluateAbsorption(0.3F, true, 0.2F) ==
                 Physics::SurfaceOutcome::Detect,
-            "zero-reflectivity sensor must detect below efficiency");
-    Require(Physics::EvaluateSurface(0.0F, 0.8F, false, 0.5F) ==
-                Physics::SurfaceOutcome::Reflect,
-            "ordinary surface must reflect below reflectivity");
-    Require(Physics::EvaluateSurface(0.0F, 0.8F, false, 0.9F) ==
+            "efficiency must detect only on absorption");
+    Require(Physics::EvaluateAbsorption(0.3F, true, 0.5F) ==
                 Physics::SurfaceOutcome::Absorb,
-            "ordinary surface must absorb above reflectivity");
+            "efficiency must leave ordinary absorption");
 }
 
 auto TestLambertianDirection() -> void {

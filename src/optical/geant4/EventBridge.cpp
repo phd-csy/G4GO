@@ -6,6 +6,7 @@
 #include "G4ParticleDefinition.hh"
 #include "G4SystemOfUnits.hh"
 #include "G4Track.hh"
+#include "G4TouchableHistory.hh"
 #include "G4TransportationManager.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4VProcess.hh"
@@ -129,7 +130,7 @@ auto OpticalEventBridge::Capture(const G4Track& track) -> void {
     };
     photon.fEventID = static_cast<std::uint32_t>(fEventID);
     photon.fPhotonID = fNextPhotonID++;
-    photon.fVolumeID = static_cast<std::uint32_t>(volume->GetInstanceID());
+    photon.fVolumeID = VolumeIDFromTrack(track, volume);
     photon.fSource = PhotonSourceFrom(track);
 
     fPhotonData.push_back(photon);
@@ -161,6 +162,42 @@ auto OpticalEventBridge::LocateVolume(const G4Track& track) const
     auto position{track.GetPosition()};
     auto direction{track.GetMomentumDirection()};
     return navigator->LocateGlobalPointAndSetup(position, &direction, false);
+}
+
+auto OpticalEventBridge::VolumeIDFromTrack(
+    const G4Track& track, const G4VPhysicalVolume* locatedVolume) const
+    -> std::uint32_t {
+    const auto locatedID{static_cast<std::uint32_t>(
+        std::max(locatedVolume->GetInstanceID(), 0))};
+    if (!fBatchService || fBatchService->SceneData().Volumes().empty()) {
+        return locatedID;
+    }
+
+    const auto& scene{fBatchService->SceneData()};
+
+    const auto* touchable{track.GetTouchable()};
+    if (touchable == nullptr) {
+        return locatedID;
+    }
+
+    auto parentVolumeID{InvalidID};
+    for (auto depth{touchable->GetHistoryDepth()}; depth >= 0; --depth) {
+        const auto* physicalVolume{touchable->GetVolume(depth)};
+        if (physicalVolume == nullptr) {
+            return locatedID;
+        }
+        const auto copyNo{static_cast<std::uint32_t>(
+            std::max(touchable->GetCopyNumber(depth), 0))};
+        const auto physicalVolumeID{static_cast<std::uint32_t>(
+            std::max(physicalVolume->GetInstanceID(), 0))};
+        const auto* sceneVolume{scene.FindVolume(
+            physicalVolumeID, copyNo, parentVolumeID)};
+        if (sceneVolume == nullptr) {
+            return locatedID;
+        }
+        parentVolumeID = sceneVolume->fVolumeID;
+    }
+    return parentVolumeID == InvalidID ? locatedID : parentVolumeID;
 }
 
 auto OpticalEventBridge::AddEventStatsToRun() -> void {
