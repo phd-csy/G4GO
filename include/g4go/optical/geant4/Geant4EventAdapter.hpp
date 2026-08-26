@@ -2,7 +2,7 @@
 
 #include "G4Types.hh"
 #include "g4go/optical/PhotonTransportConfig.hpp"
-#include "g4go/optical/PhotonTransportOutput.hpp"
+#include "g4go/optical/PhotonTransport.hpp"
 
 #include <memory>
 #include <span>

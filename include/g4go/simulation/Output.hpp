@@ -1,6 +1,6 @@
 #pragma once
 
-#include "g4go/optical/PhotonTransportOutput.hpp"
+#include "g4go/optical/PhotonTransport.hpp"
 
 #include <cstddef>
 #include <deque>
