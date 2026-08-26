@@ -43,8 +43,8 @@ fi
 build_dir="$(cd -- "$build_dir" && pwd)"
 
 g4go="${build_dir}/g4go"
-source_macro="${project_dir}/scripts/source_beam.mac"
-compare_macro="${script_dir}/TestOpticalTransport.C"
+source_macro="${project_dir}/scripts/run_beam_eminus.mac"
+compare_macro="${script_dir}/TestOpticalTransport.cxx"
 root_executable="$(command -v root || true)"
 
 if [[ ! -x "$g4go" ]]; then
@@ -91,8 +91,8 @@ if [[ ! "$threads" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 timestamp="$(date --utc +%Y%m%d-%H%M%S)-$$"
-test_dir="${build_dir}/regression/noptpho_${timestamp}"
-mkdir -p "${build_dir}/regression"
+test_dir="${build_dir}/test/regression/noptpho_${timestamp}"
+mkdir -p "${build_dir}/test/regression"
 if ! mkdir "$test_dir"; then
     echo "Unable to create regression directory: $test_dir" >&2
     exit 1
@@ -167,8 +167,8 @@ run_command run_logged cpu.log "$g4go" \
     "$source_macro"
 cpu_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - cpu_start_ns ))")"
 echo "CPU wall time: ${cpu_elapsed_seconds} s"
-run_command test -s source_beam.root
-run_command mv source_beam.root noptpho_cpu.root
+run_command test -s run_beam_eminus.root
+run_command mv run_beam_eminus.root noptpho_cpu.root
 
 gpu_start_ns="$(now_ns)"
 run_command run_logged gpu.log "$g4go" \
@@ -179,8 +179,8 @@ run_command run_logged gpu.log "$g4go" \
 gpu_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - gpu_start_ns ))")"
 echo "GPU wall time: ${gpu_elapsed_seconds} s"
 run_command grep -F "[g4go] optical backend: gpu" gpu.log
-run_command test -s source_beam.root
-run_command mv source_beam.root noptpho_gpu.root
+run_command test -s run_beam_eminus.root
+run_command mv run_beam_eminus.root noptpho_gpu.root
 
 compare_call="${compare_macro}(\"${test_dir}/noptpho_cpu.root\",\"${test_dir}/noptpho_gpu.root\",${cpu_elapsed_seconds},${gpu_elapsed_seconds},\"${test_dir}\")"
 run_command "$root_executable" -l -b -q "$compare_call"
