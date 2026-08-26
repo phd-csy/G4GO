@@ -1,6 +1,6 @@
 #include "g4go/optical/optix/Transport.hpp"
 
-#include "DeviceTypes.cuh"
+#include "OptixTransportTypes.cuh"
 #include "cuda_runtime_api.h"
 #include "g4go/optical/Geometry.hpp"
 #include "g4go_optix_ir.h"
