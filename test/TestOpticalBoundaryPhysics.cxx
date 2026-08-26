@@ -1,4 +1,4 @@
-#include "BoundaryPhysics.cuh"
+#include "OptiXBoundaryPhysics.cuh"
 
 #include <cmath>
 #include <cstdlib>
