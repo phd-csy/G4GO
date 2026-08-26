@@ -96,6 +96,29 @@ auto Scene::FindVolume(std::uint32_t volumeID) const -> const Volume* {
     return volume == fVolumes.end() ? nullptr : &*volume;
 }
 
+auto Scene::FindVolume(std::uint32_t physicalVolumeID,
+                       std::uint32_t copyNo,
+                       std::uint32_t parentVolumeID) const -> const Volume* {
+    const auto volume{std::find_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
+            return candidate.fPhysicalVolumeID == physicalVolumeID &&
+                   candidate.fCopyNo == copyNo &&
+                   candidate.fParentVolumeID == parentVolumeID;
+        })};
+    return volume == fVolumes.end() ? nullptr : &*volume;
+}
+
+auto Scene::SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                               bool value) -> void {
+    const auto volume{std::find_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
+            return candidate.fVolumeID == volumeID;
+        })};
+    if (volume != fVolumes.end()) {
+        volume->fMayHaveCoincidentBoundary = value;
+    }
+}
+
 auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID,
                                 std::uint32_t toVolumeID) const
     -> const Surface* {

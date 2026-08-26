@@ -109,6 +109,7 @@ struct Geometry {
 struct Volume {
     std::string fName{};
     std::uint32_t fVolumeID{InvalidID};
+    std::uint32_t fPhysicalVolumeID{InvalidID};
     std::uint32_t fCopyNo{};
     std::uint32_t fGeometryID{InvalidID};
     std::uint32_t fMaterialID{InvalidID};
@@ -141,6 +142,9 @@ public:
     auto FindSurface(std::uint32_t surfaceID) const -> const Surface*;
     auto FindGeometry(std::uint32_t geometryID) const -> const Geometry*;
     auto FindVolume(std::uint32_t volumeID) const -> const Volume*;
+    auto FindVolume(std::uint32_t physicalVolumeID,
+                    std::uint32_t copyNo,
+                    std::uint32_t parentVolumeID) const -> const Volume*;
     auto FindBoundarySurface(std::uint32_t fromVolumeID,
                              std::uint32_t toVolumeID) const
         -> const Surface*;
@@ -160,6 +164,8 @@ public:
     auto SetWorldVolumeID(std::uint32_t volumeID) -> void {
         fWorldVolumeID = volumeID;
     }
+    auto SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                            bool value) -> void;
 
 private:
     std::vector<Material> fMaterials{};

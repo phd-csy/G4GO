@@ -1,3 +1,4 @@
+#include "BoundaryPhysics.cuh"
 #include "OptixTransportTypes.cuh"
 #include "math_constants.h"
 #include "optix_device.h"
@@ -14,27 +15,17 @@ extern __constant__ OptixLaunchParams gLaunchParams;
 namespace {
 
 constexpr auto invalidID{0xffffffffU};
-constexpr auto boxKind{0U};
-constexpr auto dielectricMetal{1U};
+constexpr auto dielectricDielectricType{0U};
+constexpr auto glisurModel{0U};
+constexpr auto unifiedModel{1U};
+constexpr auto groundFinish{3U};
+constexpr auto groundFrontPaintedFinish{4U};
+constexpr auto groundBackPaintedFinish{5U};
 constexpr auto speedOfLightMmPerNs{299.792458F};
-constexpr auto pi{3.14159265358979323846F};
-constexpr auto twoPi{2.0F * pi};
-
-struct Intersection {
-    float distance{};
-    DeviceVector3 normal{};
-    bool hit{};
-};
 
 __device__ __forceinline__ auto Add(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
     return {left.fX + right.fX, left.fY + right.fY, left.fZ + right.fZ};
-}
-
-__device__ __forceinline__ auto Subtract(DeviceVector3 left,
-                                         DeviceVector3 right)
-    -> DeviceVector3 {
-    return {left.fX - right.fX, left.fY - right.fY, left.fZ - right.fZ};
 }
 
 __device__ __forceinline__ auto Scale(DeviceVector3 vector, float value)
@@ -56,246 +47,10 @@ __device__ __forceinline__ auto Normalize(DeviceVector3 vector)
     return Scale(vector, rsqrtf(lengthSquared));
 }
 
-__device__ __forceinline__ auto RotateToWorld(const DeviceRotation& rotation,
-                                              DeviceVector3 vector)
-    -> DeviceVector3 {
-    return {
-        rotation.fXX * vector.fX + rotation.fXY * vector.fY +
-            rotation.fXZ * vector.fZ,
-        rotation.fYX * vector.fX + rotation.fYY * vector.fY +
-            rotation.fYZ * vector.fZ,
-        rotation.fZX * vector.fX + rotation.fZY * vector.fY +
-            rotation.fZZ * vector.fZ,
-    };
-}
-
-__device__ __forceinline__ auto RotateToLocal(const DeviceRotation& rotation,
-                                              DeviceVector3 vector)
-    -> DeviceVector3 {
-    return {
-        rotation.fXX * vector.fX + rotation.fYX * vector.fY +
-            rotation.fZX * vector.fZ,
-        rotation.fXY * vector.fX + rotation.fYY * vector.fY +
-            rotation.fZY * vector.fZ,
-        rotation.fXZ * vector.fX + rotation.fYZ * vector.fY +
-            rotation.fZZ * vector.fZ,
-    };
-}
-
-__device__ __forceinline__ auto ToLocal(const DeviceSolid& solid,
-                                        DeviceVector3 point) -> DeviceVector3 {
-    return RotateToLocal(solid.fRotation, Subtract(point, solid.fTranslationMm));
-}
-
-__device__ __forceinline__ auto PhiInRange(float phi,
-                                           float startPhi,
-                                           float deltaPhi) -> bool {
-    if (deltaPhi >= twoPi - 1.0e-5F) {
-        return true;
-    }
-    auto relative{fmodf(phi - startPhi, twoPi)};
-    if (relative < 0.0F) {
-        relative += twoPi;
-    }
-    return relative <= deltaPhi;
-}
-
-__device__ __forceinline__ auto Contains(const DeviceSolid& solid,
-                                         DeviceVector3 point) -> bool {
-    const auto local{ToLocal(solid, point)};
-    if (solid.fKind == boxKind) {
-        return fabsf(local.fX) <= solid.fHalfSizeMm.fX + 1.0e-5F &&
-               fabsf(local.fY) <= solid.fHalfSizeMm.fY + 1.0e-5F &&
-               fabsf(local.fZ) <= solid.fHalfSizeMm.fZ + 1.0e-5F;
-    }
-
-    const auto radiusSquared{local.fX * local.fX + local.fY * local.fY};
-    return fabsf(local.fZ) <= solid.fHalfLengthMm + 1.0e-5F &&
-           radiusSquared >= solid.fInnerRadiusMm * solid.fInnerRadiusMm -
-                                1.0e-5F &&
-           radiusSquared <= solid.fOuterRadiusMm * solid.fOuterRadiusMm +
-                                1.0e-5F &&
-           PhiInRange(atan2f(local.fY, local.fX), solid.fStartPhi,
-                      solid.fDeltaPhi);
-}
-
-__device__ __forceinline__ auto AddCandidate(float distance,
-                                             DeviceVector3 normal,
-                                             float epsilon,
-                                             Intersection& result) -> void {
-    if (isfinite(distance) && distance > epsilon &&
-        (!result.hit || distance < result.distance)) {
-        result.hit = true;
-        result.distance = distance;
-        result.normal = normal;
-    }
-}
-
-__device__ auto IntersectBox(const DeviceSolid& solid,
-                             DeviceVector3 origin,
-                             DeviceVector3 direction,
-                             float epsilon) -> Intersection {
-    const auto localOrigin{ToLocal(solid, origin)};
-    const auto localDirection{RotateToLocal(solid.fRotation, direction)};
-    const auto halfSize{solid.fHalfSizeMm};
-    const float position[3]{localOrigin.fX, localOrigin.fY, localOrigin.fZ};
-    const float component[3]{localDirection.fX, localDirection.fY,
-                             localDirection.fZ};
-    const float half[3]{halfSize.fX, halfSize.fY, halfSize.fZ};
-    auto tMin{-CUDART_INF_F};
-    auto tMax{CUDART_INF_F};
-    auto nearAxis{0};
-    auto farAxis{0};
-
-    for (auto axis{0}; axis < 3; ++axis) {
-        if (fabsf(component[axis]) < 1.0e-8F) {
-            if (fabsf(position[axis]) > half[axis]) {
-                return {};
-            }
-            continue;
-        }
-        auto first{(-half[axis] - position[axis]) / component[axis]};
-        auto second{(half[axis] - position[axis]) / component[axis]};
-        if (first > second) {
-            const auto temporary{first};
-            first = second;
-            second = temporary;
-        }
-        if (first > tMin) {
-            tMin = first;
-            nearAxis = axis;
-        }
-        if (second < tMax) {
-            tMax = second;
-            farAxis = axis;
-        }
-        if (tMin > tMax) {
-            return {};
-        }
-    }
-
-    const auto distance{tMin > epsilon ? tMin : tMax};
-    if (!isfinite(distance) || distance <= epsilon) {
-        return {};
-    }
-    const auto axis{tMin > epsilon ? nearAxis : farAxis};
-    const auto sign{component[axis] > 0.0F ? -1.0F : 1.0F};
-    DeviceVector3 localNormal{};
-    if (axis == 0) {
-        localNormal.fX = sign;
-    } else if (axis == 1) {
-        localNormal.fY = sign;
-    } else {
-        localNormal.fZ = sign;
-    }
-    return {distance, RotateToWorld(solid.fRotation, localNormal), true};
-}
-
-__device__ auto IntersectTub(const DeviceSolid& solid,
-                             DeviceVector3 origin,
-                             DeviceVector3 direction,
-                             float epsilon) -> Intersection {
-    const auto localOrigin{ToLocal(solid, origin)};
-    const auto localDirection{RotateToLocal(solid.fRotation, direction)};
-    Intersection result{};
-
-    const auto addCylinder{[&](float radius, bool inner) {
-        if (radius <= 0.0F) {
-            return;
-        }
-        const auto a{localDirection.fX * localDirection.fX +
-                     localDirection.fY * localDirection.fY};
-        const auto b{2.0F * (localOrigin.fX * localDirection.fX +
-                             localOrigin.fY * localDirection.fY)};
-        const auto c{localOrigin.fX * localOrigin.fX +
-                     localOrigin.fY * localOrigin.fY - radius * radius};
-        if (fabsf(a) < 1.0e-8F) {
-            return;
-        }
-        const auto discriminant{b * b - 4.0F * a * c};
-        if (discriminant < 0.0F) {
-            return;
-        }
-        const auto root{sqrtf(fmaxf(discriminant, 0.0F))};
-        const float roots[2]{
-            (-b - root) / (2.0F * a),
-            (-b + root) / (2.0F * a),
-        };
-        for (const auto distance : roots) {
-            if (distance <= epsilon) {
-                continue;
-            }
-            const auto point{Add(localOrigin, Scale(localDirection, distance))};
-            if (point.fZ < -solid.fHalfLengthMm - epsilon ||
-                point.fZ > solid.fHalfLengthMm + epsilon ||
-                !PhiInRange(atan2f(point.fY, point.fX), solid.fStartPhi,
-                            solid.fDeltaPhi)) {
-                continue;
-            }
-            auto normal{Normalize({point.fX, point.fY, 0.0F})};
-            if (inner) {
-                normal = Scale(normal, -1.0F);
-            }
-            AddCandidate(distance, normal, epsilon, result);
-        }
-    }};
-
-    addCylinder(solid.fOuterRadiusMm, false);
-    addCylinder(solid.fInnerRadiusMm, true);
-
-    if (fabsf(localDirection.fZ) >= 1.0e-8F) {
-        const float capZ[2]{solid.fHalfLengthMm, -solid.fHalfLengthMm};
-        const float capNormal[2]{1.0F, -1.0F};
-        for (auto index{0}; index < 2; ++index) {
-            const auto distance{
-                (capZ[index] - localOrigin.fZ) / localDirection.fZ};
-            if (distance <= epsilon) {
-                continue;
-            }
-            const auto point{Add(localOrigin, Scale(localDirection, distance))};
-            const auto radialSquared{point.fX * point.fX + point.fY * point.fY};
-            if (radialSquared >= solid.fInnerRadiusMm * solid.fInnerRadiusMm -
-                                     epsilon &&
-                radialSquared <= solid.fOuterRadiusMm * solid.fOuterRadiusMm +
-                                     epsilon) {
-                AddCandidate(distance, {0.0F, 0.0F, capNormal[index]}, epsilon,
-                             result);
-            }
-        }
-    }
-
-    if (result.hit) {
-        result.normal = RotateToWorld(solid.fRotation, result.normal);
-    }
-    return result;
-}
-
-__device__ auto Intersect(const DeviceSolid& solid,
-                          DeviceVector3 origin,
-                          DeviceVector3 direction,
-                          float epsilon) -> Intersection {
-    return solid.fKind == boxKind ? IntersectBox(solid, origin, direction, epsilon) : IntersectTub(solid, origin, direction, epsilon);
-}
-
-__device__ auto LocateVolume(DeviceVector3 point) -> std::uint32_t {
-    auto volumeID{invalidID};
-    auto depth{0U};
-    for (auto index{0U}; index < gLaunchParams.fScene.fSolidCount; ++index) {
-        const auto& solid{gLaunchParams.fScene.fSolids[index]};
-        if (Contains(solid, point) &&
-            (volumeID == invalidID || solid.fDepth > depth ||
-             (solid.fDepth == depth && solid.fVolumeID < volumeID))) {
-            volumeID = solid.fVolumeID;
-            depth = solid.fDepth;
-        }
-    }
-    return volumeID;
-}
-
-__device__ auto FindSolid(std::uint32_t volumeID) -> const DeviceSolid* {
-    for (auto index{0U}; index < gLaunchParams.fScene.fSolidCount; ++index) {
-        if (gLaunchParams.fScene.fSolids[index].fVolumeID == volumeID) {
-            return &gLaunchParams.fScene.fSolids[index];
+__device__ auto FindVolume(std::uint32_t volumeID) -> const DeviceVolume* {
+    for (auto index{0U}; index < gLaunchParams.fScene.fVolumeCount; ++index) {
+        if (gLaunchParams.fScene.fVolumes[index].fVolumeID == volumeID) {
+            return &gLaunchParams.fScene.fVolumes[index];
         }
     }
     return nullptr;
@@ -303,7 +58,87 @@ __device__ auto FindSolid(std::uint32_t volumeID) -> const DeviceSolid* {
 
 __device__ auto FindMaterial(std::uint32_t materialID)
     -> const DeviceMaterial* {
-    return materialID < gLaunchParams.fScene.fMaterialCount ? &gLaunchParams.fScene.fMaterials[materialID] : nullptr;
+    return materialID < gLaunchParams.fScene.fMaterialCount
+               ? &gLaunchParams.fScene.fMaterials[materialID]
+               : nullptr;
+}
+
+__device__ auto FindGeometry(std::uint32_t geometryID)
+    -> const DeviceGeometry* {
+    return geometryID < gLaunchParams.fScene.fGeometryCount
+               ? &gLaunchParams.fScene.fGeometries[geometryID]
+               : nullptr;
+}
+
+__device__ auto TriangleNormal(std::uint32_t instanceIndex,
+                               std::uint32_t triangleIndex) -> DeviceVector3 {
+    if (instanceIndex >= gLaunchParams.fScene.fVolumeCount) {
+        return {};
+    }
+    const auto& volume{gLaunchParams.fScene.fVolumes[instanceIndex]};
+    const auto* geometry{FindGeometry(volume.fGeometryID)};
+    if (geometry == nullptr ||
+        triangleIndex >= geometry->fMesh.fTriangleCount) {
+        return {};
+    }
+    const auto* indices{geometry->fMesh.fIndices + 3U * triangleIndex};
+    const auto& first{geometry->fMesh.fVertices[indices[0]]};
+    const auto& second{geometry->fMesh.fVertices[indices[1]]};
+    const auto& third{geometry->fMesh.fVertices[indices[2]]};
+    const auto normal{Normalize({
+        (second.fY - first.fY) * (third.fZ - first.fZ) -
+            (second.fZ - first.fZ) * (third.fY - first.fY),
+        (second.fZ - first.fZ) * (third.fX - first.fX) -
+            (second.fX - first.fX) * (third.fZ - first.fZ),
+        (second.fX - first.fX) * (third.fY - first.fY) -
+            (second.fY - first.fY) * (third.fX - first.fX),
+    })};
+    const auto worldNormal{optixTransformNormalFromObjectToWorldSpace(
+        make_float3(normal.fX, normal.fY, normal.fZ))};
+    return Normalize({worldNormal.x, worldNormal.y, worldNormal.z});
+}
+
+__device__ auto SurfaceRank(std::uint32_t currentVolumeID,
+                            std::uint32_t candidateVolumeID) -> std::uint32_t {
+    const auto* current{FindVolume(currentVolumeID)};
+    const auto* candidate{FindVolume(candidateVolumeID)};
+    if (current == nullptr || candidate == nullptr) {
+        return 100U;
+    }
+    if (candidateVolumeID == currentVolumeID) {
+        return 2U;
+    }
+    if (candidate->fParentVolumeID == currentVolumeID) {
+        return 0U;
+    }
+    if (candidate->fParentVolumeID == current->fParentVolumeID) {
+        return 1U;
+    }
+    if (candidateVolumeID == current->fParentVolumeID) {
+        return 3U;
+    }
+    return 100U;
+}
+
+__device__ auto ResolveTopology(std::uint32_t currentVolumeID,
+                                std::uint32_t hitVolumeID)
+    -> std::uint32_t {
+    const auto* current{FindVolume(currentVolumeID)};
+    const auto* hit{FindVolume(hitVolumeID)};
+    if (current == nullptr || hit == nullptr) {
+        return invalidID;
+    }
+    if (hitVolumeID == currentVolumeID) {
+        return current->fParentVolumeID;
+    }
+    if (hit->fParentVolumeID == currentVolumeID ||
+        hit->fParentVolumeID == current->fParentVolumeID) {
+        return hitVolumeID;
+    }
+    if (hitVolumeID == current->fParentVolumeID) {
+        return hitVolumeID;
+    }
+    return invalidID;
 }
 
 __device__ auto SampleProperty(const DeviceProperty& property,
@@ -316,7 +151,7 @@ __device__ auto SampleProperty(const DeviceProperty& property,
     if (property.fCount == 1 || energy <= property.fEnergyEv[0]) {
         return property.fValues[0];
     }
-    const auto last{property.fCount - 1};
+    const auto last{property.fCount - 1U};
     if (energy >= property.fEnergyEv[last]) {
         return property.fValues[last];
     }
@@ -342,12 +177,12 @@ __device__ auto FindSurfaceID(std::uint32_t fromVolumeID,
             return binding.fSurfaceID;
         }
     }
-    const auto* toSolid{FindSolid(toVolumeID)};
-    if (toSolid != nullptr && toSolid->fSkinSurfaceID != invalidID) {
-        return toSolid->fSkinSurfaceID;
+    const auto* toVolume{FindVolume(toVolumeID)};
+    if (toVolume != nullptr && toVolume->fSkinSurfaceID != invalidID) {
+        return toVolume->fSkinSurfaceID;
     }
-    const auto* fromSolid{FindSolid(fromVolumeID)};
-    return fromSolid == nullptr ? invalidID : fromSolid->fSkinSurfaceID;
+    const auto* fromVolume{FindVolume(fromVolumeID)};
+    return fromVolume == nullptr ? invalidID : fromVolume->fSkinSurfaceID;
 }
 
 __device__ auto Uniform(std::uint64_t seed,
@@ -386,43 +221,8 @@ __device__ auto Uniform(std::uint64_t seed,
         key1 += keyStep1;
     }
     const auto word{draw % 4U == 0U ? x0 : draw % 4U == 1U ? x1 :
-                                       draw % 4U == 2U     ? x2 :
-                                                             x3};
+                                       draw % 4U == 2U     ? x2 : x3};
     return (static_cast<float>(word) + 0.5F) / 4294967296.0F;
-}
-
-__device__ auto Reflect(DeviceVector3 direction, DeviceVector3 normal)
-    -> DeviceVector3 {
-    return Normalize(Subtract(direction, Scale(normal, 2.0F *
-                                                           Dot(direction, normal))));
-}
-
-__device__ auto Refract(DeviceVector3 direction,
-                        DeviceVector3 normal,
-                        float eta,
-                        float cosineIncident,
-                        float cosineTransmitted) -> DeviceVector3 {
-    return Normalize(Add(Scale(direction, eta),
-                         Scale(normal, eta * cosineIncident -
-                                           cosineTransmitted)));
-}
-
-__device__ auto ProjectPolarization(DeviceVector3 polarization,
-                                    DeviceVector3 direction) -> DeviceVector3 {
-    auto result{Subtract(polarization, Scale(direction,
-                                             Dot(polarization, direction)))};
-    if (Dot(result, result) < 1.0e-12F) {
-        const auto helper{
-            fabsf(direction.fZ) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
-                : DeviceVector3{1.0F, 0.0F, 0.0F}
-        };
-        result = {
-            direction.fY * helper.fZ - direction.fZ * helper.fY,
-            direction.fZ * helper.fX - direction.fX * helper.fZ,
-            direction.fX * helper.fY - direction.fY * helper.fX,
-        };
-    }
-    return Normalize(result);
 }
 
 __device__ auto SampleAbsorption(const DeviceMaterial& material,
@@ -435,7 +235,107 @@ __device__ auto SampleAbsorption(const DeviceMaterial& material,
     if (!isfinite(absorptionLength) || absorptionLength <= 0.0F) {
         return CUDART_INF_F;
     }
-    return -absorptionLength * logf(Uniform(seed, photonID, bounce, 0U, 0U));
+    return -absorptionLength *
+           logf(Uniform(seed, photonID, bounce, 0U, 0U));
+}
+
+__device__ auto Gaussian(std::uint64_t seed,
+                         std::uint64_t photonID,
+                         std::uint32_t bounce,
+                         std::uint32_t draw) -> float {
+    constexpr auto twoPi{6.28318530717958647692F};
+    const auto first{fmaxf(Uniform(seed, photonID, bounce, 3U, draw),
+                           1.0e-7F)};
+    const auto second{Uniform(seed, photonID, bounce, 3U, draw + 1U)};
+    return sqrtf(-2.0F * logf(first)) * cosf(twoPi * second);
+}
+
+__device__ auto SampleFacetNormal(const DeviceSurface& surface,
+                                  DeviceVector3 normal,
+                                  std::uint64_t seed,
+                                  std::uint64_t photonID,
+                                  std::uint32_t bounce) -> DeviceVector3 {
+    auto sigma{0.0F};
+    if (surface.fModel == unifiedModel) {
+        sigma = fmaxf(surface.fModelValue, 0.0F);
+    } else if (surface.fModel == glisurModel) {
+        const auto polish{fminf(fmaxf(surface.fModelValue, 0.0F), 1.0F)};
+        sigma = (1.0F - polish) * 0.5F;
+    }
+    if (!(sigma > 0.0F)) {
+        return Normalize(normal);
+    }
+    normal = Normalize(normal);
+    const auto helper{fabsf(normal.fZ) < 0.9F
+                          ? DeviceVector3{0.0F, 0.0F, 1.0F}
+                          : DeviceVector3{1.0F, 0.0F, 0.0F}};
+    const auto tangent{Normalize({normal.fY * helper.fZ - normal.fZ * helper.fY,
+                                 normal.fZ * helper.fX - normal.fX * helper.fZ,
+                                 normal.fX * helper.fY - normal.fY * helper.fX})};
+    const auto bitangent{Normalize({normal.fY * tangent.fZ -
+                                        normal.fZ * tangent.fY,
+                                    normal.fZ * tangent.fX -
+                                        normal.fX * tangent.fZ,
+                                    normal.fX * tangent.fY -
+                                        normal.fY * tangent.fX})};
+    return Normalize(Add(
+        Add(normal, Scale(tangent, sigma * Gaussian(seed, photonID, bounce, 0U))),
+        Scale(bitangent, sigma * Gaussian(seed, photonID, bounce, 2U))));
+}
+
+__device__ auto SampleSurfaceReflection(const DeviceSurface& surface,
+                                        DeviceVector3 direction,
+                                        DeviceVector3 normal,
+                                        float energyEv,
+                                        std::uint64_t seed,
+                                        std::uint64_t photonID,
+                                        std::uint32_t bounce) -> DeviceVector3 {
+    const auto isGround{surface.fFinish == groundFinish ||
+                        surface.fFinish == groundFrontPaintedFinish ||
+                        surface.fFinish == groundBackPaintedFinish};
+    const auto facetNormal{SampleFacetNormal(surface, normal, seed, photonID,
+                                             bounce)};
+    if (surface.fModel == glisurModel) {
+        const auto polish{fminf(fmaxf(surface.fModelValue, 0.0F), 1.0F)};
+        if (isGround ||
+            Uniform(seed, photonID, bounce, 4U, 0U) >= polish) {
+            return BoundaryPhysics::SampleLambertian(
+                normal, Uniform(seed, photonID, bounce, 4U, 1U),
+                Uniform(seed, photonID, bounce, 4U, 2U));
+        }
+        return BoundaryPhysics::ReflectDirection(direction, facetNormal);
+    }
+
+    const auto spike{fminf(fmaxf(SampleProperty(
+                                 surface.fSpecularSpike, energyEv,
+                                 isGround ? 0.0F : 1.0F),
+                             0.0F),
+                          1.0F)};
+    const auto lobe{fminf(fmaxf(SampleProperty(surface.fSpecularLobe, energyEv,
+                                               0.0F),
+                               0.0F),
+                         1.0F)};
+    const auto backscatter{fminf(fmaxf(SampleProperty(
+                                      surface.fBackscatter, energyEv, 0.0F),
+                                  0.0F),
+                              1.0F)};
+    const auto total{spike + lobe + backscatter};
+    const auto scale{total > 1.0F ? 1.0F / total : 1.0F};
+    const auto sample{Uniform(seed, photonID, bounce, 4U, 0U)};
+    const auto backLimit{backscatter * scale};
+    const auto lobeLimit{backLimit + lobe * scale};
+    if (sample < backLimit) {
+        return Scale(direction, -1.0F);
+    }
+    if (sample < lobeLimit) {
+        return BoundaryPhysics::ReflectDirection(direction, facetNormal);
+    }
+    if (sample < lobeLimit + spike * scale) {
+        return BoundaryPhysics::ReflectDirection(direction, normal);
+    }
+    return BoundaryPhysics::SampleLambertian(
+        normal, Uniform(seed, photonID, bounce, 4U, 1U),
+        Uniform(seed, photonID, bounce, 4U, 2U));
 }
 
 } // namespace
@@ -444,42 +344,61 @@ extern "C" {
 
 __constant__ OptixLaunchParams gLaunchParams;
 
-__global__ void __miss__ms() {
-    optixSetPayload_0(__float_as_uint(CUDART_INF_F));
-    optixSetPayload_4(invalidID);
-}
+__global__ void __miss__ms() {}
 
-__global__ void __intersection__is() {
-    const auto primitiveIndex{optixGetPrimitiveIndex()};
-    if (primitiveIndex >= gLaunchParams.fScene.fSolidCount) {
+__global__ void __anyhit__ah() {
+    const auto photonID{optixGetLaunchIndex().x};
+    const auto instanceIndex{optixGetInstanceId()};
+    if (instanceIndex >= gLaunchParams.fScene.fVolumeCount) {
+        optixIgnoreIntersection();
         return;
     }
-    const auto& solid{gLaunchParams.fScene.fSolids[primitiveIndex]};
-    const auto origin{optixGetObjectRayOrigin()};
-    const auto direction{optixGetObjectRayDirection()};
-    const auto intersection{Intersect(
-        solid, {origin.x, origin.y, origin.z},
-        {direction.x, direction.y, direction.z},
-        gLaunchParams.fBoundaryEpsilonMm)};
-    if (intersection.hit) {
-        optixReportIntersection(intersection.distance, 0);
+    auto selectedVolumeID{optixGetPayload_0()};
+    auto normalX{optixGetPayload_1()};
+    auto normalY{optixGetPayload_2()};
+    auto normalZ{optixGetPayload_3()};
+    auto candidateCount{optixGetPayload_4()};
+    const auto candidateID{
+        gLaunchParams.fScene.fVolumes[instanceIndex].fVolumeID};
+    const auto currentID{gLaunchParams.fPhotons[photonID].fVolumeID};
+    const auto candidateRank{SurfaceRank(currentID, candidateID)};
+    if (candidateRank >= 100U) {
+        optixIgnoreIntersection();
+        return;
     }
+    const auto selectedRank{selectedVolumeID == invalidID
+                                ? 100U
+                                : SurfaceRank(currentID, selectedVolumeID)};
+    if (candidateRank < selectedRank ||
+        (candidateRank == selectedRank && candidateID < selectedVolumeID)) {
+        selectedVolumeID = candidateID;
+        const auto normal{TriangleNormal(instanceIndex,
+                                         optixGetPrimitiveIndex())};
+        normalX = __float_as_uint(normal.fX);
+        normalY = __float_as_uint(normal.fY);
+        normalZ = __float_as_uint(normal.fZ);
+    }
+    ++candidateCount;
+    optixSetPayload_0(selectedVolumeID);
+    optixSetPayload_1(normalX);
+    optixSetPayload_2(normalY);
+    optixSetPayload_3(normalZ);
+    optixSetPayload_4(candidateCount);
+    optixIgnoreIntersection();
 }
 
 __global__ void __closesthit__ch() {
-    const auto primitiveIndex{optixGetPrimitiveIndex()};
-    const auto& solid{gLaunchParams.fScene.fSolids[primitiveIndex]};
-    const auto origin{optixGetWorldRayOrigin()};
-    const auto direction{optixGetWorldRayDirection()};
-    const auto intersection{Intersect(
-        solid, {origin.x, origin.y, origin.z},
-        {direction.x, direction.y, direction.z},
-        gLaunchParams.fBoundaryEpsilonMm)};
-    optixSetPayload_0(__float_as_uint(intersection.distance));
-    optixSetPayload_1(__float_as_uint(intersection.normal.fX));
-    optixSetPayload_2(__float_as_uint(intersection.normal.fY));
-    optixSetPayload_3(__float_as_uint(intersection.normal.fZ));
-    optixSetPayload_4(solid.fVolumeID);
+    const auto instanceIndex{optixGetInstanceId()};
+    if (instanceIndex >= gLaunchParams.fScene.fVolumeCount) {
+        return;
+    }
+    const auto& volume{gLaunchParams.fScene.fVolumes[instanceIndex]};
+    const auto normal{TriangleNormal(instanceIndex, optixGetPrimitiveIndex())};
+    optixSetPayload_0(__float_as_uint(optixGetRayTmax()));
+    optixSetPayload_1(__float_as_uint(normal.fX));
+    optixSetPayload_2(__float_as_uint(normal.fY));
+    optixSetPayload_3(__float_as_uint(normal.fZ));
+    optixSetPayload_4(volume.fVolumeID);
 }
 
 __global__ void __raygen__rg() {
@@ -491,21 +410,23 @@ __global__ void __raygen__rg() {
     auto photon{gLaunchParams.fPhotons[photonID]};
     auto position{photon.fPositionMm};
     auto direction{Normalize(photon.fDirection)};
-    auto polarization{ProjectPolarization(photon.fPolarization, direction)};
+    auto polarization{BoundaryPhysics::ProjectPolarization(
+        photon.fPolarization, direction)};
     auto currentVolumeID{photon.fVolumeID};
     auto terminated{false};
 
     auto bounce{0U};
     for (; bounce < gLaunchParams.fMaxBounceCount && !terminated; ++bounce) {
+        gLaunchParams.fPhotons[photonID].fVolumeID = currentVolumeID;
         atomicMax(&gLaunchParams.fStats->fMaxBounceCount,
-                  static_cast<unsigned long long>(bounce));
-        const auto* currentSolid{FindSolid(currentVolumeID)};
-        if (currentSolid == nullptr) {
+                  static_cast<unsigned long long>(bounce + 1U));
+        const auto* currentVolume{FindVolume(currentVolumeID)};
+        if (currentVolume == nullptr) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                       static_cast<unsigned long long>(1));
             break;
         }
-        const auto* currentMaterial{FindMaterial(currentSolid->fMaterialID)};
+        const auto* currentMaterial{FindMaterial(currentVolume->fMaterialID)};
         if (currentMaterial == nullptr) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                       static_cast<unsigned long long>(1));
@@ -515,7 +436,9 @@ __global__ void __raygen__rg() {
             SampleProperty(currentMaterial->fRindex, photon.fEnergyEv, NAN)};
         const auto velocity{SampleProperty(
             currentMaterial->fGroupVelocityMmPerNs, photon.fEnergyEv,
-            isfinite(refractiveIndex) && refractiveIndex > 0.0F ? speedOfLightMmPerNs / refractiveIndex : NAN)};
+            isfinite(refractiveIndex) && refractiveIndex > 0.0F
+                ? speedOfLightMmPerNs / refractiveIndex
+                : NAN)};
         if (!(velocity > 0.0F) || !isfinite(velocity)) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                       static_cast<unsigned long long>(1));
@@ -542,6 +465,36 @@ __global__ void __raygen__rg() {
             break;
         }
 
+        auto hitVolumeID{payload4};
+        auto normal{Normalize({__uint_as_float(payload1),
+                               __uint_as_float(payload2),
+                               __uint_as_float(payload3)})};
+        if (currentVolume->fMayHaveCoincidentBoundary != 0) {
+            gLaunchParams.fPhotons[photonID].fVolumeID = currentVolumeID;
+            auto candidatePayload0{invalidID};
+            auto candidatePayload1{0U};
+            auto candidatePayload2{0U};
+            auto candidatePayload3{0U};
+            auto candidatePayload4{0U};
+            const auto tolerance{gLaunchParams.fBoundaryEpsilonMm};
+            optixTrace(
+                static_cast<OptixTraversableHandle>(gLaunchParams.fTraversable),
+                make_float3(position.fX, position.fY, position.fZ),
+                make_float3(direction.fX, direction.fY, direction.fZ),
+                fmaxf(0.0F, distance - tolerance), distance + tolerance, 0.0F,
+                OptixVisibilityMask(255),
+                OPTIX_RAY_FLAG_ENFORCE_ANYHIT |
+                    OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                0, 1, 0, candidatePayload0, candidatePayload1,
+                candidatePayload2, candidatePayload3, candidatePayload4);
+            if (candidatePayload0 != invalidID) {
+                hitVolumeID = candidatePayload0;
+                normal = Normalize({__uint_as_float(candidatePayload1),
+                                    __uint_as_float(candidatePayload2),
+                                    __uint_as_float(candidatePayload3)});
+            }
+        }
+
         const auto absorptionDistance{SampleAbsorption(
             *currentMaterial, photon.fEnergyEv, gLaunchParams.fSeed,
             photon.fPhotonID, bounce)};
@@ -551,27 +504,27 @@ __global__ void __raygen__rg() {
                       static_cast<unsigned long long>(1));
             break;
         }
-
-        const auto nextPosition{Add(position, Scale(direction, distance))};
         photon.fTimeNs += distance / velocity;
-        auto normal{Normalize({__uint_as_float(payload1),
-                               __uint_as_float(payload2),
-                               __uint_as_float(payload3)})};
+        const auto boundaryPosition{Add(position, Scale(direction, distance))};
+
         if (Dot(direction, normal) > 0.0F) {
             normal = Scale(normal, -1.0F);
         }
-        const auto nextVolumeID{LocateVolume(
-            Add(nextPosition,
-                Scale(normal, -gLaunchParams.fBoundaryEpsilonMm)))};
+        const auto nextVolumeID{ResolveTopology(currentVolumeID, hitVolumeID)};
         if (nextVolumeID == invalidID) {
-            atomicAdd(&gLaunchParams.fStats->fEscapedCount,
-                      static_cast<unsigned long long>(1));
+            if (currentVolumeID == gLaunchParams.fScene.fWorldVolumeID &&
+                hitVolumeID == currentVolumeID) {
+                atomicAdd(&gLaunchParams.fStats->fEscapedCount,
+                          static_cast<unsigned long long>(1));
+            } else {
+                atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
+                          static_cast<unsigned long long>(1));
+            }
             break;
         }
-
-        const auto* nextSolid{FindSolid(nextVolumeID)};
+        const auto* nextVolume{FindVolume(nextVolumeID)};
         const auto* nextMaterial{
-            nextSolid == nullptr ? nullptr : FindMaterial(nextSolid->fMaterialID)};
+            nextVolume == nullptr ? nullptr : FindMaterial(nextVolume->fMaterialID)};
         if (nextMaterial == nullptr) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                       static_cast<unsigned long long>(1));
@@ -579,76 +532,122 @@ __global__ void __raygen__rg() {
         }
 
         const auto surfaceID{FindSurfaceID(currentVolumeID, nextVolumeID)};
-        const auto* surface{surfaceID < gLaunchParams.fScene.fSurfaceCount ? &gLaunchParams.fScene.fSurfaces[surfaceID] : nullptr};
+        const auto* surface{
+            surfaceID < gLaunchParams.fScene.fSurfaceCount
+                ? &gLaunchParams.fScene.fSurfaces[surfaceID]
+                : nullptr};
         auto reflected{false};
         auto detected{false};
-        if (surface != nullptr && surface->fKind == dielectricMetal) {
+        auto surfaceAbsorbed{false};
+        auto directTransmitted{false};
+        if (surface != nullptr) {
             const auto reflectivity{fminf(
-                fmaxf(SampleProperty(surface->fReflectivity, photon.fEnergyEv,
-                                     0.0F),
+                fmaxf(SampleProperty(surface->fReflectivity,
+                                     photon.fEnergyEv, 0.0F),
                       0.0F),
                 1.0F)};
-            reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce,
-                                1U, 0U) < reflectivity;
-            if (!reflected) {
-                const auto efficiency{fminf(
-                    fmaxf(SampleProperty(surface->fEfficiency,
-                                         photon.fEnergyEv, 0.0F),
-                          0.0F),
-                    1.0F)};
-                detected = Uniform(gLaunchParams.fSeed, photon.fPhotonID,
-                                   bounce, 1U, 1U) < efficiency;
+            const auto efficiency{fminf(
+                fmaxf(SampleProperty(surface->fEfficiency,
+                                     photon.fEnergyEv, 0.0F),
+                      0.0F),
+                1.0F)};
+            const auto transmittance{fminf(
+                fmaxf(SampleProperty(surface->fTransmittance,
+                                     photon.fEnergyEv, 0.0F),
+                      0.0F),
+                1.0F)};
+            const auto surfaceOutcome{BoundaryPhysics::ClassifySurface(
+                reflectivity, transmittance, surface->fReflectivity.fCount != 0,
+                surface->fTransmittance.fCount != 0,
+                Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce, 1U,
+                        0U))};
+            if (surfaceOutcome == BoundaryPhysics::SurfaceOutcome::Absorb) {
+                surfaceAbsorbed = true;
+                detected = BoundaryPhysics::EvaluateAbsorption(
+                               efficiency,
+                               nextVolume->fSensorID != invalidID ||
+                                   currentVolume->fSensorID != invalidID,
+                               Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                                       bounce, 1U, 3U)) ==
+                           BoundaryPhysics::SurfaceOutcome::Detect;
+            } else if (surfaceOutcome ==
+                       BoundaryPhysics::SurfaceOutcome::DirectTransmit) {
+                directTransmitted = true;
+            } else {
+                if (surface->fType == dielectricDielectricType) {
+                    const auto indexTo{SampleProperty(
+                        nextMaterial->fRindex, photon.fEnergyEv, NAN)};
+                    if (!(refractiveIndex > 0.0F) ||
+                        !isfinite(refractiveIndex) || !(indexTo > 0.0F) ||
+                        !isfinite(indexTo)) {
+                        surfaceAbsorbed = true;
+                    } else {
+                        const auto interactionNormal{
+                            SampleFacetNormal(*surface, normal,
+                                              gLaunchParams.fSeed,
+                                              photon.fPhotonID, bounce)};
+                        const auto fresnel{BoundaryPhysics::ComputeFresnel(
+                            direction, polarization, interactionNormal,
+                            refractiveIndex, indexTo)};
+                        reflected =
+                            fresnel.fTotalInternalReflection ||
+                            Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                                    bounce, 2U, 0U) >
+                                fresnel.fTransmittance;
+                        if (reflected) {
+                            direction = fresnel.fReflectedDirection;
+                            polarization = fresnel.fReflectedPolarization;
+                        } else {
+                            direction = fresnel.fTransmittedDirection;
+                            polarization = fresnel.fTransmittedPolarization;
+                            currentVolumeID = nextVolumeID;
+                        }
+                    }
+                } else {
+                    reflected = true;
+                    direction = SampleSurfaceReflection(
+                        *surface, direction, normal, photon.fEnergyEv,
+                        gLaunchParams.fSeed, photon.fPhotonID, bounce);
+                    polarization = BoundaryPhysics::ReflectPolarization(
+                        polarization, normal, direction);
+                }
+            }
+            if (directTransmitted) {
+                currentVolumeID = nextVolumeID;
             }
         } else {
             const auto indexTo{
                 SampleProperty(nextMaterial->fRindex, photon.fEnergyEv, NAN)};
-            const auto cosineIncident{
-                fminf(fmaxf(-Dot(direction, normal), 0.0F), 1.0F)};
-            if (!(refractiveIndex > 0.0F) || !(indexTo > 0.0F) ||
-                !isfinite(refractiveIndex) || !isfinite(indexTo)) {
-                atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
-                          static_cast<unsigned long long>(1));
-                break;
-            }
-            const auto eta{refractiveIndex / indexTo};
-            const auto sineTransmittedSquared{
-                eta * eta * (1.0F - cosineIncident * cosineIncident)};
-            auto cosineTransmitted{0.0F};
-            auto reflectance{1.0F};
-            if (sineTransmittedSquared < 1.0F && isfinite(indexTo)) {
-                cosineTransmitted =
-                    sqrtf(fmaxf(0.0F, 1.0F - sineTransmittedSquared));
-                const auto rs{
-                    (refractiveIndex * cosineIncident -
-                     indexTo * cosineTransmitted) /
-                    (refractiveIndex * cosineIncident +
-                     indexTo * cosineTransmitted)};
-                const auto rp{
-                    (indexTo * cosineIncident -
-                     refractiveIndex * cosineTransmitted) /
-                    (indexTo * cosineIncident +
-                     refractiveIndex * cosineTransmitted)};
-                reflectance = 0.5F * (rs * rs + rp * rp);
-            }
-            reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce,
-                                2U, 0U) < reflectance;
-            if (!reflected) {
-                direction = Refract(direction, normal, eta, cosineIncident,
-                                    cosineTransmitted);
-                polarization = ProjectPolarization(polarization, direction);
-                currentVolumeID = nextVolumeID;
+            if (!(refractiveIndex > 0.0F) || !isfinite(refractiveIndex) ||
+                !(indexTo > 0.0F) || !isfinite(indexTo)) {
+                surfaceAbsorbed = true;
+            } else {
+                const auto fresnel{BoundaryPhysics::ComputeFresnel(
+                    direction, polarization, normal, refractiveIndex, indexTo)};
+                reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                                    bounce, 2U, 0U) > fresnel.fTransmittance;
+                if (reflected) {
+                    direction = fresnel.fReflectedDirection;
+                    polarization = fresnel.fReflectedPolarization;
+                } else {
+                    direction = fresnel.fTransmittedDirection;
+                    polarization = fresnel.fTransmittedPolarization;
+                    currentVolumeID = nextVolumeID;
+                }
             }
         }
 
         if (detected) {
-            const auto sensorID{nextSolid->fSensorID != invalidID ? nextSolid->fSensorID : currentSolid->fSensorID};
+            const auto sensorID{nextVolume->fSensorID != invalidID
+                                    ? nextVolume->fSensorID
+                                    : currentVolume->fSensorID};
             if (sensorID == invalidID) {
                 atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                           static_cast<unsigned long long>(1));
                 break;
             }
             gLaunchParams.fHits[photonID] = {
-                nextPosition,
+                boundaryPosition,
                 photon.fTimeNs,
                 direction,
                 photon.fEnergyEv,
@@ -662,25 +661,19 @@ __global__ void __raygen__rg() {
             terminated = true;
             break;
         }
-
-        if (surface != nullptr && surface->fKind == dielectricMetal &&
-            !reflected) {
+        if (surfaceAbsorbed) {
             atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
                       static_cast<unsigned long long>(1));
             break;
         }
-        if (reflected) {
-            direction = Reflect(direction, normal);
-            polarization = ProjectPolarization(polarization, direction);
-        }
-        position = Add(
-            nextPosition,
-            Scale(normal,
-                  reflected ? gLaunchParams.fBoundaryEpsilonMm : -gLaunchParams.fBoundaryEpsilonMm));
+        position = Add(boundaryPosition,
+                       Scale(normal, reflected
+                                        ? gLaunchParams.fBoundaryEpsilonMm
+                                        : -gLaunchParams.fBoundaryEpsilonMm));
     }
 
     if (!terminated && bounce >= gLaunchParams.fMaxBounceCount) {
-        atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
+        atomicAdd(&gLaunchParams.fStats->fTruncatedCount,
                   static_cast<unsigned long long>(1));
     }
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DeviceTypes.cuh"
+#include "OptixTransportTypes.cuh"
 
 #include <cmath>
 

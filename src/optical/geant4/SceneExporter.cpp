@@ -8,18 +8,25 @@
 #include "G4MaterialPropertiesTable.hh"
 #include "G4MaterialPropertyVector.hh"
 #include "G4OpticalSurface.hh"
+#include "G4PVParameterised.hh"
+#include "G4PVReplica.hh"
 #include "G4Polyhedron.hh"
+#include "G4ReplicaNavigation.hh"
 #include "G4SystemOfUnits.hh"
 #include "G4VPhysicalVolume.hh"
+#include "G4VPVParameterisation.hh"
 #include "G4VSolid.hh"
+#include "G4GeometryTolerance.hh"
 #include "g4go/optical/Geometry.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <utility>
 
@@ -46,9 +53,10 @@ public:
         G4Polyhedron::SetNumberOfRotationSteps(
             static_cast<G4int>(meshRotationSteps));
         try {
-            AddVolume(world, {}, InvalidID, 0);
+            const auto worldVolumeID{AddVolume(world, {}, InvalidID, 0)};
+            MarkCoincidentBoundaries();
             AddBorderSurfaces();
-            scene.SetWorldVolumeID(world->GetInstanceID());
+            scene.SetWorldVolumeID(worldVolumeID);
         } catch (...) {
             G4Polyhedron::SetNumberOfRotationSteps(previousRotationSteps);
             throw;
@@ -61,39 +69,138 @@ private:
     auto AddVolume(const G4VPhysicalVolume* physicalVolume,
                    Transform parentTransform,
                    std::uint32_t parentVolumeID,
-                   std::uint32_t depth) -> void {
+                   std::uint32_t depth) -> std::uint32_t {
         if (physicalVolume == nullptr) {
-            return;
+            return InvalidID;
+        }
+        if (physicalVolume->GetLogicalVolume() == nullptr) {
+            throw std::runtime_error("physical volume has no logical volume");
         }
         if (physicalVolume->IsParameterised() ||
             physicalVolume->IsReplicated()) {
-            throw std::runtime_error(
-                "GPU mesh backend requires explicit placement volumes; "
-                "parameterised and replica volumes are not supported yet");
+            const auto multiplicity{physicalVolume->GetMultiplicity()};
+            if (multiplicity <= 0) {
+                throw std::runtime_error(
+                    "parameterised or replica volume has no copies: " +
+                    std::string{physicalVolume->GetName()});
+            }
+
+            auto* mutableVolume{const_cast<G4VPhysicalVolume*>(physicalVolume)};
+            const auto savedRotation{physicalVolume->GetObjectRotationValue()};
+            const auto hadRotation{physicalVolume->GetObjectRotation() != nullptr};
+            const auto savedTranslation{physicalVolume->GetObjectTranslation()};
+            const auto savedCopyNo{physicalVolume->GetCopyNo()};
+            G4ReplicaNavigation replicaNavigation{};
+            auto* parameterisation{
+                physicalVolume->IsParameterised()
+                    ? physicalVolume->GetParameterisation()
+                    : nullptr};
+            std::uint32_t firstVolumeID{InvalidID};
+            for (auto copyNo{0}; copyNo < multiplicity; ++copyNo) {
+                mutableVolume->SetCopyNo(copyNo);
+                if (parameterisation != nullptr) {
+                    parameterisation->ComputeTransformation(copyNo,
+                                                            mutableVolume);
+                } else {
+                    replicaNavigation.ComputeTransformation(copyNo,
+                                                            mutableVolume);
+                }
+                const auto* solid{physicalVolume->GetLogicalVolume()->GetSolid()};
+                if (parameterisation != nullptr) {
+                    if (const auto* parameterisedSolid{
+                            parameterisation->ComputeSolid(copyNo,
+                                                           mutableVolume)};
+                        parameterisedSolid != nullptr) {
+                        solid = parameterisedSolid;
+                    }
+                }
+                const auto* material{
+                    physicalVolume->GetLogicalVolume()->GetMaterial()};
+                if (parameterisation != nullptr) {
+                    if (const auto* parameterisedMaterial{
+                            parameterisation->ComputeMaterial(copyNo,
+                                                              mutableVolume)};
+                        parameterisedMaterial != nullptr) {
+                        material = parameterisedMaterial;
+                    }
+                }
+                const auto volumeID{AddVolumeInstance(
+                    physicalVolume, parentTransform, parentVolumeID, depth,
+                    static_cast<std::uint32_t>(copyNo), solid, material,
+                    true)};
+                if (firstVolumeID == InvalidID) {
+                    firstVolumeID = volumeID;
+                }
+            }
+            RestorePhysicalVolume(mutableVolume, savedRotation, savedTranslation,
+                                  savedCopyNo, hadRotation);
+            return firstVolumeID;
         }
+        return AddVolumeInstance(
+            physicalVolume, parentTransform, parentVolumeID, depth,
+            static_cast<std::uint32_t>(std::max(physicalVolume->GetCopyNo(), 0)),
+            physicalVolume->GetLogicalVolume()->GetSolid(),
+            physicalVolume->GetLogicalVolume()->GetMaterial(), false);
+    }
+
+    auto AllocateVolumeID(G4int preferred) -> std::uint32_t {
+        if (preferred >= 0) {
+            const auto candidate{static_cast<std::uint32_t>(preferred)};
+            if (candidate != InvalidID && usedVolumeIDs.insert(candidate).second) {
+                return candidate;
+            }
+        }
+        while (nextVolumeID == InvalidID ||
+               !usedVolumeIDs.insert(nextVolumeID).second) {
+            ++nextVolumeID;
+        }
+        return nextVolumeID++;
+    }
+
+    static auto RestorePhysicalVolume(G4VPhysicalVolume* physicalVolume,
+                                      const G4RotationMatrix& rotation,
+                                      const G4ThreeVector& translation,
+                                      G4int copyNo,
+                                      bool hadRotation) -> void {
+        physicalVolume->SetCopyNo(copyNo);
+        physicalVolume->SetTranslation(translation);
+        if (!hadRotation) {
+            physicalVolume->SetRotation(nullptr);
+        } else if (physicalVolume->GetRotation() == nullptr) {
+            physicalVolume->SetRotation(new G4RotationMatrix(rotation));
+        } else {
+            *physicalVolume->GetRotation() = rotation;
+        }
+    }
+
+    auto AddVolumeInstance(const G4VPhysicalVolume* physicalVolume,
+                           Transform parentTransform,
+                           std::uint32_t parentVolumeID,
+                           std::uint32_t depth,
+                           std::uint32_t copyNo,
+                           const G4VSolid* solid,
+                           const G4Material* material,
+                           bool forceUniqueGeometry) -> std::uint32_t {
         const auto transform{Compose(parentTransform, physicalVolume)};
         const auto* logicalVolume{physicalVolume->GetLogicalVolume()};
         if (logicalVolume == nullptr) {
             throw std::runtime_error("physical volume has no logical volume");
         }
 
-        const auto geometryID{AddGeometry(logicalVolume->GetSolid())};
-        const auto materialID{AddMaterial(logicalVolume->GetMaterial())};
+        const auto geometryID{AddGeometry(solid, !forceUniqueGeometry)};
+        const auto materialID{AddMaterial(material)};
 
         Volume volume{};
         volume.fName = physicalVolume->GetName();
-        volume.fVolumeID = static_cast<std::uint32_t>(
+        volume.fVolumeID = AllocateVolumeID(physicalVolume->GetInstanceID());
+        volume.fPhysicalVolumeID = static_cast<std::uint32_t>(
             std::max(physicalVolume->GetInstanceID(), 0));
-        volume.fCopyNo = static_cast<std::uint32_t>(
-            std::max(physicalVolume->GetCopyNo(), 0));
+        volume.fCopyNo = copyNo;
         volume.fGeometryID = geometryID;
         volume.fMaterialID = materialID;
         volume.fParentVolumeID = parentVolumeID;
         volume.fDepth = depth;
         volume.fTransform = transform;
-        volume.fMayHaveCoincidentBoundary =
-            physicalVolume->GetMotherLogical() != nullptr &&
-            physicalVolume->GetMotherLogical()->GetNoDaughters() > 1;
         if (logicalVolume->GetSensitiveDetector() != nullptr) {
             volume.fSensorID = volume.fCopyNo;
         }
@@ -105,25 +212,29 @@ private:
                 AddSurface(skinSurface->GetSurfaceProperty());
         }
 
-        volumeIDs.emplace(physicalVolume, volume.fVolumeID);
+        volumeIDs[physicalVolume].push_back(volume.fVolumeID);
+        volumeBounds.emplace(volume.fVolumeID,
+                             MakeBounds(scene.FindGeometry(geometryID),
+                                         transform));
         scene.AddVolume(std::move(volume));
 
         for (auto index{std::size_t{}};
              index < logicalVolume->GetNoDaughters(); ++index) {
             AddVolume(logicalVolume->GetDaughter(index), transform,
-                      static_cast<std::uint32_t>(
-                          std::max(physicalVolume->GetInstanceID(), 0)),
-                      depth + 1);
+                      volume.fVolumeID, depth + 1);
         }
+        return volume.fVolumeID;
     }
 
-    auto AddGeometry(const G4VSolid* solid) -> std::uint32_t {
+    auto AddGeometry(const G4VSolid* solid, bool cache) -> std::uint32_t {
         if (solid == nullptr) {
             throw std::runtime_error("logical volume has no solid");
         }
-        if (const auto found{geometryIDs.find(solid)};
-            found != geometryIDs.end()) {
-            return found->second;
+        if (cache) {
+            if (const auto found{geometryIDs.find(solid)};
+                found != geometryIDs.end()) {
+                return found->second;
+            }
         }
 
         auto* polyhedron{solid->CreatePolyhedron()};
@@ -174,8 +285,111 @@ private:
                                      std::string{solid->GetName()});
         }
         const auto geometryID{scene.AddGeometry(std::move(geometry))};
-        geometryIDs.emplace(solid, geometryID);
+        if (cache) {
+            geometryIDs.emplace(solid, geometryID);
+        }
         return geometryID;
+    }
+
+    struct Bounds {
+        Vector3 fMin{std::numeric_limits<float>::max(),
+                     std::numeric_limits<float>::max(),
+                     std::numeric_limits<float>::max()};
+        Vector3 fMax{std::numeric_limits<float>::lowest(),
+                     std::numeric_limits<float>::lowest(),
+                     std::numeric_limits<float>::lowest()};
+    };
+
+    static auto TransformPoint(const Transform& transform,
+                               const Vector3& point) -> Vector3 {
+        const auto& r{transform.fRotation};
+        return {
+            r.fXX * point.fX + r.fXY * point.fY + r.fXZ * point.fZ +
+                transform.fTranslationMm.fX,
+            r.fYX * point.fX + r.fYY * point.fY + r.fYZ * point.fZ +
+                transform.fTranslationMm.fY,
+            r.fZX * point.fX + r.fZY * point.fY + r.fZZ * point.fZ +
+                transform.fTranslationMm.fZ,
+        };
+    }
+
+    static auto MakeBounds(const Geometry* geometry,
+                           const Transform& transform) -> Bounds {
+        if (geometry == nullptr || geometry->fMesh.fVerticesMm.empty()) {
+            throw std::runtime_error("volume geometry has no mesh vertices");
+        }
+        Bounds bounds{};
+        for (const auto& vertex : geometry->fMesh.fVerticesMm) {
+            const auto point{TransformPoint(transform, vertex)};
+            bounds.fMin.fX = std::min(bounds.fMin.fX, point.fX);
+            bounds.fMin.fY = std::min(bounds.fMin.fY, point.fY);
+            bounds.fMin.fZ = std::min(bounds.fMin.fZ, point.fZ);
+            bounds.fMax.fX = std::max(bounds.fMax.fX, point.fX);
+            bounds.fMax.fY = std::max(bounds.fMax.fY, point.fY);
+            bounds.fMax.fZ = std::max(bounds.fMax.fZ, point.fZ);
+        }
+        return bounds;
+    }
+
+    static auto Overlap(float firstMin,
+                        float firstMax,
+                        float secondMin,
+                        float secondMax,
+                        float tolerance) -> bool {
+        return std::min(firstMax, secondMax) + tolerance >=
+               std::max(firstMin, secondMin);
+    }
+
+    static auto Touches(const Bounds& first,
+                        const Bounds& second,
+                        float tolerance) -> bool {
+        const auto xOverlap{Overlap(first.fMin.fX, first.fMax.fX,
+                                    second.fMin.fX, second.fMax.fX,
+                                    tolerance)};
+        const auto yOverlap{Overlap(first.fMin.fY, first.fMax.fY,
+                                    second.fMin.fY, second.fMax.fY,
+                                    tolerance)};
+        const auto zOverlap{Overlap(first.fMin.fZ, first.fMax.fZ,
+                                    second.fMin.fZ, second.fMax.fZ,
+                                    tolerance)};
+        return (xOverlap && yOverlap &&
+                (std::abs(first.fMax.fZ - second.fMin.fZ) <= tolerance ||
+                 std::abs(second.fMax.fZ - first.fMin.fZ) <= tolerance)) ||
+               (xOverlap && zOverlap &&
+                (std::abs(first.fMax.fY - second.fMin.fY) <= tolerance ||
+                 std::abs(second.fMax.fY - first.fMin.fY) <= tolerance)) ||
+               (yOverlap && zOverlap &&
+                (std::abs(first.fMax.fX - second.fMin.fX) <= tolerance ||
+                 std::abs(second.fMax.fX - first.fMin.fX) <= tolerance));
+    }
+
+    auto MarkCoincidentBoundaries() -> void {
+        const auto tolerance{static_cast<float>(
+            G4GeometryTolerance::GetInstance()->GetSurfaceTolerance() / mm)};
+        const auto& volumes{scene.Volumes()};
+        for (auto first{std::size_t{}}; first < volumes.size(); ++first) {
+            for (auto second{first + 1}; second < volumes.size(); ++second) {
+                const auto sameParent{
+                    volumes[first].fParentVolumeID != InvalidID &&
+                    volumes[first].fParentVolumeID ==
+                        volumes[second].fParentVolumeID};
+                const auto parentChild{
+                    volumes[first].fParentVolumeID == volumes[second].fVolumeID ||
+                    volumes[second].fParentVolumeID == volumes[first].fVolumeID};
+                if (!sameParent && !parentChild) {
+                    continue;
+                }
+                const auto firstBounds{volumeBounds.at(volumes[first].fVolumeID)};
+                const auto secondBounds{
+                    volumeBounds.at(volumes[second].fVolumeID)};
+                if (Touches(firstBounds, secondBounds, tolerance)) {
+                    scene.SetVolumeMayHaveCoincidentBoundary(
+                        volumes[first].fVolumeID, true);
+                    scene.SetVolumeMayHaveCoincidentBoundary(
+                        volumes[second].fVolumeID, true);
+                }
+            }
+        }
     }
 
     auto AddMaterial(const G4Material* material) -> std::uint32_t {
@@ -257,12 +471,6 @@ private:
         case polished:
             surface.fFinish = SurfaceFinish::Polished;
             break;
-        case polishedfrontpainted:
-            surface.fFinish = SurfaceFinish::PolishedFrontPainted;
-            break;
-        case polishedbackpainted:
-            surface.fFinish = SurfaceFinish::PolishedBackPainted;
-            break;
         case ground:
             surface.fFinish = SurfaceFinish::Ground;
             break;
@@ -322,11 +530,12 @@ private:
                 throw std::runtime_error(
                     "border surface refers to a volume outside the world");
             }
-            scene.AddSurfaceBinding({
-                first->second,
-                second->second,
-                AddSurface(surface->GetSurfaceProperty()),
-            });
+            const auto surfaceID{AddSurface(surface->GetSurfaceProperty())};
+            for (const auto firstID : first->second) {
+                for (const auto secondID : second->second) {
+                    scene.AddSurfaceBinding({firstID, secondID, surfaceID});
+                }
+            }
         }
     }
 
@@ -421,7 +630,11 @@ private:
     std::unordered_map<const G4Material*, std::uint32_t> materialIDs{};
     std::unordered_map<const G4SurfaceProperty*, std::uint32_t> surfaceIDs{};
     std::unordered_map<const G4VSolid*, std::uint32_t> geometryIDs{};
-    std::unordered_map<const G4VPhysicalVolume*, std::uint32_t> volumeIDs{};
+    std::unordered_map<const G4VPhysicalVolume*,
+                       std::vector<std::uint32_t>> volumeIDs{};
+    std::unordered_map<std::uint32_t, Bounds> volumeBounds{};
+    std::unordered_set<std::uint32_t> usedVolumeIDs{};
+    std::uint32_t nextVolumeID{};
     std::uint32_t meshRotationSteps{};
 };
 

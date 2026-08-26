@@ -480,6 +480,20 @@ private:
                 throw std::invalid_argument("OptiX scene contains invalid mesh " +
                                             geometry.fName);
             }
+            if (std::any_of(mesh.fIndices.begin(), mesh.fIndices.end(),
+                            [&](const auto index) {
+                                return index >= mesh.fVerticesMm.size();
+                            })) {
+                throw std::invalid_argument(
+                    "OptiX scene mesh index exceeds vertex count: " +
+                    geometry.fName);
+            }
+            if (!mesh.fTriangleFlags.empty() &&
+                mesh.fTriangleFlags.size() != mesh.fIndices.size() / 3) {
+                throw std::invalid_argument(
+                    "OptiX scene triangle flag count mismatch: " +
+                    geometry.fName);
+            }
             std::vector<DeviceVector3> vertices{};
             vertices.reserve(mesh.fVerticesMm.size());
             for (const auto& vertex : mesh.fVerticesMm) {
@@ -555,6 +569,7 @@ private:
             }
             volumes.push_back({
                 volume.fVolumeID,
+                volume.fPhysicalVolumeID,
                 volume.fCopyNo,
                 volume.fGeometryID,
                 volume.fMaterialID,

@@ -88,6 +88,7 @@ struct DeviceGeometry {
 
 struct DeviceVolume {
     std::uint32_t fVolumeID{};
+    std::uint32_t fPhysicalVolumeID{};
     std::uint32_t fCopyNo{};
     std::uint32_t fGeometryID{};
     std::uint32_t fMaterialID{};
