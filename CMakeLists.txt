@@ -279,6 +279,7 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             include/g4go/simulation/EventAction.hpp
             include/g4go/simulation/PrimaryGeneratorAction.hpp
             include/g4go/simulation/RunAction.hpp
+            test/TestOpticalTransport.C
         )
 
         add_custom_target(g4go-format
@@ -313,5 +314,16 @@ if(BUILD_TESTING)
              COMMAND $<TARGET_FILE:g4go>
                      ${PROJECT_BINARY_DIR}/run_optical_smoke.mac)
     set_tests_properties(g4go_smoke_auto PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
+
+    find_program(G4GO_BASH_EXECUTABLE NAMES bash REQUIRED)
+    add_test(NAME g4go_noptpho_regression
+             COMMAND ${G4GO_BASH_EXECUTABLE}
+                     ${PROJECT_SOURCE_DIR}/test/regression_test.sh
+                     --build-dir ${PROJECT_BINARY_DIR})
+    set_tests_properties(g4go_noptpho_regression PROPERTIES
+        LABELS "regression;gpu"
+        RUN_SERIAL TRUE
+        TIMEOUT 600
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 endif()
