@@ -252,11 +252,11 @@ cmake --build build -j
 ctest --test-dir build -V -R '^g4go_noptpho_regression$'
 ```
 
-测试使用 `test/TestOpticalTransport.C` 比较 `CrystalHit.nOptPho` 谱。ROOT 宏执行未加权直方图的卡方形状检验，要求 `pValue >= 0.01`，并要求 CPU/GPU 的 `nOptPho` 总量相对差异不超过 10%。测试同时生成以下文件：
+测试使用 `test/TestOpticalTransport.C` 比较 `CrystalHit.nOptPho` 谱。ROOT 宏使用包含 overflow bin 的未加权 `Chi2TestX(..., "UU P OF")`，比较区间使用 `[0,10,20,30,40,50,75,100,250]` 分段，并在最大值超过 250 时扩展到 `max(nOptPho)+1`；图形继续保留 200 个 bin。宏将 p-value 换算为双侧 Gaussian significance，并按 Z 值输出 `FAILED`、`SUSPICIOUS`、`PASSED` 或 `IDENTICAL`；卡方统计条件无效时输出 `INVALID`。`Z > 5`、卡方条件无效或 CPU/GPU 的 `nOptPho` 总量相对差异超过 10% 时测试失败；`3 < Z <= 5` 标记为可疑，其余有效状态通过测试。测试同时生成以下文件：
 
 - `noptpho_cpu.root` 和 `noptpho_gpu.root`：CPU/GPU 输入结果。
 - `noptpho_comparison.png`：200 个 bin 的原始计数 CPU/GPU 谱和 pull 图，图例中标注 GPU 加速比。
-- `noptpho_regression_report.root`：ROOT 直方图、统计量、运行时间和 `gpuSpeedup` 参数。
+- `noptpho_regression_report.root`：ROOT 直方图、卡方统计量、运行时间和 `gpuSpeedup` 参数。
 - `regression_result.txt`：文本化回归结果，包含 CPU/GPU 墙钟时间和 `gpu_speedup`。
 - `cpu.log`、`gpu.log` 和 `regression.log`：执行日志。
 

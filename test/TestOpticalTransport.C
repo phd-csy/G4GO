@@ -4,20 +4,24 @@
 #include "TH1D.h"
 #include "TLegend.h"
 #include "TLine.h"
+#include "TMath.h"
 #include "TPad.h"
 #include "TParameter.h"
 #include "TROOT.h"
 #include "TSystem.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 auto TestOpticalTransport(const char* cpuFileName,
                           const char* gpuFileName,
@@ -39,6 +43,8 @@ auto TestOpticalTransport(const char* cpuFileName,
         auto gpuMean{gpuData.Mean<int>("nOptPho")};
         auto cpuRms{cpuData.StdDev<int>("nOptPho")};
         auto gpuRms{gpuData.StdDev<int>("nOptPho")};
+        auto cpuMaximumResult{cpuData.Max<int>("nOptPho")};
+        auto gpuMaximumResult{gpuData.Max<int>("nOptPho")};
 
         if (*cpuEntries < 500U || *gpuEntries < 500U) {
             throw std::runtime_error("CrystalHit contains too few entries");
@@ -50,34 +56,68 @@ auto TestOpticalTransport(const char* cpuFileName,
             throw std::runtime_error("nOptPho total is zero");
         }
 
-        constexpr auto nBins{200};
+        constexpr auto plotBins{200};
         constexpr auto spectrumMinimum{0.0};
         constexpr auto spectrumMaximum{1000.0};
         const auto histogramTitle{"nOptPho spectrum;nOptPho;Entries"};
         auto cpuHistogram{cpuData.Histo1D(
-            {"cpu_nOptPho", histogramTitle, nBins, spectrumMinimum,
+            {"cpu_nOptPho", histogramTitle, plotBins, spectrumMinimum,
              spectrumMaximum},
             "nOptPho")};
         auto gpuHistogram{gpuData.Histo1D(
-            {"gpu_nOptPho", histogramTitle, nBins, spectrumMinimum,
+            {"gpu_nOptPho", histogramTitle, plotBins, spectrumMinimum,
              spectrumMaximum},
+            "nOptPho")};
+
+        const auto maximumNOptPho{
+            std::max(*cpuMaximumResult, *gpuMaximumResult)};
+        std::vector<double> comparisonEdges{
+            0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 75.0, 100.0, 250.0};
+        const auto comparisonUpperEdge{
+            static_cast<double>(maximumNOptPho) + 1.0};
+        if (comparisonUpperEdge > comparisonEdges.back()) {
+            comparisonEdges.push_back(comparisonUpperEdge);
+        }
+        const auto comparisonBins{
+            static_cast<int>(comparisonEdges.size() - std::size_t{1})};
+        auto cpuComparisonHistogram{cpuData.Histo1D(
+            {"cpu_nOptPho_comparison", histogramTitle, comparisonBins,
+             comparisonEdges.data()},
+            "nOptPho")};
+        auto gpuComparisonHistogram{gpuData.Histo1D(
+            {"gpu_nOptPho_comparison", histogramTitle, comparisonBins,
+             comparisonEdges.data()},
             "nOptPho")};
 
         auto* cpuHistogramPtr{cpuHistogram.GetPtr()};
         auto* gpuHistogramPtr{gpuHistogram.GetPtr()};
+        auto* cpuComparisonHistogramPtr{cpuComparisonHistogram.GetPtr()};
+        auto* gpuComparisonHistogramPtr{gpuComparisonHistogram.GetPtr()};
         double chi2{};
         int ndf{};
         int igood{};
         auto option{const_cast<Option_t*>("UU P OF")};
-        const auto pValue{
-            cpuHistogramPtr->Chi2TestX(
-                gpuHistogramPtr, chi2, ndf, igood, option)};
+        const auto pValue{cpuComparisonHistogramPtr->Chi2TestX(
+            gpuComparisonHistogramPtr, chi2, ndf, igood, option)};
+        const auto validPValue{std::isfinite(pValue) && pValue >= 0.0 &&
+                               pValue <= 1.0};
+        const auto validChiSquare{igood == 0};
+        double zValue{std::numeric_limits<double>::quiet_NaN()};
+        if (validPValue && validChiSquare) {
+            zValue = pValue == 0.0 ? std::numeric_limits<double>::infinity() : -TMath::NormQuantile(pValue / 2.0);
+        }
+        const auto significanceStatus{
+            !validPValue || !validChiSquare ? "INVALID" :
+            zValue > 5.0                    ? "FAILED" :
+            zValue > 3.0                    ? "SUSPICIOUS" :
+            zValue > 0.0                    ? "PASSED" :
+                                              "IDENTICAL"};
         const auto relativeTotalDifference{
             std::abs(static_cast<double>(gpuTotal) - static_cast<double>(cpuTotal)) /
             static_cast<double>(cpuTotal)};
-        const auto shapePassed{pValue >= 0.01};
         const auto totalPassed{relativeTotalDifference <= 0.10};
-        const auto regressionPassed{shapePassed && totalPassed};
+        const auto regressionStatus{totalPassed ? significanceStatus : "FAILED"};
+        const auto regressionPassed{totalPassed && zValue <= 5.0};
         const auto hasTiming{cpuElapsedSeconds > 0.0 &&
                              gpuElapsedSeconds > 0.0};
         const auto gpuSpeedup{hasTiming ? cpuElapsedSeconds /
@@ -93,8 +133,8 @@ auto TestOpticalTransport(const char* cpuFileName,
                   << ", nOptPho_total=" << gpuTotal
                   << ", nOptPho_mean=" << *gpuMean
                   << ", nOptPho_rms=" << *gpuRms << '\n'
-                  << "chi2=" << chi2 << ", ndf=" << ndf
-                  << ", igood=" << igood << ", pValue=" << pValue
+                  << "pValue=" << pValue << ", Z=" << zValue
+                  << ", significance=" << significanceStatus
                   << ", relative_nOptPho_total_difference="
                   << relativeTotalDifference << '\n';
         if (hasTiming) {
@@ -117,10 +157,10 @@ auto TestOpticalTransport(const char* cpuFileName,
         TH1D pull{
             "nOptPho_pull",
             "nOptPho pull;nOptPho;Pull",
-            nBins,
+            plotBins,
             spectrumMinimum,
             spectrumMaximum};
-        for (auto i{1}; i <= nBins; ++i) {
+        for (auto i{1}; i <= plotBins; ++i) {
             const auto difference{
                 cpuPlot.GetBinContent(i) - gpuPlot.GetBinContent(i)};
             const auto error{
@@ -181,6 +221,7 @@ auto TestOpticalTransport(const char* cpuFileName,
         TParameter<int> ndfParameter{"ndf", ndf};
         TParameter<int> igoodParameter{"igood", igood};
         TParameter<double> pValueParameter{"pValue", pValue};
+        TParameter<double> zValueParameter{"Z", zValue};
         TParameter<double> totalDifferenceParameter{
             "relativeTotalDifference", relativeTotalDifference};
         TParameter<double> cpuElapsedSecondsParameter{
@@ -194,6 +235,7 @@ auto TestOpticalTransport(const char* cpuFileName,
         ndfParameter.Write();
         igoodParameter.Write();
         pValueParameter.Write();
+        zValueParameter.Write();
         totalDifferenceParameter.Write();
         cpuElapsedSecondsParameter.Write();
         gpuElapsedSecondsParameter.Write();
@@ -210,7 +252,7 @@ auto TestOpticalTransport(const char* cpuFileName,
             throw std::runtime_error("unable to create regression result");
         }
         result << std::fixed << std::setprecision(6)
-               << "status=" << (regressionPassed ? "PASSED" : "FAILED")
+               << "status=" << regressionStatus
                << '\n'
                << "cpu_entries=" << *cpuEntries << '\n'
                << "gpu_entries=" << *gpuEntries << '\n'
@@ -220,6 +262,8 @@ auto TestOpticalTransport(const char* cpuFileName,
                << "ndf=" << ndf << '\n'
                << "igood=" << igood << '\n'
                << "pValue=" << pValue << '\n'
+               << "Z=" << zValue << '\n'
+               << "significance=" << significanceStatus << '\n'
                << "relative_nOptPho_total_difference="
                << relativeTotalDifference << '\n';
         if (hasTiming) {
@@ -238,11 +282,7 @@ auto TestOpticalTransport(const char* cpuFileName,
             gSystem->Exit(1);
         }
 
-        if (pValue < 0.05) {
-            std::cout << "SUSPICIOUS: shape p-value is below 0.05\n";
-        } else {
-            std::cout << "PASSED: nOptPho CPU/GPU regression\n";
-        }
+        std::cout << regressionStatus << ": nOptPho CPU/GPU regression\n";
         gSystem->Exit(0);
     } catch (const std::exception& exception) {
         std::cerr << "FAILED: " << exception.what() << '\n';
