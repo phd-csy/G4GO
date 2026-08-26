@@ -75,7 +75,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     const auto crystalPropertiesTable{new G4MaterialPropertiesTable};
     crystalPropertiesTable->AddProperty("ABSLENGTH", {minPhotonEnergy, maxPhotonEnergy}, {40 * cm, 40 * cm});
     crystalPropertiesTable->AddProperty("SCINTILLATIONCOMPONENT1", scintillatorEnergyBin, scintillationComponent1);
-    crystalPropertiesTable->AddConstProperty("SCINTILLATIONYIELD", 3500.);
+    crystalPropertiesTable->AddConstProperty("SCINTILLATIONYIELD", 3500. / MeV);
     crystalPropertiesTable->AddConstProperty("SCINTILLATIONTIMECONSTANT1", 30 * ns);
     crystalPropertiesTable->AddConstProperty("RESOLUTIONSCALE", 1.0);
     crystalPropertiesTable->AddProperty("RINDEX", {minPhotonEnergy, maxPhotonEnergy}, {1.95, 1.95});
