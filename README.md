@@ -4,7 +4,7 @@
 
 G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光学光子输运模拟的项目。
 
-项目面向单晶体光学探测单元，提供统一的 CPU/GPU optical backend、Geant4 event bridge 和 ROOT ntuple 输出。GPU backend 负责光学光子的批量输运，Geant4 继续负责粒子相互作用、几何定义、材料属性、事件管理和结果写入。
+项目面向单晶体光学探测单元，提供统一的 CPU/GPU optical backend、Geant4 event adapter 和 ROOT ntuple 输出。GPU backend 负责光学光子的批量输运，Geant4 继续负责粒子相互作用、几何定义、材料属性、事件管理和结果写入。
 
 ## 主要能力
 
@@ -201,7 +201,7 @@ G4GO/
 ├── src/
 │   ├── detector/           # 几何、材料与 sensitive detector
 │   ├── optical/
-│   │   ├── geant4/         # event bridge、scene exporter 与 batch service
+│   │   ├── geant4/         # event adapter、scene exporter 与 batch service
 │   │   └── optix/          # OptiX host/device transport
 │   └── simulation/         # run、event 与 output action
 └── test/                   # 单元、smoke 与回归测试
