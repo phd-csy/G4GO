@@ -8,25 +8,25 @@
 #include "g4go/detector/DetectorConstruction.hpp"
 #include "g4go/detector/ScintillatorHit.hpp"
 #include "g4go/detector/SensorHit.hpp"
-#include "g4go/optical/geant4/EventBridge.hpp"
-#include "g4go/simulation/EventOutput.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
+#include "g4go/simulation/Output.hpp"
 
 #include <utility>
 
 namespace G4GO::Simulation {
 
 EventAction::EventAction(
-    std::shared_ptr<G4GO::Optical::OpticalEventBridge> bridge,
-    std::shared_ptr<EventOutputQueue> output) :
-    fBridge{std::move(bridge)},
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+    std::shared_ptr<Output> output) :
+    fAdapter{std::move(adapter)},
     fOutput{std::move(output)} {}
 
 auto EventAction::BeginOfEventAction(const G4Event* event) -> void {
-    fBridge->BeginEvent(event->GetEventID());
+    fAdapter->BeginEvent(event->GetEventID());
 }
 
 auto EventAction::EndOfEventAction(const G4Event* event) -> void {
-    const auto transportFuture{fBridge->EndEvent()};
+    const auto transportFuture{fAdapter->EndEvent()};
 
     auto scintillatorHCid{
         G4SDManager::GetSDMpointer()->GetCollectionID(
@@ -44,8 +44,9 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
                             ->ModuleID()};
     auto eventID{event->GetEventID()};
 
-    if (fBridge->BackendType() == G4GO::Optical::Backend::Optix) {
-        std::vector<CrystalHitRow> crystalHits{};
+    if (fAdapter->SelectedBackend() ==
+        G4GO::Optical::PhotonTransportBackend::OptiX) {
+        std::vector<CrystalHitRecord> crystalHits{};
         crystalHits.reserve(moduleID);
         for (auto i{0}; i < moduleID; i++) {
             const auto energyDeposit{(*scintHC)[i]->GetEnergyDeposit()};
@@ -53,15 +54,19 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
                 crystalHits.push_back({eventID, i, energyDeposit});
             }
         }
-        fOutput->Submit({eventID, std::move(crystalHits), transportFuture});
-        fOutput->DrainReady(fOutput->Size() > 64);
+        fOutput->Enqueue(std::move(crystalHits), transportFuture);
+        if (fOutput->PendingCount() > 64) {
+            fOutput->WaitAndWriteNextEvent();
+        } else {
+            fOutput->WriteReadyEvents();
+        }
         return;
     }
 
-    for (const auto& photonHit : fBridge->EventHits()) {
+    for (const auto& detection : fAdapter->EventDetections()) {
         auto* sensorHit{new G4GO::Detector::SensorHit()};
-        sensorHit->SetGlobalTime(photonHit.fTimeNs * ns);
-        sensorHit->SetCopyNo(static_cast<G4int>(photonHit.fSensorID));
+        sensorHit->SetGlobalTime(detection.fTimeNs * ns);
+        sensorHit->SetCopyNo(static_cast<G4int>(detection.fSensorID));
         sensorHC->insert(sensorHit);
     }
 

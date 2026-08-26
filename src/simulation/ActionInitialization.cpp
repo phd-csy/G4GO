@@ -1,12 +1,12 @@
 #include "g4go/simulation/ActionInitialization.hpp"
 
-#include "g4go/optical/geant4/EventBridge.hpp"
-#include "g4go/optical/geant4/OpticalBatchService.hpp"
-#include "g4go/optical/geant4/StackingAction.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
+#include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
 #include "g4go/simulation/EventAction.hpp"
-#include "g4go/simulation/EventOutput.hpp"
+#include "g4go/simulation/Output.hpp"
 #include "g4go/simulation/PrimaryGeneratorAction.hpp"
 #include "g4go/simulation/RunAction.hpp"
+#include "g4go/simulation/StackingAction.hpp"
 
 #include <memory>
 #include <utility>
@@ -14,25 +14,26 @@
 namespace G4GO::Simulation {
 
 ActionInitialization::ActionInitialization(
-    G4GO::Optical::TransportConfig config) :
-    fConfig{config},
-    fBatchService{
-        std::make_shared<G4GO::Optical::OpticalBatchService>(std::move(config))} {}
+    G4GO::Optical::PhotonTransportConfig configuration) :
+    fConfiguration{configuration},
+    fBatchScheduler{
+        std::make_shared<G4GO::Optical::Geant4BatchScheduler>(
+            std::move(configuration))} {}
 
 auto ActionInitialization::BuildForMaster() const -> void {
-    SetUserAction(new RunAction(fBatchService, {}, {}, true));
+    SetUserAction(new RunAction(fBatchScheduler, {}, {}, true));
 }
 
 auto ActionInitialization::Build() const -> void {
-    const auto output{std::make_shared<EventOutputQueue>()};
-    const auto bridge{
-        std::make_shared<G4GO::Optical::OpticalEventBridge>(
-            fConfig, fBatchService)};
+    const auto output{std::make_shared<Output>()};
+    const auto adapter{
+        std::make_shared<G4GO::Optical::Geant4EventAdapter>(
+            fConfiguration, fBatchScheduler)};
 
     SetUserAction(new PrimaryGeneratorAction());
-    SetUserAction(new RunAction(fBatchService, bridge, output));
-    SetUserAction(new EventAction(bridge, output));
-    SetUserAction(new G4GO::Optical::OpticalStackingAction(bridge));
+    SetUserAction(new RunAction(fBatchScheduler, adapter, output));
+    SetUserAction(new EventAction(adapter, output));
+    SetUserAction(new StackingAction(adapter));
 }
 
 } // namespace G4GO::Simulation

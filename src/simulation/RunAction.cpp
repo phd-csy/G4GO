@@ -2,22 +2,22 @@
 
 #include "G4AnalysisManager.hh"
 #include "G4ios.hh"
-#include "g4go/optical/geant4/EventBridge.hpp"
-#include "g4go/optical/geant4/OpticalBatchService.hpp"
-#include "g4go/simulation/EventOutput.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
+#include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
+#include "g4go/simulation/Output.hpp"
 
 #include <utility>
 
 namespace G4GO::Simulation {
 
 RunAction::RunAction(
-    std::shared_ptr<G4GO::Optical::OpticalBatchService> batchService,
-    std::shared_ptr<G4GO::Optical::OpticalEventBridge> bridge,
-    std::shared_ptr<EventOutputQueue> output,
+    std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> batchScheduler,
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+    std::shared_ptr<Output> output,
     bool isMaster) :
     G4UserRunAction{},
-    fBridge{std::move(bridge)},
-    fBatchService{std::move(batchService)},
+    fAdapter{std::move(adapter)},
+    fBatchScheduler{std::move(batchScheduler)},
     fOutput{std::move(output)},
     fIsMaster{isMaster} {
     auto analysisManager{G4AnalysisManager::Instance()};
@@ -42,10 +42,10 @@ RunAction::RunAction(
 }
 
 auto RunAction::BeginOfRunAction(const G4Run*) -> void {
-    if (fBridge) {
-        fBridge->BeginRun();
-    } else if (fBatchService) {
-        fBatchService->BeginRun();
+    if (fAdapter) {
+        fAdapter->BeginRun();
+    } else if (fBatchScheduler) {
+        fBatchScheduler->BeginRun();
     }
 
     auto analysisManager{G4AnalysisManager::Instance()};
@@ -56,25 +56,27 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
     if (fOutput) {
         fOutput->Flush();
     }
-    if (fBridge) {
-        fBridge->EndRun();
+    if (fAdapter) {
+        fAdapter->EndRun();
     }
-    if (fIsMaster && fBatchService &&
-        fBatchService->BackendType() != G4GO::Optical::Backend::Geant4) {
-        fBatchService->EndRun();
-        const auto& stats{fBatchService->RunStats()};
-        const auto& batches{fBatchService->Statistics()};
+    if (fIsMaster && fBatchScheduler &&
+        fBatchScheduler->SelectedBackend() !=
+            G4GO::Optical::PhotonTransportBackend::Geant4) {
+        fBatchScheduler->EndRun();
+        const auto& statistics{fBatchScheduler->RunStatistics()};
+        const auto& batches{fBatchScheduler->BatchStatistics()};
         G4cout << "[g4go] optical backend: "
-               << G4GO::Optical::BackendName(fBatchService->BackendType())
-               << ", generated: " << stats.fGeneratedCount
-               << ", captured: " << stats.fCapturedCount
-               << ", detected: " << stats.fDetectedCount
-               << ", absorbed: " << stats.fAbsorbedCount
-               << ", escaped: " << stats.fEscapedCount
-               << ", truncated: " << stats.fTruncatedCount
-               << ", invalid: " << stats.fInvalidStateCount
-               << ", max_bounce: " << stats.fMaxBounceCount
-               << ", transport_ms: " << stats.fTransportTimeMs
+               << G4GO::Optical::ToString(
+                      fBatchScheduler->SelectedBackend())
+               << ", generated: " << statistics.fGeneratedCount
+               << ", captured: " << statistics.fCapturedCount
+               << ", detected: " << statistics.fDetectedCount
+               << ", absorbed: " << statistics.fAbsorbedCount
+               << ", escaped: " << statistics.fEscapedCount
+               << ", truncated: " << statistics.fTruncatedCount
+               << ", invalid: " << statistics.fInvalidStateCount
+               << ", max_bounce: " << statistics.fMaxBounceCount
+               << ", transport_ms: " << statistics.fTransportTimeMs
                << ", batches: " << batches.fBatchCount
                << ", batch_photons: " << batches.fPhotonCount
                << ", max_batch_photons: " << batches.fMaxBatchPhotonCount

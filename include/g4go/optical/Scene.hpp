@@ -1,6 +1,6 @@
 #pragma once
 
-#include "g4go/optical/Types.hpp"
+#include "G4ThreeVector.hh"
 
 #include <cstdint>
 #include <limits>
@@ -53,7 +53,7 @@ struct Rotation {
 
 struct Transform {
     Rotation fRotation{};
-    Vector3 fTranslationMm{};
+    G4ThreeVector fTranslationMm{};
 };
 
 struct PropertyTable {
@@ -96,7 +96,7 @@ struct Surface {
 
 struct MeshGeometry {
     std::string fName{};
-    std::vector<Vector3> fVerticesMm{};
+    std::vector<G4ThreeVector> fVerticesMm{};
     std::vector<std::uint32_t> fIndices{};
     std::vector<std::uint8_t> fTriangleFlags{};
 };

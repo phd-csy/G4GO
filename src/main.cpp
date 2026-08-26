@@ -9,7 +9,7 @@
 #include "G4Threading.hh"
 #include "G4Timer.hh"
 #include "g4go/detector/DetectorConstruction.hpp"
-#include "g4go/optical/Types.hpp"
+#include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/simulation/ActionInitialization.hpp"
 #ifdef G4GO_USE_UIVIS
 #    include "G4UIExecutive.hh"
@@ -31,7 +31,7 @@
 namespace {
 
 struct CommandLineOptions {
-    G4GO::Optical::TransportConfig transportConfig{};
+    G4GO::Optical::PhotonTransportConfig photonTransportConfig{};
     std::optional<std::string> macroFile{};
     std::uint32_t threads{};
     bool help{};
@@ -43,7 +43,8 @@ auto main(int argc, char** argv) -> int {
     CLI::App app{"G4GO optical photon simulation", argv[0]};
     CommandLineOptions options{};
     std::string backendName{
-        G4GO::Optical::BackendName(options.transportConfig.fBackend)};
+        G4GO::Optical::ToString(
+            options.photonTransportConfig.fBackend)};
     std::string macroFile{};
 
     app.set_help_flag("");
@@ -53,32 +54,32 @@ auto main(int argc, char** argv) -> int {
         ->check(CLI::IsMember({"auto", "cpu", "gpu"}))
         ->capture_default_str();
     app.add_option(
-           "--seed", options.transportConfig.fSeed, "Random seed")
+           "--seed", options.photonTransportConfig.fSeed, "Random seed")
         ->capture_default_str();
     app.add_option(
            "--threads", options.threads, "Number of Geant4 worker threads")
         ->capture_default_str();
     app.add_option(
            "--max-photons",
-           options.transportConfig.fMaxPhotonCount,
+           options.photonTransportConfig.fMaxPhotonsPerEvent,
            "Maximum number of captured optical photons")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
     app.add_option(
            "--max-bounces",
-           options.transportConfig.fMaxBounceCount,
+           options.photonTransportConfig.fMaxBouncesPerPhoton,
            "Maximum number of optical photon bounces")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
     app.add_option(
            "--batch-photons",
-           options.transportConfig.fBatchPhotonCount,
+           options.photonTransportConfig.fTargetPhotonsPerBatch,
            "Target optical photons per GPU batch")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
     app.add_option(
            "--mesh-rotation-steps",
-           options.transportConfig.fMeshRotationSteps,
+           options.photonTransportConfig.fMeshRotationSteps,
            "Number of Geant4 polyhedron rotation steps")
         ->check(CLI::Range(8U, 4096U))
         ->capture_default_str();
@@ -89,11 +90,14 @@ auto main(int argc, char** argv) -> int {
         app.parse(argc, argv);
 
         if (backendName == "auto") {
-            options.transportConfig.fBackend = G4GO::Optical::Backend::Auto;
+            options.photonTransportConfig.fBackend =
+                G4GO::Optical::PhotonTransportBackend::Auto;
         } else if (backendName == "cpu") {
-            options.transportConfig.fBackend = G4GO::Optical::Backend::Geant4;
+            options.photonTransportConfig.fBackend =
+                G4GO::Optical::PhotonTransportBackend::Geant4;
         } else if (backendName == "gpu") {
-            options.transportConfig.fBackend = G4GO::Optical::Backend::Optix;
+            options.photonTransportConfig.fBackend =
+                G4GO::Optical::PhotonTransportBackend::OptiX;
         } else {
             throw std::invalid_argument(
                 "invalid value for --backend: " + backendName);
@@ -135,7 +139,8 @@ auto main(int argc, char** argv) -> int {
 #endif
 
     G4Random::setTheEngine(new CLHEP::MTwistEngine());
-    G4Random::setTheSeed(static_cast<long>(options.transportConfig.fSeed));
+    G4Random::setTheSeed(
+        static_cast<long>(options.photonTransportConfig.fSeed));
 
     G4int precision{4};
     G4SteppingVerbose::UseBestUnit(precision);
@@ -165,7 +170,8 @@ auto main(int argc, char** argv) -> int {
     runManager->SetUserInitialization(physicsList);
 
     runManager->SetUserInitialization(
-        new G4GO::Simulation::ActionInitialization(options.transportConfig));
+        new G4GO::Simulation::ActionInitialization(
+            options.photonTransportConfig));
 
 #ifdef G4GO_USE_UIVIS
     G4VisManager* visManager{new G4VisExecutive("Quiet")};

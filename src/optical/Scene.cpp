@@ -1,7 +1,6 @@
 #include "g4go/optical/Scene.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <utility>
 
 namespace G4GO::Optical {

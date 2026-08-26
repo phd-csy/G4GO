@@ -7,26 +7,26 @@
 class G4Event;
 
 namespace G4GO::Optical {
-class OpticalEventBridge;
+class Geant4EventAdapter;
 } // namespace G4GO::Optical
 
 namespace G4GO::Simulation {
 
-class EventOutputQueue;
+class Output;
 
 class EventAction : public G4UserEventAction {
 public:
     explicit EventAction(
-        std::shared_ptr<G4GO::Optical::OpticalEventBridge> bridge,
-        std::shared_ptr<EventOutputQueue> output);
+        std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+        std::shared_ptr<Output> output);
     ~EventAction() override = default;
 
     auto BeginOfEventAction(const G4Event*) -> void override;
     auto EndOfEventAction(const G4Event*) -> void override;
 
 private:
-    std::shared_ptr<G4GO::Optical::OpticalEventBridge> fBridge{};
-    std::shared_ptr<EventOutputQueue> fOutput{};
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter{};
+    std::shared_ptr<Output> fOutput{};
 };
 
 } // namespace G4GO::Simulation

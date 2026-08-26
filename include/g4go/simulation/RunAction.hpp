@@ -7,20 +7,21 @@
 class G4Run;
 
 namespace G4GO::Optical {
-class OpticalEventBridge;
-class OpticalBatchService;
+class Geant4EventAdapter;
+class Geant4BatchScheduler;
 } // namespace G4GO::Optical
 
 namespace G4GO::Simulation {
 
-class EventOutputQueue;
+class Output;
 
 class RunAction : public G4UserRunAction {
 public:
     explicit RunAction(
-        std::shared_ptr<G4GO::Optical::OpticalBatchService> batchService = {},
-        std::shared_ptr<G4GO::Optical::OpticalEventBridge> bridge = {},
-        std::shared_ptr<EventOutputQueue> output = {},
+        std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> batchScheduler =
+            {},
+        std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter = {},
+        std::shared_ptr<Output> output = {},
         bool isMaster = false);
     ~RunAction() override = default;
 
@@ -28,9 +29,9 @@ public:
     auto EndOfRunAction(const G4Run* run) -> void override;
 
 private:
-    std::shared_ptr<G4GO::Optical::OpticalEventBridge> fBridge{};
-    std::shared_ptr<G4GO::Optical::OpticalBatchService> fBatchService{};
-    std::shared_ptr<EventOutputQueue> fOutput{};
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter{};
+    std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> fBatchScheduler{};
+    std::shared_ptr<Output> fOutput{};
     bool fIsMaster{};
 };
 

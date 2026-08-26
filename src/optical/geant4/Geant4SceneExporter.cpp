@@ -1,23 +1,21 @@
-#include "SceneExporter.hpp"
+#include "Geant4SceneExporter.hpp"
 
+#include "G4GeometryTolerance.hh"
 #include "G4LogicalBorderSurface.hh"
 #include "G4LogicalSkinSurface.hh"
-#include "G4LogicalSurface.hh"
 #include "G4LogicalVolume.hh"
 #include "G4Material.hh"
 #include "G4MaterialPropertiesTable.hh"
 #include "G4MaterialPropertyVector.hh"
 #include "G4OpticalSurface.hh"
-#include "G4PVParameterised.hh"
-#include "G4PVReplica.hh"
 #include "G4Polyhedron.hh"
 #include "G4ReplicaNavigation.hh"
 #include "G4SystemOfUnits.hh"
-#include "G4VPhysicalVolume.hh"
+#include "G4ThreeVector.hh"
 #include "G4VPVParameterisation.hh"
+#include "G4VPhysicalVolume.hh"
 #include "G4VSolid.hh"
-#include "G4GeometryTolerance.hh"
-#include "g4go/optical/Geometry.hpp"
+#include "g4go/optical/GeometryTransformer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,8 +24,8 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace G4GO::Optical {
@@ -92,9 +90,7 @@ private:
             const auto savedCopyNo{physicalVolume->GetCopyNo()};
             G4ReplicaNavigation replicaNavigation{};
             auto* parameterisation{
-                physicalVolume->IsParameterised()
-                    ? physicalVolume->GetParameterisation()
-                    : nullptr};
+                physicalVolume->IsParameterised() ? physicalVolume->GetParameterisation() : nullptr};
             std::uint32_t firstVolumeID{InvalidID};
             for (auto copyNo{0}; copyNo < multiplicity; ++copyNo) {
                 mutableVolume->SetCopyNo(copyNo);
@@ -215,7 +211,7 @@ private:
         volumeIDs[physicalVolume].push_back(volume.fVolumeID);
         volumeBounds.emplace(volume.fVolumeID,
                              MakeBounds(scene.FindGeometry(geometryID),
-                                         transform));
+                                        transform));
         scene.AddVolume(std::move(volume));
 
         for (auto index{std::size_t{}};
@@ -292,24 +288,24 @@ private:
     }
 
     struct Bounds {
-        Vector3 fMin{std::numeric_limits<float>::max(),
-                     std::numeric_limits<float>::max(),
-                     std::numeric_limits<float>::max()};
-        Vector3 fMax{std::numeric_limits<float>::lowest(),
-                     std::numeric_limits<float>::lowest(),
-                     std::numeric_limits<float>::lowest()};
+        G4ThreeVector fMin{std::numeric_limits<double>::max(),
+                           std::numeric_limits<double>::max(),
+                           std::numeric_limits<double>::max()};
+        G4ThreeVector fMax{std::numeric_limits<double>::lowest(),
+                           std::numeric_limits<double>::lowest(),
+                           std::numeric_limits<double>::lowest()};
     };
 
     static auto TransformPoint(const Transform& transform,
-                               const Vector3& point) -> Vector3 {
+                               const G4ThreeVector& point) -> G4ThreeVector {
         const auto& r{transform.fRotation};
         return {
-            r.fXX * point.fX + r.fXY * point.fY + r.fXZ * point.fZ +
-                transform.fTranslationMm.fX,
-            r.fYX * point.fX + r.fYY * point.fY + r.fYZ * point.fZ +
-                transform.fTranslationMm.fY,
-            r.fZX * point.fX + r.fZY * point.fY + r.fZZ * point.fZ +
-                transform.fTranslationMm.fZ,
+            r.fXX * point.x() + r.fXY * point.y() + r.fXZ * point.z() +
+                transform.fTranslationMm.x(),
+            r.fYX * point.x() + r.fYY * point.y() + r.fYZ * point.z() +
+                transform.fTranslationMm.y(),
+            r.fZX * point.x() + r.fZY * point.y() + r.fZZ * point.z() +
+                transform.fTranslationMm.z(),
         };
     }
 
@@ -321,46 +317,46 @@ private:
         Bounds bounds{};
         for (const auto& vertex : geometry->fMesh.fVerticesMm) {
             const auto point{TransformPoint(transform, vertex)};
-            bounds.fMin.fX = std::min(bounds.fMin.fX, point.fX);
-            bounds.fMin.fY = std::min(bounds.fMin.fY, point.fY);
-            bounds.fMin.fZ = std::min(bounds.fMin.fZ, point.fZ);
-            bounds.fMax.fX = std::max(bounds.fMax.fX, point.fX);
-            bounds.fMax.fY = std::max(bounds.fMax.fY, point.fY);
-            bounds.fMax.fZ = std::max(bounds.fMax.fZ, point.fZ);
+            bounds.fMin.setX(std::min(bounds.fMin.x(), point.x()));
+            bounds.fMin.setY(std::min(bounds.fMin.y(), point.y()));
+            bounds.fMin.setZ(std::min(bounds.fMin.z(), point.z()));
+            bounds.fMax.setX(std::max(bounds.fMax.x(), point.x()));
+            bounds.fMax.setY(std::max(bounds.fMax.y(), point.y()));
+            bounds.fMax.setZ(std::max(bounds.fMax.z(), point.z()));
         }
         return bounds;
     }
 
-    static auto Overlap(float firstMin,
-                        float firstMax,
-                        float secondMin,
-                        float secondMax,
-                        float tolerance) -> bool {
+    static auto Overlap(double firstMin,
+                        double firstMax,
+                        double secondMin,
+                        double secondMax,
+                        double tolerance) -> bool {
         return std::min(firstMax, secondMax) + tolerance >=
                std::max(firstMin, secondMin);
     }
 
     static auto Touches(const Bounds& first,
                         const Bounds& second,
-                        float tolerance) -> bool {
-        const auto xOverlap{Overlap(first.fMin.fX, first.fMax.fX,
-                                    second.fMin.fX, second.fMax.fX,
+                        double tolerance) -> bool {
+        const auto xOverlap{Overlap(first.fMin.x(), first.fMax.x(),
+                                    second.fMin.x(), second.fMax.x(),
                                     tolerance)};
-        const auto yOverlap{Overlap(first.fMin.fY, first.fMax.fY,
-                                    second.fMin.fY, second.fMax.fY,
+        const auto yOverlap{Overlap(first.fMin.y(), first.fMax.y(),
+                                    second.fMin.y(), second.fMax.y(),
                                     tolerance)};
-        const auto zOverlap{Overlap(first.fMin.fZ, first.fMax.fZ,
-                                    second.fMin.fZ, second.fMax.fZ,
+        const auto zOverlap{Overlap(first.fMin.z(), first.fMax.z(),
+                                    second.fMin.z(), second.fMax.z(),
                                     tolerance)};
         return (xOverlap && yOverlap &&
-                (std::abs(first.fMax.fZ - second.fMin.fZ) <= tolerance ||
-                 std::abs(second.fMax.fZ - first.fMin.fZ) <= tolerance)) ||
+                (std::abs(first.fMax.z() - second.fMin.z()) <= tolerance ||
+                 std::abs(second.fMax.z() - first.fMin.z()) <= tolerance)) ||
                (xOverlap && zOverlap &&
-                (std::abs(first.fMax.fY - second.fMin.fY) <= tolerance ||
-                 std::abs(second.fMax.fY - first.fMin.fY) <= tolerance)) ||
+                (std::abs(first.fMax.y() - second.fMin.y()) <= tolerance ||
+                 std::abs(second.fMax.y() - first.fMin.y()) <= tolerance)) ||
                (yOverlap && zOverlap &&
-                (std::abs(first.fMax.fX - second.fMin.fX) <= tolerance ||
-                 std::abs(second.fMax.fX - first.fMin.fX) <= tolerance));
+                (std::abs(first.fMax.x() - second.fMin.x()) <= tolerance ||
+                 std::abs(second.fMax.x() - first.fMin.x()) <= tolerance));
     }
 
     auto MarkCoincidentBoundaries() -> void {
@@ -464,9 +460,7 @@ private:
         }
 
         surface.fModelValue = static_cast<float>(
-            opticalSurface->GetModel() == glisur
-                ? opticalSurface->GetPolish()
-                : opticalSurface->GetSigmaAlpha());
+            opticalSurface->GetModel() == glisur ? opticalSurface->GetPolish() : opticalSurface->GetSigmaAlpha());
         switch (opticalSurface->GetFinish()) {
         case polished:
             surface.fFinish = SurfaceFinish::Polished;
@@ -539,11 +533,11 @@ private:
         }
     }
 
-    static auto ToVector(const G4Point3D& point) -> Vector3 {
+    static auto ToVector(const G4Point3D& point) -> G4ThreeVector {
         return {
-            static_cast<float>(point.x() / mm),
-            static_cast<float>(point.y() / mm),
-            static_cast<float>(point.z() / mm),
+            point.x() / mm,
+            point.y() / mm,
+            point.z() / mm,
         };
     }
 
@@ -595,19 +589,20 @@ private:
             static_cast<float>(rotation.zz()),
         };
         const auto localTranslation{physicalVolume->GetObjectTranslation()};
-        const Vector3 translation{
-            static_cast<float>(localTranslation.x() / mm),
-            static_cast<float>(localTranslation.y() / mm),
-            static_cast<float>(localTranslation.z() / mm),
+        const G4ThreeVector translation{
+            localTranslation.x() / mm,
+            localTranslation.y() / mm,
+            localTranslation.z() / mm,
         };
         const auto composedRotation{
             Multiply(parent.fRotation, localRotation)};
-        const auto translated{RotateToWorld(parent.fRotation, translation)};
+        const auto translated{
+            GeometryTransformer::RotateToWorld(parent.fRotation, translation)};
         return {
             composedRotation,
-            {parent.fTranslationMm.fX + translated.fX,
-             parent.fTranslationMm.fY + translated.fY,
-             parent.fTranslationMm.fZ + translated.fZ},
+            {parent.fTranslationMm.x() + translated.x(),
+              parent.fTranslationMm.y() + translated.y(),
+              parent.fTranslationMm.z() + translated.z()},
         };
     }
 
@@ -631,7 +626,8 @@ private:
     std::unordered_map<const G4SurfaceProperty*, std::uint32_t> surfaceIDs{};
     std::unordered_map<const G4VSolid*, std::uint32_t> geometryIDs{};
     std::unordered_map<const G4VPhysicalVolume*,
-                       std::vector<std::uint32_t>> volumeIDs{};
+                       std::vector<std::uint32_t>>
+        volumeIDs{};
     std::unordered_map<std::uint32_t, Bounds> volumeBounds{};
     std::unordered_set<std::uint32_t> usedVolumeIDs{};
     std::uint32_t nextVolumeID{};

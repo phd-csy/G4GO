@@ -1,95 +1,97 @@
-#include "g4go/optical/geant4/EventBridge.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 
 #include "G4Exception.hh"
 #include "G4Navigator.hh"
-#include "G4OpticalPhoton.hh"
-#include "G4ParticleDefinition.hh"
 #include "G4SystemOfUnits.hh"
-#include "G4Track.hh"
 #include "G4TouchableHistory.hh"
+#include "G4Track.hh"
 #include "G4TransportationManager.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4VProcess.hh"
-#include "G4ios.hh"
-#include "g4go/optical/geant4/OpticalBatchService.hpp"
+#include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
 
 #include <algorithm>
-#include <stdexcept>
 #include <utility>
 
 namespace G4GO::Optical {
 
-OpticalEventBridge::OpticalEventBridge(
-    TransportConfig config,
-    std::shared_ptr<OpticalBatchService> batchService) :
-    fRequestedBackend{config.fBackend},
-    fConfig{std::move(config)},
-    fBatchService{std::move(batchService)} {
-    fPhotonData.reserve(std::min<std::size_t>(fConfig.fMaxPhotonCount, 1024));
+Geant4EventAdapter::Geant4EventAdapter(
+    PhotonTransportConfig configuration,
+    std::shared_ptr<Geant4BatchScheduler> batchScheduler) :
+    fRequestedBackend{configuration.fBackend},
+    fConfiguration{std::move(configuration)},
+    fBatchScheduler{std::move(batchScheduler)} {
+    fPhotons.reserve(
+        std::min<std::size_t>(
+            fConfiguration.fMaxPhotonsPerEvent, 1024));
 }
 
-OpticalEventBridge::~OpticalEventBridge() = default;
+Geant4EventAdapter::~Geant4EventAdapter() = default;
 
-auto OpticalEventBridge::BeginRun() -> void {
-    fRunStats = {};
+auto Geant4EventAdapter::BeginRun() -> void {
+    fRunStatistics = {};
     fNextPhotonID = 0;
-    fConfig.fBackend = fRequestedBackend;
-    if (fBatchService) {
-        fBatchService->BeginRun();
-        fConfig.fBackend = fBatchService->BackendType();
+    fConfiguration.fBackend = fRequestedBackend;
+    if (fBatchScheduler) {
+        fBatchScheduler->BeginRun();
+        fConfiguration.fBackend = fBatchScheduler->SelectedBackend();
         return;
     }
 
-    if (fConfig.fBackend == Backend::Auto) {
+    if (fConfiguration.fBackend == PhotonTransportBackend::Auto) {
 #ifdef G4GO_ENABLE_OPTIX
-        fConfig.fBackend = Backend::Optix;
+        fConfiguration.fBackend = PhotonTransportBackend::OptiX;
 #else
-        fConfig.fBackend = Backend::Geant4;
+        fConfiguration.fBackend = PhotonTransportBackend::Geant4;
 #endif
     }
 }
 
-auto OpticalEventBridge::EndRun() -> void {
-    fEventHits.clear();
+auto Geant4EventAdapter::EndRun() -> void {
+    fEventDetections.clear();
 }
 
-auto OpticalEventBridge::BeginEvent(G4int eventID) -> void {
+auto Geant4EventAdapter::BeginEvent(G4int eventID) -> void {
     fEventID = eventID;
-    fPhotonData.clear();
-    fEventHits.clear();
-    fEventStats = {};
+    fPhotons.clear();
+    fEventDetections.clear();
+    fEventStatistics = {};
 }
 
-auto OpticalEventBridge::EndEvent() -> EventTransportFuture {
-    if (fConfig.fBackend == Backend::Optix && fBatchService) {
-        return fBatchService->Submit(fEventID, std::move(fPhotonData),
-                                     fEventStats);
+auto Geant4EventAdapter::EndEvent() -> PhotonTransportFuture {
+    if (fConfiguration.fBackend == PhotonTransportBackend::OptiX &&
+        fBatchScheduler) {
+        return fBatchScheduler->Schedule(
+            fEventID, std::move(fPhotons), fEventStatistics);
     }
-    AddEventStatsToRun();
+    AccumulateEventStatistics();
     return {};
 }
 
-auto OpticalEventBridge::BackendType() const -> Backend {
-    return fConfig.fBackend;
+auto Geant4EventAdapter::SelectedBackend() const
+    -> PhotonTransportBackend {
+    return fConfiguration.fBackend;
 }
 
-auto OpticalEventBridge::RunStats() const -> const TransportStats& {
-    if (fBatchService && fConfig.fBackend == Backend::Optix) {
-        return fBatchService->RunStats();
+auto Geant4EventAdapter::RunStatistics() const
+    -> const PhotonTransportStatistics& {
+    if (fBatchScheduler &&
+        fConfiguration.fBackend == PhotonTransportBackend::OptiX) {
+        return fBatchScheduler->RunStatistics();
     }
-    return fRunStats;
+    return fRunStatistics;
 }
 
-auto OpticalEventBridge::ObserveGenerated() -> void {
-    ++fEventStats.fGeneratedCount;
+auto Geant4EventAdapter::ObserveGenerated() -> void {
+    ++fEventStatistics.fGeneratedCount;
 }
 
-auto OpticalEventBridge::Capture(const G4Track& track) -> void {
-    if (fPhotonData.size() >= fConfig.fMaxPhotonCount) {
+auto Geant4EventAdapter::Capture(const G4Track& track) -> void {
+    if (fPhotons.size() >= fConfiguration.fMaxPhotonsPerEvent) {
         G4ExceptionDescription description{};
         description << "Optical photon limit reached in event " << fEventID
-                    << ": limit=" << fConfig.fMaxPhotonCount;
-        G4Exception("OpticalEventBridge::Capture", "G4GOPhotonLimit",
+                    << ": limit=" << fConfiguration.fMaxPhotonsPerEvent;
+        G4Exception("Geant4EventAdapter::Capture", "G4GOPhotonLimit",
                     FatalException, description);
         return;
     }
@@ -99,12 +101,12 @@ auto OpticalEventBridge::Capture(const G4Track& track) -> void {
         G4ExceptionDescription description{};
         description << "Unable to locate the creation volume for optical photon "
                     << track.GetTrackID() << " in event " << fEventID;
-        G4Exception("OpticalEventBridge::Capture", "G4GOVolumeLookup",
+        G4Exception("Geant4EventAdapter::Capture", "G4GOVolumeLookup",
                     FatalException, description);
         return;
     }
 
-    ++fEventStats.fGeneratedCount;
+    ++fEventStatistics.fGeneratedCount;
 
     const auto position{track.GetPosition()};
     const auto direction{track.GetMomentumDirection()};
@@ -133,11 +135,11 @@ auto OpticalEventBridge::Capture(const G4Track& track) -> void {
     photon.fVolumeID = VolumeIDFromTrack(track, volume);
     photon.fSource = PhotonSourceFrom(track);
 
-    fPhotonData.push_back(photon);
-    ++fEventStats.fCapturedCount;
+    fPhotons.push_back(photon);
+    ++fEventStatistics.fCapturedCount;
 }
 
-auto OpticalEventBridge::PhotonSourceFrom(const G4Track& track) const
+auto Geant4EventAdapter::PhotonSourceFrom(const G4Track& track) const
     -> PhotonSource {
     const auto* creatorProcess{track.GetCreatorProcess()};
     if (creatorProcess == nullptr) {
@@ -154,7 +156,7 @@ auto OpticalEventBridge::PhotonSourceFrom(const G4Track& track) const
     return PhotonSource::Unknown;
 }
 
-auto OpticalEventBridge::LocateVolume(const G4Track& track) const
+auto Geant4EventAdapter::LocateVolume(const G4Track& track) const
     -> const G4VPhysicalVolume* {
     auto* navigator{
         G4TransportationManager::GetTransportationManager()
@@ -164,16 +166,17 @@ auto OpticalEventBridge::LocateVolume(const G4Track& track) const
     return navigator->LocateGlobalPointAndSetup(position, &direction, false);
 }
 
-auto OpticalEventBridge::VolumeIDFromTrack(
+auto Geant4EventAdapter::VolumeIDFromTrack(
     const G4Track& track, const G4VPhysicalVolume* locatedVolume) const
     -> std::uint32_t {
     const auto locatedID{static_cast<std::uint32_t>(
         std::max(locatedVolume->GetInstanceID(), 0))};
-    if (!fBatchService || fBatchService->SceneData().Volumes().empty()) {
+    if (!fBatchScheduler ||
+        fBatchScheduler->ExportedScene().Volumes().empty()) {
         return locatedID;
     }
 
-    const auto& scene{fBatchService->SceneData()};
+    const auto& scene{fBatchScheduler->ExportedScene()};
 
     const auto* touchable{track.GetTouchable()};
     if (touchable == nullptr) {
@@ -200,18 +203,21 @@ auto OpticalEventBridge::VolumeIDFromTrack(
     return parentVolumeID == InvalidID ? locatedID : parentVolumeID;
 }
 
-auto OpticalEventBridge::AddEventStatsToRun() -> void {
-    fRunStats.fGeneratedCount += fEventStats.fGeneratedCount;
-    fRunStats.fCapturedCount += fEventStats.fCapturedCount;
-    fRunStats.fDetectedCount += fEventStats.fDetectedCount;
-    fRunStats.fAbsorbedCount += fEventStats.fAbsorbedCount;
-    fRunStats.fEscapedCount += fEventStats.fEscapedCount;
-    fRunStats.fTruncatedCount += fEventStats.fTruncatedCount;
-    fRunStats.fMaxBounceCount =
-        std::max(fRunStats.fMaxBounceCount, fEventStats.fMaxBounceCount);
-    fRunStats.fInvalidStateCount += fEventStats.fInvalidStateCount;
-    fRunStats.fZeroStepCount += fEventStats.fZeroStepCount;
-    fRunStats.fTransportTimeMs += fEventStats.fTransportTimeMs;
+auto Geant4EventAdapter::AccumulateEventStatistics() -> void {
+    fRunStatistics.fGeneratedCount += fEventStatistics.fGeneratedCount;
+    fRunStatistics.fCapturedCount += fEventStatistics.fCapturedCount;
+    fRunStatistics.fDetectedCount += fEventStatistics.fDetectedCount;
+    fRunStatistics.fAbsorbedCount += fEventStatistics.fAbsorbedCount;
+    fRunStatistics.fEscapedCount += fEventStatistics.fEscapedCount;
+    fRunStatistics.fTruncatedCount += fEventStatistics.fTruncatedCount;
+    fRunStatistics.fMaxBounceCount =
+        std::max(fRunStatistics.fMaxBounceCount,
+                 fEventStatistics.fMaxBounceCount);
+    fRunStatistics.fInvalidStateCount +=
+        fEventStatistics.fInvalidStateCount;
+    fRunStatistics.fZeroStepCount += fEventStatistics.fZeroStepCount;
+    fRunStatistics.fTransportTimeMs +=
+        fEventStatistics.fTransportTimeMs;
 }
 
 } // namespace G4GO::Optical
