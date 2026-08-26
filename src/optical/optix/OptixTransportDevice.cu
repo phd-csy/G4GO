@@ -1,5 +1,5 @@
 #include "BoundaryPhysics.cuh"
-#include "DeviceTypes.cuh"
+#include "OptixTransportTypes.cuh"
 #include "math_constants.h"
 #include "optix_device.h"
 
