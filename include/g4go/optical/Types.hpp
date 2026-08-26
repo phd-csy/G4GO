@@ -19,9 +19,9 @@ constexpr auto BackendName(Backend backend) -> std::string_view {
     case Backend::Auto:
         return "auto";
     case Backend::Geant4:
-        return "geant4";
+        return "cpu";
     case Backend::Optix:
-        return "optix";
+        return "gpu";
     }
     return "unknown";
 }

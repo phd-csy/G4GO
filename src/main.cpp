@@ -50,7 +50,7 @@ auto main(int argc, char** argv) -> int {
     app.add_flag("-h,--help", options.help, "Print this help message");
     app.add_option(
            "--backend", backendName, "Optical photon transport backend")
-        ->check(CLI::IsMember({"auto", "geant4", "optix"}))
+        ->check(CLI::IsMember({"auto", "cpu", "gpu"}))
         ->capture_default_str();
     app.add_option(
            "--seed", options.transportConfig.fSeed, "Random seed")
@@ -78,9 +78,9 @@ auto main(int argc, char** argv) -> int {
 
         if (backendName == "auto") {
             options.transportConfig.fBackend = G4GO::Optical::Backend::Auto;
-        } else if (backendName == "geant4") {
+        } else if (backendName == "cpu") {
             options.transportConfig.fBackend = G4GO::Optical::Backend::Geant4;
-        } else if (backendName == "optix") {
+        } else if (backendName == "gpu") {
             options.transportConfig.fBackend = G4GO::Optical::Backend::Optix;
         } else {
             throw std::invalid_argument(
@@ -95,7 +95,7 @@ auto main(int argc, char** argv) -> int {
                 G4GO::Optical::Backend::Geant4 &&
             options.threads > 1) {
             throw std::invalid_argument(
-                "auto and optix backends require one Geant4 worker");
+                "auto and gpu backends require one Geant4 worker");
         }
     } catch (const CLI::ParseError& error) {
         return app.exit(error);
@@ -141,8 +141,11 @@ auto main(int argc, char** argv) -> int {
 #ifdef G4MULTITHREADED
     if (options.transportConfig.fBackend ==
         G4GO::Optical::Backend::Geant4) {
-        const auto nThreads{
-            options.threads == 0 ? G4Threading::G4GetNumberOfCores() : static_cast<G4int>(options.threads)};
+        G4int nThreads = 0;
+        nThreads = G4Threading::G4GetNumberOfCores();
+        if (options.threads > 0) {
+            nThreads = static_cast<G4int>(options.threads);
+        }
         runManager->SetNumberOfThreads(nThreads);
     }
 #endif
