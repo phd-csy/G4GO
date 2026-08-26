@@ -10,12 +10,7 @@
 #include "G4VPhysicalVolume.hh"
 #include "G4VProcess.hh"
 #include "G4ios.hh"
-#include "SceneExporter.hpp"
-#include "g4go/optical/Transport.hpp"
-
-#ifdef G4GO_ENABLE_OPTIX
-#    include "g4go/optical/optix/Transport.hpp"
-#endif
+#include "g4go/optical/geant4/OpticalBatchService.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -23,9 +18,12 @@
 
 namespace G4GO::Optical {
 
-OpticalEventBridge::OpticalEventBridge(TransportConfig config) :
+OpticalEventBridge::OpticalEventBridge(
+    TransportConfig config,
+    std::shared_ptr<OpticalBatchService> batchService) :
     fRequestedBackend{config.fBackend},
-    fConfig{std::move(config)} {
+    fConfig{std::move(config)},
+    fBatchService{std::move(batchService)} {
     fPhotonData.reserve(std::min<std::size_t>(fConfig.fMaxPhotonCount, 1024));
 }
 
@@ -34,9 +32,12 @@ OpticalEventBridge::~OpticalEventBridge() = default;
 auto OpticalEventBridge::BeginRun() -> void {
     fRunStats = {};
     fNextPhotonID = 0;
-    fTransport.reset();
-    fScene = {};
     fConfig.fBackend = fRequestedBackend;
+    if (fBatchService) {
+        fBatchService->BeginRun();
+        fConfig.fBackend = fBatchService->BackendType();
+        return;
+    }
 
     if (fConfig.fBackend == Backend::Auto) {
 #ifdef G4GO_ENABLE_OPTIX
@@ -45,57 +46,10 @@ auto OpticalEventBridge::BeginRun() -> void {
         fConfig.fBackend = Backend::Geant4;
 #endif
     }
-
-    if (fConfig.fBackend != Backend::Optix) {
-        return;
-    }
-
-    const auto* world{
-        G4TransportationManager::GetTransportationManager()
-            ->GetNavigatorForTracking()
-            ->GetWorldVolume()};
-    try {
-        fScene = Geant4SceneExporter{}.Export(world);
-    } catch (const std::exception& exception) {
-        G4ExceptionDescription description{};
-        description << "Optical scene export failed: " << exception.what();
-        G4Exception("OpticalEventBridge::BeginRun", "G4GOOpticalBackend",
-                    FatalException, description);
-        return;
-    }
-
-#ifdef G4GO_ENABLE_OPTIX
-    try {
-        if (fConfig.fBackend == Backend::Optix) {
-            fTransport = std::make_unique<OptixOpticalTransport>(fConfig);
-        }
-    } catch (const std::exception& exception) {
-        if (fRequestedBackend == Backend::Auto) {
-            G4cout << "[g4go] OptiX initialization failed: "
-                   << exception.what()
-                   << "; falling back to Geant4 backend" << G4endl;
-            fConfig.fBackend = Backend::Geant4;
-            return;
-        }
-
-        G4ExceptionDescription description{};
-        description << "OptiX backend initialization failed: "
-                    << exception.what();
-        G4Exception("OpticalEventBridge::BeginRun", "G4GOOpticalBackend",
-                    FatalException, description);
-    }
-#else
-    G4ExceptionDescription description{};
-    description << "OptiX backend requested, but this build does not contain "
-                   "the OptiX backend";
-    G4Exception("OpticalEventBridge::BeginRun", "G4GOOpticalBackend",
-                FatalException, description);
-#endif
 }
 
 auto OpticalEventBridge::EndRun() -> void {
-    fTransport.reset();
-    fScene = {};
+    fEventHits.clear();
 }
 
 auto OpticalEventBridge::BeginEvent(G4int eventID) -> void {
@@ -105,20 +59,24 @@ auto OpticalEventBridge::BeginEvent(G4int eventID) -> void {
     fEventStats = {};
 }
 
-auto OpticalEventBridge::EndEvent() -> void {
-    if (fTransport != nullptr) {
-        auto result{fTransport->Transport(fScene, fPhotonData)};
-        fEventHits = std::move(result.fHitData);
-        fEventStats.fDetectedCount = result.fStats.fDetectedCount;
-        fEventStats.fAbsorbedCount = result.fStats.fAbsorbedCount;
-        fEventStats.fEscapedCount = result.fStats.fEscapedCount;
-        fEventStats.fTruncatedCount = result.fStats.fTruncatedCount;
-        fEventStats.fMaxBounceCount = result.fStats.fMaxBounceCount;
-        fEventStats.fInvalidStateCount = result.fStats.fInvalidStateCount;
-        fEventStats.fZeroStepCount = result.fStats.fZeroStepCount;
-        fEventStats.fTransportTimeMs = result.fStats.fTransportTimeMs;
+auto OpticalEventBridge::EndEvent() -> EventTransportFuture {
+    if (fConfig.fBackend == Backend::Optix && fBatchService) {
+        return fBatchService->Submit(fEventID, std::move(fPhotonData),
+                                     fEventStats);
     }
     AddEventStatsToRun();
+    return {};
+}
+
+auto OpticalEventBridge::BackendType() const -> Backend {
+    return fConfig.fBackend;
+}
+
+auto OpticalEventBridge::RunStats() const -> const TransportStats& {
+    if (fBatchService && fConfig.fBackend == Backend::Optix) {
+        return fBatchService->RunStats();
+    }
+    return fRunStats;
 }
 
 auto OpticalEventBridge::ObserveGenerated() -> void {
@@ -169,6 +127,7 @@ auto OpticalEventBridge::Capture(const G4Track& track) -> void {
         static_cast<float>(polarization.y()),
         static_cast<float>(polarization.z()),
     };
+    photon.fEventID = static_cast<std::uint32_t>(fEventID);
     photon.fPhotonID = fNextPhotonID++;
     photon.fVolumeID = static_cast<std::uint32_t>(volume->GetInstanceID());
     photon.fSource = PhotonSourceFrom(track);

@@ -173,6 +173,7 @@ run_command mv source_beam.root noptpho_cpu.root
 gpu_start_ns="$(now_ns)"
 run_command run_logged gpu.log "$g4go" \
     --backend gpu \
+    --threads "$threads" \
     --seed 42 \
     "$source_macro"
 gpu_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - gpu_start_ns ))")"

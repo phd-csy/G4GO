@@ -173,10 +173,12 @@ endif()
 
 add_library(g4go_optical_geant4 STATIC
     src/optical/geant4/EventBridge.cpp
+    src/optical/geant4/OpticalBatchService.cpp
     src/optical/geant4/SceneExporter.cpp
     src/optical/geant4/SceneExporter.hpp
     src/optical/geant4/StackingAction.cpp
     include/g4go/optical/geant4/EventBridge.hpp
+    include/g4go/optical/geant4/OpticalBatchService.hpp
     include/g4go/optical/geant4/StackingAction.hpp
 )
 g4go_configure_cpp_target(g4go_optical_geant4)
@@ -186,7 +188,10 @@ target_link_libraries(g4go_optical_geant4
 
 if(G4GO_OPTIX_AVAILABLE)
     target_compile_definitions(g4go_optical_geant4 PRIVATE G4GO_ENABLE_OPTIX)
-    target_link_libraries(g4go_optical_geant4 PRIVATE g4go_optical_optix)
+    target_include_directories(g4go_optical_geant4 PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/optical/optix)
+    target_link_libraries(g4go_optical_geant4 PRIVATE
+        g4go_optical_optix CUDA::cudart)
 endif()
 
 add_library(g4go_detector STATIC
@@ -205,10 +210,12 @@ target_link_libraries(g4go_detector PRIVATE ${Geant4_LIBRARIES})
 add_library(g4go_simulation STATIC
     src/simulation/ActionInitialization.cpp
     src/simulation/EventAction.cpp
+    src/simulation/EventOutput.cpp
     src/simulation/PrimaryGeneratorAction.cpp
     src/simulation/RunAction.cpp
     include/g4go/simulation/ActionInitialization.hpp
     include/g4go/simulation/EventAction.hpp
+    include/g4go/simulation/EventOutput.hpp
     include/g4go/simulation/PrimaryGeneratorAction.hpp
     include/g4go/simulation/RunAction.hpp
 )
@@ -256,10 +263,12 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             ${G4GO_OPTICAL_CORE_SOURCES}
             ${G4GO_OPTICAL_CORE_HEADERS}
             src/optical/geant4/EventBridge.cpp
+            src/optical/geant4/OpticalBatchService.cpp
             src/optical/geant4/SceneExporter.cpp
             src/optical/geant4/SceneExporter.hpp
             src/optical/geant4/StackingAction.cpp
             include/g4go/optical/geant4/EventBridge.hpp
+            include/g4go/optical/geant4/OpticalBatchService.hpp
             include/g4go/optical/geant4/StackingAction.hpp
             src/optical/optix/Transport.cpp
             src/optical/optix/DeviceProgram.cu
@@ -277,10 +286,12 @@ if(G4GO_ENABLE_FORMAT_TARGETS)
             include/g4go/detector/SensorSD.hpp
             src/simulation/ActionInitialization.cpp
             src/simulation/EventAction.cpp
+            src/simulation/EventOutput.cpp
             src/simulation/PrimaryGeneratorAction.cpp
             src/simulation/RunAction.cpp
             include/g4go/simulation/ActionInitialization.hpp
             include/g4go/simulation/EventAction.hpp
+            include/g4go/simulation/EventOutput.hpp
             include/g4go/simulation/PrimaryGeneratorAction.hpp
             include/g4go/simulation/RunAction.hpp
             test/TestOpticalTransport.C

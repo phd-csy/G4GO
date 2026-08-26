@@ -57,6 +57,12 @@ __device__ __forceinline__ auto Normalize(DeviceVector3 vector)
     return Scale(vector, rsqrtf(lengthSquared));
 }
 
+__device__ __forceinline__ auto PhotonRandomID(const DevicePhoton& photon)
+    -> unsigned long long {
+    return (static_cast<unsigned long long>(photon.fEventID) << 32U) |
+           photon.fPhotonID;
+}
+
 __device__ __forceinline__ auto RotateToWorld(const DeviceRotation& rotation,
                                               DeviceVector3 vector)
     -> DeviceVector3 {
@@ -512,7 +518,7 @@ __global__ void __raygen__rg() {
 
         const auto absorptionDistance{SampleAbsorption(
             *currentMaterial, photon.fEnergyEv, gLaunchParams.fSeed,
-            photon.fPhotonID, bounce)};
+            PhotonRandomID(photon), bounce)};
         if (absorptionDistance < distance) {
             photon.fTimeNs += absorptionDistance / velocity;
             atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
@@ -564,7 +570,7 @@ __global__ void __raygen__rg() {
                 1.0F)};
             const auto outcome{BoundaryPhysics::EvaluateSurface(
                 efficiency, reflectivity, surface->fSensor != 0,
-                Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce, 1U,
+                Uniform(gLaunchParams.fSeed, PhotonRandomID(photon), bounce, 1U,
                         0U))};
             detected = outcome == BoundaryPhysics::SurfaceOutcome::Detect;
             reflected = outcome == BoundaryPhysics::SurfaceOutcome::Reflect;
@@ -575,9 +581,9 @@ __global__ void __raygen__rg() {
                 const auto oldDirection{direction};
                 direction = BoundaryPhysics::SampleLambertian(
                     normal,
-                    Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce, 1U,
+                    Uniform(gLaunchParams.fSeed, PhotonRandomID(photon), bounce, 1U,
                             1U),
-                    Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce, 1U,
+                    Uniform(gLaunchParams.fSeed, PhotonRandomID(photon), bounce, 1U,
                             2U));
                 const auto facetNormal{
                     Normalize(Subtract(direction, oldDirection))};
@@ -604,7 +610,7 @@ __global__ void __raygen__rg() {
                 const auto fresnel{BoundaryPhysics::ComputeFresnel(
                     direction, polarization, normal, refractiveIndex,
                     indexTo)};
-                reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                reflected = Uniform(gLaunchParams.fSeed, PhotonRandomID(photon),
                                     bounce, 2U, 0U) >
                             fresnel.fTransmittance;
                 if (reflected) {
@@ -625,18 +631,19 @@ __global__ void __raygen__rg() {
                           static_cast<unsigned long long>(1));
                 break;
             }
-            gLaunchParams.fHits[photonID] = {
+            const auto hitIndex{atomicAdd(
+                &gLaunchParams.fStats->fDetectedCount,
+                static_cast<unsigned long long>(1))};
+            gLaunchParams.fHits[hitIndex] = {
                 nextPosition,
                 photon.fTimeNs,
                 direction,
                 photon.fEnergyEv,
+                photon.fEventID,
                 photon.fPhotonID,
                 sensorID,
                 0,
             };
-            gLaunchParams.fHitFlags[photonID] = 1;
-            atomicAdd(&gLaunchParams.fStats->fDetectedCount,
-                      static_cast<unsigned long long>(1));
             terminated = true;
             break;
         }

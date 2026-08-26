@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <future>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -48,7 +49,8 @@ struct alignas(16) Photon {
     Vector3 fPolarization{};
     float fWeight{1.0F};
 
-    std::uint64_t fPhotonID{};
+    std::uint32_t fEventID{};
+    std::uint32_t fPhotonID{};
     std::uint32_t fVolumeID{};
     PhotonSource fSource{PhotonSource::Unknown};
     std::uint8_t fFlags{};
@@ -62,7 +64,8 @@ struct alignas(16) PhotonHit {
     Vector3 fDirection{};
     float fEnergyEv{};
 
-    std::uint64_t fPhotonID{};
+    std::uint32_t fEventID{};
+    std::uint32_t fPhotonID{};
     std::uint32_t fSensorID{};
     std::uint32_t fFlags{};
 };
@@ -85,12 +88,18 @@ struct TransportResult {
     TransportStats fStats{};
 };
 
+using EventTransportFuture = std::shared_future<TransportResult>;
+
 struct TransportConfig {
     Backend fBackend{Backend::Auto};
     std::uint64_t fSeed{42};
     std::uint32_t fMaxPhotonCount{5'000'000};
     std::uint32_t fMaxBounceCount{4096};
     float fBoundaryEpsilonMm{1.0e-4F};
+    std::uint32_t fBatchPhotonCount{1'000'000};
+    std::uint32_t fBatchMaxEvents{10'000};
+    std::uint32_t fBatchMaxQueuePhotons{2'000'000};
+    std::uint32_t fBatchTimeoutMs{5};
 };
 
 static_assert(std::is_trivially_copyable_v<Photon>);

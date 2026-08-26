@@ -70,6 +70,12 @@ auto main(int argc, char** argv) -> int {
            "Maximum number of optical photon bounces")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
+    app.add_option(
+           "--batch-photons",
+           options.transportConfig.fBatchPhotonCount,
+           "Target optical photons per GPU batch")
+        ->check(CLI::PositiveNumber)
+        ->capture_default_str();
     app.add_option("macro", macroFile, "Geant4 macro file")
         ->expected(0, 1);
 
@@ -91,12 +97,6 @@ auto main(int argc, char** argv) -> int {
             options.macroFile = std::move(macroFile);
         }
 
-        if (options.transportConfig.fBackend !=
-                G4GO::Optical::Backend::Geant4 &&
-            options.threads > 1) {
-            throw std::invalid_argument(
-                "auto and gpu backends require one Geant4 worker");
-        }
     } catch (const CLI::ParseError& error) {
         return app.exit(error);
     } catch (const std::exception& exception) {
@@ -134,13 +134,11 @@ auto main(int argc, char** argv) -> int {
     G4int precision{4};
     G4SteppingVerbose::UseBestUnit(precision);
 
-    const auto runManagerType{
-        options.transportConfig.fBackend == G4GO::Optical::Backend::Geant4 ? G4RunManagerType::Default : G4RunManagerType::Serial};
+    const auto runManagerType{G4RunManagerType::Default};
     auto* runManager{G4RunManagerFactory::CreateRunManager(runManagerType)};
 
 #ifdef G4MULTITHREADED
-    if (options.transportConfig.fBackend ==
-        G4GO::Optical::Backend::Geant4) {
+    {
         G4int nThreads = 0;
         nThreads = G4Threading::G4GetNumberOfCores();
         if (options.threads > 0) {

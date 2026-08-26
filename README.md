@@ -211,11 +211,14 @@ CMake 将模块编译为内部静态库：`g4go_optical_core`、可选的 `g4go_
 - `auto` 优先尝试 OptiX；OptiX 构建依赖或运行时驱动不可用时切换到 Geant4。
 - 显式指定 `--backend gpu` 时，OptiX 初始化失败会报告错误并终止，便于定位 GPU 环境问题。
 - `--seed UINT64`：设置 Geant4 和 OptiX 的随机种子，默认 `42`。
-- `--threads UINT32`：`cpu` backend 的 worker 数量；默认使用 `G4Threading::G4GetNumberOfCores()` 的结果，显式传入该参数可以覆盖默认值；`auto` 和 `gpu` 使用串行 Geant4 事件驱动。
+- `--threads UINT32`：Geant4 worker 数量；默认使用 `G4Threading::G4GetNumberOfCores()` 的结果，显式传入该参数可以覆盖默认值。`gpu` backend 使用这些 worker 并行产生事件，GPU 光学传输由共享批处理服务异步执行。
+- `--batch-photons UINT32`：GPU 批次的目标光子数，默认 `1'000'000`。批次也受事件数量和等待时间限制，运行结束时会排空队列。
 - `--max-photons UINT32`：单事件 photon capture 上限，默认 `5'000'000`。
 - `--max-bounces UINT32`：单 photon 最大边界交互次数，默认 `4096`。
 
 ## Backend 结构
+
+GPU backend 采用事件聚合的异步流水线。Geant4 worker 只负责产生和捕获本事件的光子，并将事件提交到共享的 MPSC 队列；独立的 GPU executor 线程把多个事件合并到约 `1'000'000` 个光子的批次后调用一次 OptiX。结果通过事件 ID 分发回原 worker，由该 worker 完成 ROOT ntuple 写入；队列容量、批次目标光子数和批次等待窗口共同提供背压，运行结束时排空所有未完成事件。
 
 | Backend | 光学光子处理 | 光学传输 | 结果写入 |
 | --- | --- | --- | --- |
@@ -229,7 +232,7 @@ OptiX scene exporter 当前支持 `G4Box`、full-phi `G4Tubs`、材料 `RINDEX/G
 
 GPU scene export 会拒绝当前未实现的 Rayleigh、Mie、WLS，以及 `TRANSMITTANCE`、UNIFIED specular/backscatter、复折射率和 coated surface 属性，避免忽略配置后继续产生结果。
 
-OptiX backend 将 device program 编译为 OptiX IR，使用 custom primitive AABB GAS。每个 photon 对应一个 raygen launch slot，hit 结果通过稳定的 photon slot 回读，随机数使用 host/device 一致的 Philox4x32-10。
+OptiX backend 将 device program 编译为 OptiX IR，使用 custom primitive AABB GAS。每个 photon 对应一个 raygen launch slot，探测结果使用 GPU 原子计数器压缩回读，并携带 `eventID` 和 `photonID`。光子和 hit buffer 在连续批次之间复用，随机数使用 host/device 一致的 Philox4x32-10。
 
 ## ROOT 输出
 
@@ -237,7 +240,7 @@ ROOT 文件包含两个 tree，名称采用 PascalCase 的记录类型命名，b
 
 | Tree | Branches |
 | --- | --- |
-| `CrystalHit` | `moduleID`, `Edep`, `nOptPho` |
+| `CrystalHit` | `eventID`, `moduleID`, `Edep`, `nOptPho` |
 | `SensorHit` | `eventID`, `sensorID`, `timeOfFlight` |
 
 ## nOptPho CPU/GPU 回归测试

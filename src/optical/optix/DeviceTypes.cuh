@@ -20,7 +20,8 @@ struct DevicePhoton {
     DeviceVector3 fPolarization{};
     float fWeight{1.0F};
 
-    std::uint64_t fPhotonID{};
+    std::uint32_t fEventID{};
+    std::uint32_t fPhotonID{};
     std::uint32_t fVolumeID{};
     std::uint8_t fSource{};
     std::uint8_t fFlags{};
@@ -34,7 +35,8 @@ struct DevicePhotonHit {
     DeviceVector3 fDirection{};
     float fEnergyEv{};
 
-    std::uint64_t fPhotonID{};
+    std::uint32_t fEventID{};
+    std::uint32_t fPhotonID{};
     std::uint32_t fSensorID{};
     std::uint32_t fFlags{};
 };
@@ -121,7 +123,6 @@ struct DeviceTransportStats {
 struct OptixLaunchParams {
     DevicePhoton* fPhotons{};
     DevicePhotonHit* fHits{};
-    std::uint32_t* fHitFlags{};
     DeviceTransportStats* fStats{};
     DeviceScene fScene{};
     std::uint64_t fTraversable{};
