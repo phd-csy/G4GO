@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -60,11 +61,11 @@ private:
         if (const auto* skinSurface{
                 G4LogicalSkinSurface::GetSurface(logicalVolume)};
             skinSurface != nullptr) {
-            solid.fSkinSurfaceID = AddSurface(skinSurface->GetSurfaceProperty());
-            if (const auto* opticalSurface{dynamic_cast<const G4OpticalSurface*>(
-                    skinSurface->GetSurfaceProperty())};
-                opticalSurface != nullptr &&
-                opticalSurface->GetType() == dielectric_metal) {
+            const auto surfaceID{
+                AddSurface(skinSurface->GetSurfaceProperty())};
+            solid.fSkinSurfaceID = surfaceID;
+            if (const auto* surface{scene.FindSurface(surfaceID)};
+                surface != nullptr && surface->fSensor) {
                 solid.fSensorID = static_cast<std::uint32_t>(
                     std::max(physicalVolume->GetCopyNo(), 0));
             }
@@ -92,6 +93,11 @@ private:
         opticalMaterial.fName = material->GetName();
         const auto* table{material->GetMaterialPropertiesTable()};
         if (table != nullptr) {
+            RejectUnsupportedProperties(
+                table,
+                {"RAYLEIGH", "MIEHG", "WLSABSLENGTH", "WLSCOMPONENT",
+                 "WLSABSLENGTH2", "WLSCOMPONENT2"},
+                "material " + material->GetName());
             opticalMaterial.fRindex = ReadProperty(table, "RINDEX", 1.0);
             opticalMaterial.fGroupVelocityMmPerNs =
                 ReadProperty(table, "GROUPVEL", mm / ns);
@@ -116,9 +122,6 @@ private:
         if (opticalSurface == nullptr) {
             throw std::runtime_error("MVP requires G4OpticalSurface");
         }
-        if (opticalSurface->GetFinish() != polished) {
-            throw std::runtime_error("MVP supports polished optical surfaces only");
-        }
         if (opticalSurface->GetModel() != unified &&
             opticalSurface->GetModel() != glisur) {
             throw std::runtime_error("MVP supports unified and glisur models only");
@@ -134,12 +137,38 @@ private:
             throw std::runtime_error("unsupported Geant4 optical surface type");
         }
 
+        switch (opticalSurface->GetFinish()) {
+        case polished:
+        case polishedfrontpainted:
+        case polishedbackpainted:
+            surface.fFinish = SurfaceFinish::Polished;
+            break;
+        case ground:
+        case groundfrontpainted:
+        case groundbackpainted:
+            surface.fFinish = SurfaceFinish::Ground;
+            break;
+        default:
+            throw std::runtime_error(
+                "unsupported Geant4 optical surface finish");
+        }
+
         if (const auto* table{
                 opticalSurface->GetMaterialPropertiesTable()};
             table != nullptr) {
+            RejectUnsupportedProperties(
+                table,
+                {"TRANSMITTANCE", "SPECULARLOBECONSTANT",
+                 "SPECULARSPIKECONSTANT", "BACKSCATTERCONSTANT", "RINDEX",
+                 "REALRINDEX", "IMAGINARYRINDEX", "COATEDRINDEX"},
+                "surface " + opticalSurface->GetName());
             surface.fReflectivity = ReadProperty(table, "REFLECTIVITY", 1.0);
             surface.fEfficiency = ReadProperty(table, "EFFICIENCY", 1.0);
         }
+        surface.fSensor = std::any_of(
+            surface.fEfficiency.fValues.begin(),
+            surface.fEfficiency.fValues.end(),
+            [](auto efficiency) { return efficiency > 0.0F; });
 
         const auto surfaceID{scene.AddSurface(std::move(surface))};
         surfaceIDs.emplace(property, surfaceID);
@@ -231,6 +260,19 @@ private:
                 static_cast<float>((*vector)[index] / unit));
         }
         return property;
+    }
+
+    static auto RejectUnsupportedProperties(
+        const G4MaterialPropertiesTable* table,
+        std::initializer_list<const char*> names,
+        const G4String& owner) -> void {
+        for (const auto* name : names) {
+            if (table->GetProperty(name) != nullptr) {
+                throw std::runtime_error(
+                    "GPU optical transport does not support " + owner +
+                    " property " + name);
+            }
+        }
     }
 
     static auto Compose(Transform parent,

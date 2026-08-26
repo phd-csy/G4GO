@@ -20,7 +20,8 @@ struct DevicePhoton {
     DeviceVector3 fPolarization{};
     float fWeight{1.0F};
 
-    std::uint64_t fPhotonID{};
+    std::uint32_t fEventID{};
+    std::uint32_t fPhotonID{};
     std::uint32_t fVolumeID{};
     std::uint8_t fSource{};
     std::uint8_t fFlags{};
@@ -34,7 +35,8 @@ struct DevicePhotonHit {
     DeviceVector3 fDirection{};
     float fEnergyEv{};
 
-    std::uint64_t fPhotonID{};
+    std::uint32_t fEventID{};
+    std::uint32_t fPhotonID{};
     std::uint32_t fSensorID{};
     std::uint32_t fFlags{};
 };
@@ -53,7 +55,9 @@ struct DeviceMaterial {
 
 struct DeviceSurface {
     std::uint8_t fKind{};
-    std::uint8_t fReserved[3]{};
+    std::uint8_t fFinish{};
+    std::uint8_t fSensor{};
+    std::uint8_t fReserved{};
     DeviceProperty fReflectivity{};
     DeviceProperty fEfficiency{};
 };
@@ -110,6 +114,7 @@ struct DeviceTransportStats {
     unsigned long long fDetectedCount{};
     unsigned long long fAbsorbedCount{};
     unsigned long long fEscapedCount{};
+    unsigned long long fTruncatedCount{};
     unsigned long long fMaxBounceCount{};
     unsigned long long fInvalidStateCount{};
     unsigned long long fZeroStepCount{};
@@ -118,7 +123,6 @@ struct DeviceTransportStats {
 struct OptixLaunchParams {
     DevicePhoton* fPhotons{};
     DevicePhotonHit* fHits{};
-    std::uint32_t* fHitFlags{};
     DeviceTransportStats* fStats{};
     DeviceScene fScene{};
     std::uint64_t fTraversable{};

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "G4Types.hh"
-#include "g4go/optical/Scene.hpp"
 #include "g4go/optical/Types.hpp"
 
 #include <memory>
@@ -13,11 +12,13 @@ class G4VPhysicalVolume;
 
 namespace G4GO::Optical {
 
-class OpticalTransport;
+class OpticalBatchService;
 
 class OpticalEventBridge final {
 public:
-    explicit OpticalEventBridge(TransportConfig config);
+    explicit OpticalEventBridge(
+        TransportConfig config,
+        std::shared_ptr<OpticalBatchService> batchService = {});
     ~OpticalEventBridge();
 
     OpticalEventBridge(const OpticalEventBridge&) = delete;
@@ -26,17 +27,17 @@ public:
     auto BeginRun() -> void;
     auto EndRun() -> void;
     auto BeginEvent(G4int eventID) -> void;
-    auto EndEvent() -> void;
+    auto EndEvent() -> EventTransportFuture;
 
     auto ObserveGenerated() -> void;
     auto Capture(const G4Track& track) -> void;
 
-    auto BackendType() const -> Backend { return fConfig.fBackend; }
+    auto BackendType() const -> Backend;
     auto Config() const -> const TransportConfig& { return fConfig; }
     auto PhotonData() const -> std::span<const Photon> { return fPhotonData; }
     auto EventHits() const -> std::span<const PhotonHit> { return fEventHits; }
     auto EventStats() const -> const TransportStats& { return fEventStats; }
-    auto RunStats() const -> const TransportStats& { return fRunStats; }
+    auto RunStats() const -> const TransportStats&;
 
 private:
     auto PhotonSourceFrom(const G4Track& track) const -> PhotonSource;
@@ -47,12 +48,11 @@ private:
     TransportConfig fConfig{};
     std::vector<Photon> fPhotonData{};
     std::vector<PhotonHit> fEventHits{};
-    Scene fScene{};
-    std::unique_ptr<OpticalTransport> fTransport{};
+    std::shared_ptr<OpticalBatchService> fBatchService{};
     TransportStats fEventStats{};
     TransportStats fRunStats{};
     G4int fEventID{-1};
-    std::uint64_t fNextPhotonID{};
+    std::uint32_t fNextPhotonID{};
 };
 
 } // namespace G4GO::Optical

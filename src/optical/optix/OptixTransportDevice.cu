@@ -1,3 +1,4 @@
+#include "BoundaryPhysics.cuh"
 #include "OptixTransportTypes.cuh"
 #include "math_constants.h"
 #include "optix_device.h"
@@ -16,6 +17,7 @@ namespace {
 constexpr auto invalidID{0xffffffffU};
 constexpr auto boxKind{0U};
 constexpr auto dielectricMetal{1U};
+constexpr auto groundFinish{1U};
 constexpr auto speedOfLightMmPerNs{299.792458F};
 constexpr auto pi{3.14159265358979323846F};
 constexpr auto twoPi{2.0F * pi};
@@ -54,6 +56,12 @@ __device__ __forceinline__ auto Normalize(DeviceVector3 vector)
         return {};
     }
     return Scale(vector, rsqrtf(lengthSquared));
+}
+
+__device__ __forceinline__ auto PhotonRandomID(const DevicePhoton& photon)
+    -> unsigned long long {
+    return (static_cast<unsigned long long>(photon.fEventID) << 32U) |
+           photon.fPhotonID;
 }
 
 __device__ __forceinline__ auto RotateToWorld(const DeviceRotation& rotation,
@@ -391,40 +399,6 @@ __device__ auto Uniform(std::uint64_t seed,
     return (static_cast<float>(word) + 0.5F) / 4294967296.0F;
 }
 
-__device__ auto Reflect(DeviceVector3 direction, DeviceVector3 normal)
-    -> DeviceVector3 {
-    return Normalize(Subtract(direction, Scale(normal, 2.0F *
-                                                           Dot(direction, normal))));
-}
-
-__device__ auto Refract(DeviceVector3 direction,
-                        DeviceVector3 normal,
-                        float eta,
-                        float cosineIncident,
-                        float cosineTransmitted) -> DeviceVector3 {
-    return Normalize(Add(Scale(direction, eta),
-                         Scale(normal, eta * cosineIncident -
-                                           cosineTransmitted)));
-}
-
-__device__ auto ProjectPolarization(DeviceVector3 polarization,
-                                    DeviceVector3 direction) -> DeviceVector3 {
-    auto result{Subtract(polarization, Scale(direction,
-                                             Dot(polarization, direction)))};
-    if (Dot(result, result) < 1.0e-12F) {
-        const auto helper{
-            fabsf(direction.fZ) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
-                : DeviceVector3{1.0F, 0.0F, 0.0F}
-        };
-        result = {
-            direction.fY * helper.fZ - direction.fZ * helper.fY,
-            direction.fZ * helper.fX - direction.fX * helper.fZ,
-            direction.fX * helper.fY - direction.fY * helper.fX,
-        };
-    }
-    return Normalize(result);
-}
-
 __device__ auto SampleAbsorption(const DeviceMaterial& material,
                                  float energyEv,
                                  std::uint64_t seed,
@@ -491,14 +465,15 @@ __global__ void __raygen__rg() {
     auto photon{gLaunchParams.fPhotons[photonID]};
     auto position{photon.fPositionMm};
     auto direction{Normalize(photon.fDirection)};
-    auto polarization{ProjectPolarization(photon.fPolarization, direction)};
+    auto polarization{BoundaryPhysics::ProjectPolarization(
+        photon.fPolarization, direction)};
     auto currentVolumeID{photon.fVolumeID};
     auto terminated{false};
 
     auto bounce{0U};
     for (; bounce < gLaunchParams.fMaxBounceCount && !terminated; ++bounce) {
         atomicMax(&gLaunchParams.fStats->fMaxBounceCount,
-                  static_cast<unsigned long long>(bounce));
+                  static_cast<unsigned long long>(bounce + 1U));
         const auto* currentSolid{FindSolid(currentVolumeID)};
         if (currentSolid == nullptr) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
@@ -544,7 +519,7 @@ __global__ void __raygen__rg() {
 
         const auto absorptionDistance{SampleAbsorption(
             *currentMaterial, photon.fEnergyEv, gLaunchParams.fSeed,
-            photon.fPhotonID, bounce)};
+            PhotonRandomID(photon), bounce)};
         if (absorptionDistance < distance) {
             photon.fTimeNs += absorptionDistance / velocity;
             atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
@@ -582,61 +557,85 @@ __global__ void __raygen__rg() {
         const auto* surface{surfaceID < gLaunchParams.fScene.fSurfaceCount ? &gLaunchParams.fScene.fSurfaces[surfaceID] : nullptr};
         auto reflected{false};
         auto detected{false};
+        auto surfaceAbsorbed{false};
         if (surface != nullptr && surface->fKind == dielectricMetal) {
             const auto reflectivity{fminf(
                 fmaxf(SampleProperty(surface->fReflectivity, photon.fEnergyEv,
                                      0.0F),
                       0.0F),
                 1.0F)};
-            reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce,
-                                1U, 0U) < reflectivity;
-            if (!reflected) {
-                const auto efficiency{fminf(
-                    fmaxf(SampleProperty(surface->fEfficiency,
-                                         photon.fEnergyEv, 0.0F),
-                          0.0F),
-                    1.0F)};
-                detected = Uniform(gLaunchParams.fSeed, photon.fPhotonID,
-                                   bounce, 1U, 1U) < efficiency;
+            const auto efficiency{fminf(
+                fmaxf(SampleProperty(surface->fEfficiency, photon.fEnergyEv,
+                                     0.0F),
+                      0.0F),
+                1.0F)};
+            const auto outcome{BoundaryPhysics::EvaluateSurface(
+                efficiency, reflectivity, surface->fSensor != 0,
+                Uniform(gLaunchParams.fSeed, PhotonRandomID(photon), bounce, 1U,
+                        0U))};
+            detected = outcome == BoundaryPhysics::SurfaceOutcome::Detect;
+            reflected = outcome == BoundaryPhysics::SurfaceOutcome::Reflect;
+            surfaceAbsorbed =
+                outcome == BoundaryPhysics::SurfaceOutcome::Absorb;
+
+            if (reflected && surface->fFinish == groundFinish) {
+                const auto oldDirection{direction};
+                direction = BoundaryPhysics::SampleLambertian(
+                    normal,
+                    Uniform(gLaunchParams.fSeed, PhotonRandomID(photon), bounce, 1U,
+                            1U),
+                    Uniform(gLaunchParams.fSeed, PhotonRandomID(photon), bounce, 1U,
+                            2U));
+                const auto facetNormal{
+                    Normalize(Subtract(direction, oldDirection))};
+                polarization = BoundaryPhysics::ReflectPolarization(
+                    polarization, facetNormal, direction);
+            } else if (reflected) {
+                direction =
+                    BoundaryPhysics::ReflectDirection(direction, normal);
+                polarization = BoundaryPhysics::ReflectPolarization(
+                    polarization, normal, direction);
             }
         } else {
             const auto indexTo{
                 SampleProperty(nextMaterial->fRindex, photon.fEnergyEv, NAN)};
-            const auto cosineIncident{
-                fminf(fmaxf(-Dot(direction, normal), 0.0F), 1.0F)};
-            if (!(refractiveIndex > 0.0F) || !(indexTo > 0.0F) ||
-                !isfinite(refractiveIndex) || !isfinite(indexTo)) {
+            if (!(refractiveIndex > 0.0F) ||
+                !isfinite(refractiveIndex)) {
                 atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                           static_cast<unsigned long long>(1));
                 break;
             }
-            const auto eta{refractiveIndex / indexTo};
-            const auto sineTransmittedSquared{
-                eta * eta * (1.0F - cosineIncident * cosineIncident)};
-            auto cosineTransmitted{0.0F};
-            auto reflectance{1.0F};
-            if (sineTransmittedSquared < 1.0F && isfinite(indexTo)) {
-                cosineTransmitted =
-                    sqrtf(fmaxf(0.0F, 1.0F - sineTransmittedSquared));
-                const auto rs{
-                    (refractiveIndex * cosineIncident -
-                     indexTo * cosineTransmitted) /
-                    (refractiveIndex * cosineIncident +
-                     indexTo * cosineTransmitted)};
-                const auto rp{
-                    (indexTo * cosineIncident -
-                     refractiveIndex * cosineTransmitted) /
-                    (indexTo * cosineIncident +
-                     refractiveIndex * cosineTransmitted)};
-                reflectance = 0.5F * (rs * rs + rp * rp);
-            }
-            reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce,
-                                2U, 0U) < reflectance;
-            if (!reflected) {
-                direction = Refract(direction, normal, eta, cosineIncident,
-                                    cosineTransmitted);
-                polarization = ProjectPolarization(polarization, direction);
-                currentVolumeID = nextVolumeID;
+            if (!(indexTo > 0.0F) || !isfinite(indexTo)) {
+                surfaceAbsorbed = true;
+            } else {
+                const auto fresnel{BoundaryPhysics::ComputeFresnel(
+                    direction, polarization, normal, refractiveIndex,
+                    indexTo)};
+                reflected = Uniform(gLaunchParams.fSeed, PhotonRandomID(photon),
+                                    bounce, 2U, 0U) >
+                            fresnel.fTransmittance;
+                if (reflected) {
+                    if (surface != nullptr && surface->fFinish == groundFinish) {
+                        const auto oldDirection{direction};
+                        direction = BoundaryPhysics::SampleLambertian(
+                            normal,
+                            Uniform(gLaunchParams.fSeed,
+                                    PhotonRandomID(photon), bounce, 1U, 1U),
+                            Uniform(gLaunchParams.fSeed,
+                                    PhotonRandomID(photon), bounce, 1U, 2U));
+                        const auto facetNormal{
+                            Normalize(Subtract(direction, oldDirection))};
+                        polarization = BoundaryPhysics::ReflectPolarization(
+                            polarization, facetNormal, direction);
+                    } else {
+                        direction = fresnel.fReflectedDirection;
+                        polarization = fresnel.fReflectedPolarization;
+                    }
+                } else {
+                    direction = fresnel.fTransmittedDirection;
+                    polarization = fresnel.fTransmittedPolarization;
+                    currentVolumeID = nextVolumeID;
+                }
             }
         }
 
@@ -647,31 +646,27 @@ __global__ void __raygen__rg() {
                           static_cast<unsigned long long>(1));
                 break;
             }
-            gLaunchParams.fHits[photonID] = {
+            const auto hitIndex{atomicAdd(
+                &gLaunchParams.fStats->fDetectedCount,
+                static_cast<unsigned long long>(1))};
+            gLaunchParams.fHits[hitIndex] = {
                 nextPosition,
                 photon.fTimeNs,
                 direction,
                 photon.fEnergyEv,
+                photon.fEventID,
                 photon.fPhotonID,
                 sensorID,
                 0,
             };
-            gLaunchParams.fHitFlags[photonID] = 1;
-            atomicAdd(&gLaunchParams.fStats->fDetectedCount,
-                      static_cast<unsigned long long>(1));
             terminated = true;
             break;
         }
 
-        if (surface != nullptr && surface->fKind == dielectricMetal &&
-            !reflected) {
+        if (surfaceAbsorbed) {
             atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
                       static_cast<unsigned long long>(1));
             break;
-        }
-        if (reflected) {
-            direction = Reflect(direction, normal);
-            polarization = ProjectPolarization(polarization, direction);
         }
         position = Add(
             nextPosition,
@@ -680,7 +675,7 @@ __global__ void __raygen__rg() {
     }
 
     if (!terminated && bounce >= gLaunchParams.fMaxBounceCount) {
-        atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
+        atomicAdd(&gLaunchParams.fStats->fTruncatedCount,
                   static_cast<unsigned long long>(1));
     }
 }

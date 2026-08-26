@@ -97,6 +97,17 @@ auto UploadObject(const Type& value, DeviceAllocations& allocations)
     return Upload(std::span<const Type>(&value, 1), allocations);
 }
 
+auto EnsureAllocation(std::unique_ptr<DeviceAllocation>& allocation,
+                      std::size_t& capacity,
+                      std::size_t count,
+                      std::size_t elementSize) -> void {
+    if (capacity >= count) {
+        return;
+    }
+    allocation = std::make_unique<DeviceAllocation>(count * elementSize);
+    capacity = count;
+}
+
 auto UploadProperty(const PropertyTable& property,
                     DeviceAllocations& allocations) -> DeviceProperty {
     if (property.fEnergyEv.empty() ||
@@ -139,6 +150,7 @@ auto ToDevice(const Photon& photon) -> DevicePhoton {
         photon.fEnergyEv,
         ToDevice(photon.fPolarization),
         photon.fWeight,
+        photon.fEventID,
         photon.fPhotonID,
         photon.fVolumeID,
         static_cast<std::uint8_t>(photon.fSource),
@@ -276,79 +288,91 @@ public:
         }
 
         const auto start{std::chrono::steady_clock::now()};
-        std::vector<DevicePhoton> devicePhotons{};
-        devicePhotons.reserve(photonData.size());
+        fDevicePhotons.clear();
+        fDevicePhotons.reserve(photonData.size());
         for (const auto& photon : photonData) {
-            devicePhotons.push_back(ToDevice(photon));
+            fDevicePhotons.push_back(ToDevice(photon));
         }
 
-        DeviceAllocations allocations{};
-        const auto photonPointer{Upload<DevicePhoton>(devicePhotons,
-                                                      allocations)};
-        std::vector<DevicePhotonHit> deviceHits{};
-        deviceHits.resize(photonData.size());
-        const auto hitPointer{Upload<DevicePhotonHit>(deviceHits, allocations)};
-        std::vector<std::uint32_t> hitFlags{};
-        hitFlags.resize(photonData.size());
-        const auto hitFlagPointer{Upload<std::uint32_t>(hitFlags, allocations)};
-        DeviceTransportStats deviceStats{};
-        const auto statsPointer{UploadObject(deviceStats, allocations)};
+        EnsureAllocation(fPhotonAllocation, fPhotonCapacity,
+                         fDevicePhotons.size(), sizeof(DevicePhoton));
+        EnsureAllocation(fHitAllocation, fHitCapacity, photonData.size(),
+                         sizeof(DevicePhotonHit));
+        EnsureAllocation(fStatsAllocation, fStatsCapacity, 1,
+                         sizeof(DeviceTransportStats));
+        EnsureAllocation(fLaunchParamsAllocation, fLaunchParamsCapacity, 1,
+                         sizeof(OptixLaunchParams));
+        fDeviceHits.resize(photonData.size());
+
+        CudaError(cudaMemcpyAsync(DevicePointer(fPhotonAllocation->Pointer()),
+                                  fDevicePhotons.data(),
+                                  fDevicePhotons.size() * sizeof(DevicePhoton),
+                                  cudaMemcpyHostToDevice, stream),
+                  "cudaMemcpyAsync photons");
+        CudaError(cudaMemsetAsync(DevicePointer(fStatsAllocation->Pointer()),
+                                  0, sizeof(DeviceTransportStats), stream),
+                  "cudaMemsetAsync transport stats");
 
         OptixLaunchParams launchParams{};
-        launchParams.fPhotons = DevicePointerAs<DevicePhoton>(photonPointer);
-        launchParams.fHits = DevicePointerAs<DevicePhotonHit>(hitPointer);
-        launchParams.fHitFlags = DevicePointerAs<std::uint32_t>(hitFlagPointer);
+        launchParams.fPhotons = DevicePointerAs<DevicePhoton>(
+            fPhotonAllocation->Pointer());
+        launchParams.fHits = DevicePointerAs<DevicePhotonHit>(
+            fHitAllocation->Pointer());
         launchParams.fStats =
-            DevicePointerAs<DeviceTransportStats>(statsPointer);
+            DevicePointerAs<DeviceTransportStats>(fStatsAllocation->Pointer());
         launchParams.fScene = deviceScene;
         launchParams.fTraversable = traversableHandle;
         launchParams.fSeed = config.fSeed;
         launchParams.fMaxBounceCount = config.fMaxBounceCount;
         launchParams.fPhotonCount = static_cast<std::uint32_t>(photonData.size());
         launchParams.fBoundaryEpsilonMm = config.fBoundaryEpsilonMm;
-        const auto launchPointer{UploadObject(launchParams, allocations)};
+        CudaError(cudaMemcpyAsync(
+                      DevicePointer(fLaunchParamsAllocation->Pointer()),
+                      &launchParams, sizeof(launchParams),
+                      cudaMemcpyHostToDevice, stream),
+                  "cudaMemcpyAsync launch params");
 
-        OptixError(optixLaunch(pipeline, stream, launchPointer,
+        OptixError(optixLaunch(pipeline, stream,
+                               fLaunchParamsAllocation->Pointer(),
                                sizeof(launchParams), &sbt,
                                static_cast<unsigned int>(photonData.size()), 1,
                                1),
                    "optixLaunch");
         CudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
 
-        CudaError(cudaMemcpy(deviceHits.data(), DevicePointer(hitPointer),
-                             deviceHits.size() * sizeof(DevicePhotonHit),
+        CudaError(cudaMemcpy(&fDeviceStats,
+                             DevicePointer(fStatsAllocation->Pointer()),
+                             sizeof(fDeviceStats), cudaMemcpyDeviceToHost),
+                  "cudaMemcpy transport stats");
+        const auto detectedCount{std::min<std::size_t>(
+            fDeviceStats.fDetectedCount, photonData.size())};
+        CudaError(cudaMemcpy(fDeviceHits.data(),
+                             DevicePointer(fHitAllocation->Pointer()),
+                             detectedCount * sizeof(DevicePhotonHit),
                              cudaMemcpyDeviceToHost),
                   "cudaMemcpy hit data");
-        CudaError(cudaMemcpy(hitFlags.data(), DevicePointer(hitFlagPointer),
-                             hitFlags.size() * sizeof(std::uint32_t),
-                             cudaMemcpyDeviceToHost),
-                  "cudaMemcpy hit flags");
-        CudaError(cudaMemcpy(&deviceStats, DevicePointer(statsPointer),
-                             sizeof(deviceStats), cudaMemcpyDeviceToHost),
-                  "cudaMemcpy transport stats");
 
-        result.fStats.fDetectedCount = deviceStats.fDetectedCount;
-        result.fStats.fAbsorbedCount = deviceStats.fAbsorbedCount;
-        result.fStats.fEscapedCount = deviceStats.fEscapedCount;
-        result.fStats.fMaxBounceCount = deviceStats.fMaxBounceCount;
-        result.fStats.fInvalidStateCount = deviceStats.fInvalidStateCount;
-        result.fStats.fZeroStepCount = deviceStats.fZeroStepCount;
+        result.fStats.fDetectedCount = fDeviceStats.fDetectedCount;
+        result.fStats.fAbsorbedCount = fDeviceStats.fAbsorbedCount;
+        result.fStats.fEscapedCount = fDeviceStats.fEscapedCount;
+        result.fStats.fTruncatedCount = fDeviceStats.fTruncatedCount;
+        result.fStats.fMaxBounceCount = fDeviceStats.fMaxBounceCount;
+        result.fStats.fInvalidStateCount = fDeviceStats.fInvalidStateCount;
+        result.fStats.fZeroStepCount = fDeviceStats.fZeroStepCount;
         result.fStats.fTransportTimeMs =
             std::chrono::duration<double, std::milli>{
                 std::chrono::steady_clock::now() - start}
                 .count();
-        result.fHitData.reserve(deviceStats.fDetectedCount);
-        for (auto index{std::size_t{}}; index < hitFlags.size(); ++index) {
-            if (hitFlags[index] == 0) {
-                continue;
-            }
-            const auto& hit{deviceHits[index]};
+        result.fHitData.reserve(detectedCount);
+        for (auto index{std::size_t{}}; index < detectedCount; ++index) {
+            const auto& hit{fDeviceHits[index]};
             result.fHitData.push_back({
                 {hit.fPositionMm.fX, hit.fPositionMm.fY,
                  hit.fPositionMm.fZ                                       },
                 hit.fTimeNs,
                 {hit.fDirection.fX,  hit.fDirection.fY,  hit.fDirection.fZ},
                 hit.fEnergyEv,
+                hit.fEventID,
                 hit.fPhotonID,
                 hit.fSensorID,
                 hit.fFlags,
@@ -502,7 +526,9 @@ private:
         for (const auto& surface : scene.Surfaces()) {
             surfaces.push_back({
                 static_cast<std::uint8_t>(surface.fKind),
-                {},
+                static_cast<std::uint8_t>(surface.fFinish),
+                static_cast<std::uint8_t>(surface.fSensor),
+                0,
                 UploadProperty(surface.fReflectivity, sceneAllocations),
                 UploadProperty(surface.fEfficiency, sceneAllocations),
             });
@@ -616,6 +642,17 @@ private:
     DeviceScene deviceScene{};
     const Scene* sceneAddress{};
     OptixTraversableHandle traversableHandle{};
+    std::unique_ptr<DeviceAllocation> fPhotonAllocation{};
+    std::unique_ptr<DeviceAllocation> fHitAllocation{};
+    std::unique_ptr<DeviceAllocation> fStatsAllocation{};
+    std::unique_ptr<DeviceAllocation> fLaunchParamsAllocation{};
+    std::size_t fPhotonCapacity{};
+    std::size_t fHitCapacity{};
+    std::size_t fStatsCapacity{};
+    std::size_t fLaunchParamsCapacity{};
+    std::vector<DevicePhoton> fDevicePhotons{};
+    std::vector<DevicePhotonHit> fDeviceHits{};
+    DeviceTransportStats fDeviceStats{};
 };
 
 OptixOpticalTransport::OptixOpticalTransport(TransportConfig config) :
