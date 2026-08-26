@@ -103,6 +103,10 @@ add_library(g4go_optical_core STATIC
     ${G4GO_OPTICAL_CORE_FILES}
 )
 g4go_configure_cpp_target(g4go_optical_core)
+target_include_directories(g4go_optical_core
+    PUBLIC ${Geant4_INCLUDE_DIRS})
+target_link_libraries(g4go_optical_core
+    PUBLIC ${Geant4_LIBRARIES})
 
 if(G4GO_OPTIX_AVAILABLE)
     set(G4GO_OPTIX_GENERATED_DIR ${PROJECT_BINARY_DIR}/generated)
@@ -127,7 +131,7 @@ if(G4GO_OPTIX_AVAILABLE)
                 -arch=compute_${G4GO_CUDA_ARCHITECTURE}
                 -I${PROJECT_SOURCE_DIR}/include
                 -I${optix_dev_SOURCE_DIR}/include
-                -c ${PROJECT_SOURCE_DIR}/src/optical/optix/OptixTransportDevice.cu
+                -c ${PROJECT_SOURCE_DIR}/src/optical/optix/OptiXTransportDevice.cu
                 -o ${G4GO_OPTIX_IR}
         DEPENDS
             ${G4GO_OPTIX_DEVICE_FILES}
