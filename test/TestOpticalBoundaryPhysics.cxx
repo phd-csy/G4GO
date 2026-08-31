@@ -37,9 +37,9 @@ auto TestNormalIncidence() -> void {
             "normal incidence must transmit");
     RequireNear(result.fTransmittance, 0.96F, 1.0e-5F,
                 "normal-incidence transmittance");
-    RequireNear(result.fReflectedDirection.fZ, -1.0F, 1.0e-6F,
+    RequireNear(result.fReflectedDirection[2], -1.0F, 1.0e-6F,
                 "normal-incidence reflected direction");
-    RequireNear(result.fTransmittedDirection.fZ, 1.0F, 1.0e-6F,
+    RequireNear(result.fTransmittedDirection[2], 1.0F, 1.0e-6F,
                 "normal-incidence transmitted direction");
     RequireNear(Physics::Dot(result.fReflectedDirection,
                              result.fReflectedPolarization),
@@ -70,7 +70,7 @@ auto TestTotalInternalReflection() -> void {
             "50 degree glass-to-air incidence must be TIR");
     RequireNear(result.fTransmittance, 0.0F, 1.0e-6F,
                 "TIR transmittance");
-    Require(result.fReflectedDirection.fZ < 0.0F,
+    Require(result.fReflectedDirection[2] < 0.0F,
             "TIR direction must return to the incident medium");
     RequireNear(Physics::Dot(result.fReflectedDirection,
                              result.fReflectedPolarization),

@@ -333,9 +333,9 @@ public:
             }
             const auto& hit{fDeviceHits[index]};
             result.fDetections.push_back({
-                {hit.fPositionMm.fX, hit.fPositionMm.fY, hit.fPositionMm.fZ},
+                {hit.fPositionMm[0], hit.fPositionMm[1], hit.fPositionMm[2]},
                 hit.fTimeNs,
-                {hit.fDirection.fX,  hit.fDirection.fY,  hit.fDirection.fZ },
+                {hit.fDirection[0], hit.fDirection[1], hit.fDirection[2]},
                 hit.fEnergyEv,
                 hit.fEventID,
                 hit.fPhotonID,

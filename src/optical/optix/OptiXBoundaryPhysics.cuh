@@ -30,31 +30,30 @@ struct FresnelResult {
 
 G4GO_OPTICAL_HD inline auto Add(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
-    return {left.fX + right.fX, left.fY + right.fY, left.fZ + right.fZ};
+    return {left[0] + right[0], left[1] + right[1], left[2] + right[2]};
 }
 
 G4GO_OPTICAL_HD inline auto Subtract(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
-    return {left.fX - right.fX, left.fY - right.fY, left.fZ - right.fZ};
+    return {left[0] - right[0], left[1] - right[1], left[2] - right[2]};
 }
 
 G4GO_OPTICAL_HD inline auto Scale(DeviceVector3 vector, float value)
     -> DeviceVector3 {
-    return {vector.fX * value, vector.fY * value, vector.fZ * value};
+    return {vector[0] * value, vector[1] * value, vector[2] * value};
 }
 
 G4GO_OPTICAL_HD inline auto Dot(DeviceVector3 left, DeviceVector3 right)
     -> float {
-    return left.fX * right.fX + left.fY * right.fY +
-           left.fZ * right.fZ;
+    return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
 }
 
 G4GO_OPTICAL_HD inline auto Cross(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
     return {
-        left.fY * right.fZ - left.fZ * right.fY,
-        left.fZ * right.fX - left.fX * right.fZ,
-        left.fX * right.fY - left.fY * right.fX,
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
     };
 }
 
@@ -77,7 +76,7 @@ G4GO_OPTICAL_HD inline auto ProjectPolarization(DeviceVector3 polarization,
                          Scale(direction, Dot(polarization, direction)))};
     if (Dot(result, result) < 1.0e-12F) {
         const auto helper{
-            fabsf(direction.fZ) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
+            fabsf(direction[2]) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
                 : DeviceVector3{1.0F, 0.0F, 0.0F}
         };
         result = Cross(direction, helper);
@@ -143,7 +142,7 @@ G4GO_OPTICAL_HD inline auto SampleLambertian(DeviceVector3 normal,
     const auto normalComponent{
         sqrtf(fmaxf(0.0F, 1.0F - radialSample))};
     const auto helper{
-        fabsf(normal.fZ) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
+        fabsf(normal[2]) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
             : DeviceVector3{1.0F, 0.0F, 0.0F}
     };
     const auto tangent{Normalize(Cross(helper, normal))};

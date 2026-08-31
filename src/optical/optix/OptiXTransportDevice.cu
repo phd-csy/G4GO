@@ -25,17 +25,17 @@ constexpr auto speedOfLightMmPerNs{299.792458F};
 
 __device__ __forceinline__ auto Add(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
-    return {left.fX + right.fX, left.fY + right.fY, left.fZ + right.fZ};
+    return {left[0] + right[0], left[1] + right[1], left[2] + right[2]};
 }
 
 __device__ __forceinline__ auto Scale(DeviceVector3 vector, float value)
     -> DeviceVector3 {
-    return {vector.fX * value, vector.fY * value, vector.fZ * value};
+    return {vector[0] * value, vector[1] * value, vector[2] * value};
 }
 
 __device__ __forceinline__ auto Dot(DeviceVector3 left, DeviceVector3 right)
     -> float {
-    return left.fX * right.fX + left.fY * right.fY + left.fZ * right.fZ;
+    return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
 }
 
 __device__ __forceinline__ auto Normalize(DeviceVector3 vector)
@@ -86,15 +86,15 @@ __device__ auto TriangleNormal(std::uint32_t instanceIndex,
     const auto& second{geometry->fMesh.fVertices[indices[1]]};
     const auto& third{geometry->fMesh.fVertices[indices[2]]};
     const auto normal{Normalize({
-        (second.fY - first.fY) * (third.fZ - first.fZ) -
-            (second.fZ - first.fZ) * (third.fY - first.fY),
-        (second.fZ - first.fZ) * (third.fX - first.fX) -
-            (second.fX - first.fX) * (third.fZ - first.fZ),
-        (second.fX - first.fX) * (third.fY - first.fY) -
-            (second.fY - first.fY) * (third.fX - first.fX),
+        (second[1] - first[1]) * (third[2] - first[2]) -
+            (second[2] - first[2]) * (third[1] - first[1]),
+        (second[2] - first[2]) * (third[0] - first[0]) -
+            (second[0] - first[0]) * (third[2] - first[2]),
+        (second[0] - first[0]) * (third[1] - first[1]) -
+            (second[1] - first[1]) * (third[0] - first[0]),
     })};
     const auto worldNormal{optixTransformNormalFromObjectToWorldSpace(
-        make_float3(normal.fX, normal.fY, normal.fZ))};
+        make_float3(normal[0], normal[1], normal[2]))};
     return Normalize({worldNormal.x, worldNormal.y, worldNormal.z});
 }
 
@@ -266,18 +266,18 @@ __device__ auto SampleFacetNormal(const DeviceSurface& surface,
         return Normalize(normal);
     }
     normal = Normalize(normal);
-    const auto helper{fabsf(normal.fZ) < 0.9F
+    const auto helper{fabsf(normal[2]) < 0.9F
                           ? DeviceVector3{0.0F, 0.0F, 1.0F}
                           : DeviceVector3{1.0F, 0.0F, 0.0F}};
-    const auto tangent{Normalize({normal.fY * helper.fZ - normal.fZ * helper.fY,
-                                 normal.fZ * helper.fX - normal.fX * helper.fZ,
-                                 normal.fX * helper.fY - normal.fY * helper.fX})};
-    const auto bitangent{Normalize({normal.fY * tangent.fZ -
-                                        normal.fZ * tangent.fY,
-                                    normal.fZ * tangent.fX -
-                                        normal.fX * tangent.fZ,
-                                    normal.fX * tangent.fY -
-                                        normal.fY * tangent.fX})};
+    const auto tangent{Normalize({normal[1] * helper[2] - normal[2] * helper[1],
+                                 normal[2] * helper[0] - normal[0] * helper[2],
+                                 normal[0] * helper[1] - normal[1] * helper[0]})};
+    const auto bitangent{Normalize({normal[1] * tangent[2] -
+                                        normal[2] * tangent[1],
+                                    normal[2] * tangent[0] -
+                                        normal[0] * tangent[2],
+                                    normal[0] * tangent[1] -
+                                        normal[1] * tangent[0]})};
     return Normalize(Add(
         Add(normal, Scale(tangent, sigma * Gaussian(seed, photonID, bounce, 0U))),
         Scale(bitangent, sigma * Gaussian(seed, photonID, bounce, 2U))));
@@ -374,9 +374,9 @@ __global__ void __anyhit__ah() {
         selectedVolumeID = candidateID;
         const auto normal{TriangleNormal(instanceIndex,
                                          optixGetPrimitiveIndex())};
-        normalX = __float_as_uint(normal.fX);
-        normalY = __float_as_uint(normal.fY);
-        normalZ = __float_as_uint(normal.fZ);
+        normalX = __float_as_uint(normal[0]);
+        normalY = __float_as_uint(normal[1]);
+        normalZ = __float_as_uint(normal[2]);
     }
     ++candidateCount;
     optixSetPayload_0(selectedVolumeID);
@@ -395,9 +395,9 @@ __global__ void __closesthit__ch() {
     const auto& volume{gLaunchParams.fScene.fVolumes[instanceIndex]};
     const auto normal{TriangleNormal(instanceIndex, optixGetPrimitiveIndex())};
     optixSetPayload_0(__float_as_uint(optixGetRayTmax()));
-    optixSetPayload_1(__float_as_uint(normal.fX));
-    optixSetPayload_2(__float_as_uint(normal.fY));
-    optixSetPayload_3(__float_as_uint(normal.fZ));
+    optixSetPayload_1(__float_as_uint(normal[0]));
+    optixSetPayload_2(__float_as_uint(normal[1]));
+    optixSetPayload_3(__float_as_uint(normal[2]));
     optixSetPayload_4(volume.fVolumeID);
 }
 
@@ -452,8 +452,8 @@ __global__ void __raygen__rg() {
         auto payload4{invalidID};
         optixTrace(
             static_cast<OptixTraversableHandle>(gLaunchParams.fTraversable),
-            make_float3(position.fX, position.fY, position.fZ),
-            make_float3(direction.fX, direction.fY, direction.fZ),
+            make_float3(position[0], position[1], position[2]),
+            make_float3(direction[0], direction[1], direction[2]),
             gLaunchParams.fBoundaryEpsilonMm, CUDART_INF_F, 0.0F,
             OptixVisibilityMask(255), OPTIX_RAY_FLAG_DISABLE_ANYHIT, 0, 1, 0,
             payload0, payload1, payload2, payload3, payload4);
@@ -479,8 +479,8 @@ __global__ void __raygen__rg() {
             const auto tolerance{gLaunchParams.fBoundaryEpsilonMm};
             optixTrace(
                 static_cast<OptixTraversableHandle>(gLaunchParams.fTraversable),
-                make_float3(position.fX, position.fY, position.fZ),
-                make_float3(direction.fX, direction.fY, direction.fZ),
+                make_float3(position[0], position[1], position[2]),
+                make_float3(direction[0], direction[1], direction[2]),
                 fmaxf(0.0F, distance - tolerance), distance + tolerance, 0.0F,
                 OptixVisibilityMask(255),
                 OPTIX_RAY_FLAG_ENFORCE_ANYHIT |

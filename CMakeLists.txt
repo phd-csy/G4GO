@@ -127,6 +127,7 @@ if(G4GO_OPTIX_AVAILABLE)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${G4GO_OPTIX_GENERATED_DIR}
         COMMAND ${CMAKE_CUDA_COMPILER}
                 --optix-ir
+                --expt-relaxed-constexpr
                 -std=c++20
                 -arch=compute_${G4GO_CUDA_ARCHITECTURE}
                 -I${PROJECT_SOURCE_DIR}/include
@@ -315,7 +316,7 @@ if(BUILD_TESTING)
 
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
-                     ${PROJECT_BINARY_DIR}/scripts/run_optical_smoke.mac)
+                     ${PROJECT_BINARY_DIR}/scripts/run_optical_test.mac)
     set_tests_properties(g4go_smoke_auto PROPERTIES
         LABELS "smoke;integration;auto"
         TIMEOUT 60

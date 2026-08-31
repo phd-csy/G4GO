@@ -1,14 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 namespace G4GO::Optical {
 
-struct DeviceVector3 {
-    float fX{};
-    float fY{};
-    float fZ{};
-};
+using DeviceVector3 = std::array<float, 3>;
 
 struct DevicePhoton {
     DeviceVector3 fPositionMm{};
