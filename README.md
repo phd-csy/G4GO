@@ -105,15 +105,15 @@ cmake --install build --prefix /path/to/prefix
 
 ```bash
 cd build
-./g4go --backend auto scripts/run_optical_smoke.mac
+./g4go --backend auto scripts/run_optical_test.mac
 ```
 
 显式运行 CPU 或 GPU backend：
 
 ```bash
 cd build
-./g4go --backend cpu --threads 1 scripts/run_optical_smoke.mac
-./g4go --backend gpu scripts/run_optical_smoke.mac
+./g4go --backend cpu --threads 1 scripts/run_optical_test.mac
+./g4go --backend gpu scripts/run_optical_test.mac
 ```
 
 成功启用 GPU backend 时，运行日志包含：
@@ -151,7 +151,7 @@ g4go [OPTIONS] [macro]
 
 | 文件 | 用途 | Analysis 文件名 |
 | --- | --- | --- |
-| `scripts/run_optical_smoke.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_smoke.root` |
+| `scripts/run_optical_test.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_test.root` |
 | `scripts/run_beam_eminus.mac` | 从晶体前方发射 5 MeV 电子束，共 2000 个 event | `run_beam_eminus.root` |
 | `scripts/vis.mac` | 交互式几何与轨迹可视化 | `vis.root` |
 
@@ -203,7 +203,7 @@ G4GO/
 │   ├── optical/
 │   │   ├── geant4/         # event adapter、scene exporter 与 batch service
 │   │   └── optix/          # OptiX host/device transport
-│   └── simulation/         # run、event 与 output action
+│   └── simulation/         # run、event 与 analysis action
 └── test/                   # 单元、smoke 与回归测试
 ```
 
@@ -295,7 +295,7 @@ LD_LIBRARY_PATH="$G4GO_OPTIX_RUNTIME:/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIB
   ldd "$G4GO_OPTIX_RUNTIME/libnvoptix.so.1" \
   | rg 'nvoptix|rtcore|ptxjit|gpucomp|not found'
 
-./build/g4go --backend gpu build/scripts/run_optical_smoke.mac
+./build/g4go --backend gpu build/scripts/run_optical_test.mac
 ```
 
 更新 Windows NVIDIA 驱动或 WSL 映射后，在 PowerShell 执行 `wsl --shutdown`，重新打开 WSL 并再次验证动态库加载顺序。
