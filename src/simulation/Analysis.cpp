@@ -1,4 +1,4 @@
-#include "g4go/simulation/Output.hpp"
+#include "g4go/simulation/Analysis.hpp"
 
 #include "G4AnalysisManager.hh"
 
@@ -8,22 +8,22 @@
 
 namespace G4GO::Simulation {
 
-auto Output::Enqueue(
-    std::vector<CrystalHitRecord> crystalHits,
+auto Analysis::Enqueue(
+    std::vector<CrystalHitOutput> crystalHits,
     G4GO::Optical::PhotonTransportFuture transportResult) -> void {
     fPendingEvents.push_back(
         {std::move(crystalHits), std::move(transportResult)});
 }
 
-auto Output::WriteReadyEvents() -> void {
+auto Analysis::WriteReadyEvents() -> void {
     ProcessReadyEvents(false);
 }
 
-auto Output::WaitAndWriteNextEvent() -> void {
+auto Analysis::WaitAndWriteNextEvent() -> void {
     ProcessReadyEvents(true);
 }
 
-auto Output::ProcessReadyEvents(bool waitForFrontEvent) -> void {
+auto Analysis::ProcessReadyEvents(bool waitForFrontEvent) -> void {
     if (fPendingEvents.empty()) {
         return;
     }
@@ -43,13 +43,13 @@ auto Output::ProcessReadyEvents(bool waitForFrontEvent) -> void {
     }
 }
 
-auto Output::Flush() -> void {
+auto Analysis::Flush() -> void {
     while (!fPendingEvents.empty()) {
         WaitAndWriteNextEvent();
     }
 }
 
-auto Output::WriteEvent(PendingEvent event) -> void {
+auto Analysis::WriteEvent(PendingEvent event) -> void {
     G4GO::Optical::PhotonTransportOutput result{};
     if (event.fTransportResult.valid()) {
         result = event.fTransportResult.get();

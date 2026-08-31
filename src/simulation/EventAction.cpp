@@ -9,7 +9,7 @@
 #include "g4go/detector/ScintillatorHit.hpp"
 #include "g4go/detector/SensorHit.hpp"
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
-#include "g4go/simulation/Output.hpp"
+#include "g4go/simulation/Analysis.hpp"
 
 #include <utility>
 
@@ -17,9 +17,9 @@ namespace G4GO::Simulation {
 
 EventAction::EventAction(
     std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
-    std::shared_ptr<Output> output) :
+    std::shared_ptr<Analysis> analysis) :
     fAdapter{std::move(adapter)},
-    fOutput{std::move(output)} {}
+    fAnalysis{std::move(analysis)} {}
 
 auto EventAction::BeginOfEventAction(const G4Event* event) -> void {
     fAdapter->BeginEvent(event->GetEventID());
@@ -46,7 +46,7 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
 
     if (fAdapter->SelectedBackend() ==
         G4GO::Optical::PhotonTransportBackend::OptiX) {
-        std::vector<CrystalHitRecord> crystalHits{};
+        std::vector<CrystalHitOutput> crystalHits{};
         crystalHits.reserve(moduleID);
         for (auto i{0}; i < moduleID; i++) {
             const auto energyDeposit{(*scintHC)[i]->GetEnergyDeposit()};
@@ -54,11 +54,11 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
                 crystalHits.push_back({eventID, i, energyDeposit});
             }
         }
-        fOutput->Enqueue(std::move(crystalHits), transportFuture);
-        if (fOutput->PendingCount() > 64) {
-            fOutput->WaitAndWriteNextEvent();
+        fAnalysis->Enqueue(std::move(crystalHits), transportFuture);
+        if (fAnalysis->PendingCount() > 64) {
+            fAnalysis->WaitAndWriteNextEvent();
         } else {
-            fOutput->WriteReadyEvents();
+            fAnalysis->WriteReadyEvents();
         }
         return;
     }

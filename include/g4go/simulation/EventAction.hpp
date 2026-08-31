@@ -12,13 +12,13 @@ class Geant4EventAdapter;
 
 namespace G4GO::Simulation {
 
-class Output;
+class Analysis;
 
 class EventAction : public G4UserEventAction {
 public:
     explicit EventAction(
         std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
-        std::shared_ptr<Output> output);
+        std::shared_ptr<Analysis> analysis);
     ~EventAction() override = default;
 
     auto BeginOfEventAction(const G4Event*) -> void override;
@@ -26,7 +26,7 @@ public:
 
 private:
     std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter{};
-    std::shared_ptr<Output> fOutput{};
+    std::shared_ptr<Analysis> fAnalysis{};
 };
 
 } // namespace G4GO::Simulation

@@ -3,7 +3,7 @@
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
 #include "g4go/simulation/EventAction.hpp"
-#include "g4go/simulation/Output.hpp"
+#include "g4go/simulation/Analysis.hpp"
 #include "g4go/simulation/PrimaryGeneratorAction.hpp"
 #include "g4go/simulation/RunAction.hpp"
 #include "g4go/simulation/StackingAction.hpp"
@@ -25,14 +25,14 @@ auto ActionInitialization::BuildForMaster() const -> void {
 }
 
 auto ActionInitialization::Build() const -> void {
-    const auto output{std::make_shared<Output>()};
+    const auto analysis{std::make_shared<Analysis>()};
     const auto adapter{
         std::make_shared<G4GO::Optical::Geant4EventAdapter>(
             fConfiguration, fBatchScheduler)};
 
     SetUserAction(new PrimaryGeneratorAction());
-    SetUserAction(new RunAction(fBatchScheduler, adapter, output));
-    SetUserAction(new EventAction(adapter, output));
+    SetUserAction(new RunAction(fBatchScheduler, adapter, analysis));
+    SetUserAction(new EventAction(adapter, analysis));
     SetUserAction(new StackingAction(adapter));
 }
 

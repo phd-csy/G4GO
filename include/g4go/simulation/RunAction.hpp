@@ -13,7 +13,7 @@ class Geant4BatchScheduler;
 
 namespace G4GO::Simulation {
 
-class Output;
+class Analysis;
 
 class RunAction : public G4UserRunAction {
 public:
@@ -21,7 +21,7 @@ public:
         std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> batchScheduler =
             {},
         std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter = {},
-        std::shared_ptr<Output> output = {},
+        std::shared_ptr<Analysis> analysis = {},
         bool isMaster = false);
     ~RunAction() override = default;
 
@@ -31,7 +31,7 @@ public:
 private:
     std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter{};
     std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> fBatchScheduler{};
-    std::shared_ptr<Output> fOutput{};
+    std::shared_ptr<Analysis> fAnalysis{};
     bool fIsMaster{};
 };
 

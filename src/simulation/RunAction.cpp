@@ -4,7 +4,7 @@
 #include "G4ios.hh"
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
-#include "g4go/simulation/Output.hpp"
+#include "g4go/simulation/Analysis.hpp"
 
 #include <utility>
 
@@ -13,12 +13,12 @@ namespace G4GO::Simulation {
 RunAction::RunAction(
     std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> batchScheduler,
     std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
-    std::shared_ptr<Output> output,
+    std::shared_ptr<Analysis> analysis,
     bool isMaster) :
     G4UserRunAction{},
     fAdapter{std::move(adapter)},
     fBatchScheduler{std::move(batchScheduler)},
-    fOutput{std::move(output)},
+    fAnalysis{std::move(analysis)},
     fIsMaster{isMaster} {
     auto analysisManager{G4AnalysisManager::Instance()};
     analysisManager->SetDefaultFileType("root");
@@ -53,8 +53,8 @@ auto RunAction::BeginOfRunAction(const G4Run*) -> void {
 }
 
 auto RunAction::EndOfRunAction(const G4Run*) -> void {
-    if (fOutput) {
-        fOutput->Flush();
+    if (fAnalysis) {
+        fAnalysis->Flush();
     }
     if (fAdapter) {
         fAdapter->EndRun();

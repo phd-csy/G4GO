@@ -8,16 +8,16 @@
 
 namespace G4GO::Simulation {
 
-struct CrystalHitRecord {
+struct CrystalHitOutput {
     int fEventID{};
     int fModuleID{};
     double fEnergyDeposit{};
 };
 
-class Output final {
+class Analysis final {
 public:
     auto Enqueue(
-        std::vector<CrystalHitRecord> crystalHits,
+        std::vector<CrystalHitOutput> crystalHits,
         G4GO::Optical::PhotonTransportFuture transportResult) -> void;
     auto WriteReadyEvents() -> void;
     auto WaitAndWriteNextEvent() -> void;
@@ -26,7 +26,7 @@ public:
 
 private:
     struct PendingEvent {
-        std::vector<CrystalHitRecord> fCrystalHits{};
+        std::vector<CrystalHitOutput> fCrystalHits{};
         G4GO::Optical::PhotonTransportFuture fTransportResult{};
     };
 
