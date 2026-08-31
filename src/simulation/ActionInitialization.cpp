@@ -1,9 +1,9 @@
 #include "g4go/simulation/ActionInitialization.hpp"
 
-#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
-#include "g4go/simulation/EventAction.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
+#include "g4go/simulation/EventAction.hpp"
 #include "g4go/simulation/PrimaryGeneratorAction.hpp"
 #include "g4go/simulation/RunAction.hpp"
 #include "g4go/simulation/StackingAction.hpp"

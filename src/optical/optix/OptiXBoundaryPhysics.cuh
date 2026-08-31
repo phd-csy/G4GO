@@ -108,9 +108,7 @@ G4GO_OPTICAL_HD inline auto ClassifySurface(float reflectivity,
                                             float sample) -> SurfaceOutcome {
     const auto directTransmission{ClampProbability(transmittance)};
     const auto surfaceInteraction{
-        hasReflectivity
-            ? (1.0F - directTransmission) * ClampProbability(reflectivity)
-            : (hasTransmittance ? 0.0F : 1.0F)};
+        hasReflectivity ? (1.0F - directTransmission) * ClampProbability(reflectivity) : (hasTransmittance ? 0.0F : 1.0F)};
     if (sample < directTransmission) {
         return SurfaceOutcome::DirectTransmit;
     }

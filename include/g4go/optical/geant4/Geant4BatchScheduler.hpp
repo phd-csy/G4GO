@@ -1,7 +1,7 @@
 #pragma once
 
-#include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/optical/PhotonTransport.hpp"
+#include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/optical/Scene.hpp"
 
 #include <chrono>

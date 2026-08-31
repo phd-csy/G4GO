@@ -2,8 +2,8 @@
 
 #include "G4AnalysisManager.hh"
 #include "G4ios.hh"
-#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
 #include <utility>

@@ -183,7 +183,7 @@ public:
         contextOptions.logCallbackFunction = LogCallback;
         contextOptions.logCallbackLevel = 3;
         OptiXError(optixDeviceContextCreate(nullptr, &contextOptions,
-                                             &context),
+                                            &context),
                    "optixDeviceContextCreate");
         CudaError(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking),
                   "cudaStreamCreateWithFlags");
@@ -335,7 +335,7 @@ public:
             result.fDetections.push_back({
                 {hit.fPositionMm[0], hit.fPositionMm[1], hit.fPositionMm[2]},
                 hit.fTimeNs,
-                {hit.fDirection[0], hit.fDirection[1], hit.fDirection[2]},
+                {hit.fDirection[0],  hit.fDirection[1],  hit.fDirection[2] },
                 hit.fEnergyEv,
                 hit.fEventID,
                 hit.fPhotonID,

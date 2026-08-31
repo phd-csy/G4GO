@@ -58,16 +58,12 @@ __device__ auto FindVolume(std::uint32_t volumeID) -> const DeviceVolume* {
 
 __device__ auto FindMaterial(std::uint32_t materialID)
     -> const DeviceMaterial* {
-    return materialID < gLaunchParams.fScene.fMaterialCount
-               ? &gLaunchParams.fScene.fMaterials[materialID]
-               : nullptr;
+    return materialID < gLaunchParams.fScene.fMaterialCount ? &gLaunchParams.fScene.fMaterials[materialID] : nullptr;
 }
 
 __device__ auto FindGeometry(std::uint32_t geometryID)
     -> const DeviceGeometry* {
-    return geometryID < gLaunchParams.fScene.fGeometryCount
-               ? &gLaunchParams.fScene.fGeometries[geometryID]
-               : nullptr;
+    return geometryID < gLaunchParams.fScene.fGeometryCount ? &gLaunchParams.fScene.fGeometries[geometryID] : nullptr;
 }
 
 __device__ auto TriangleNormal(std::uint32_t instanceIndex,
@@ -221,7 +217,8 @@ __device__ auto Uniform(std::uint64_t seed,
         key1 += keyStep1;
     }
     const auto word{draw % 4U == 0U ? x0 : draw % 4U == 1U ? x1 :
-                                       draw % 4U == 2U     ? x2 : x3};
+                                       draw % 4U == 2U     ? x2 :
+                                                             x3};
     return (static_cast<float>(word) + 0.5F) / 4294967296.0F;
 }
 
@@ -266,12 +263,13 @@ __device__ auto SampleFacetNormal(const DeviceSurface& surface,
         return Normalize(normal);
     }
     normal = Normalize(normal);
-    const auto helper{fabsf(normal[2]) < 0.9F
-                          ? DeviceVector3{0.0F, 0.0F, 1.0F}
-                          : DeviceVector3{1.0F, 0.0F, 0.0F}};
+    const auto helper{
+        fabsf(normal[2]) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
+            : DeviceVector3{1.0F, 0.0F, 0.0F}
+    };
     const auto tangent{Normalize({normal[1] * helper[2] - normal[2] * helper[1],
-                                 normal[2] * helper[0] - normal[0] * helper[2],
-                                 normal[0] * helper[1] - normal[1] * helper[0]})};
+                                  normal[2] * helper[0] - normal[0] * helper[2],
+                                  normal[0] * helper[1] - normal[1] * helper[0]})};
     const auto bitangent{Normalize({normal[1] * tangent[2] -
                                         normal[2] * tangent[1],
                                     normal[2] * tangent[0] -
@@ -307,18 +305,18 @@ __device__ auto SampleSurfaceReflection(const DeviceSurface& surface,
     }
 
     const auto spike{fminf(fmaxf(SampleProperty(
-                                 surface.fSpecularSpike, energyEv,
-                                 isGround ? 0.0F : 1.0F),
-                             0.0F),
-                          1.0F)};
+                                     surface.fSpecularSpike, energyEv,
+                                     isGround ? 0.0F : 1.0F),
+                                 0.0F),
+                           1.0F)};
     const auto lobe{fminf(fmaxf(SampleProperty(surface.fSpecularLobe, energyEv,
                                                0.0F),
-                               0.0F),
-                         1.0F)};
+                                0.0F),
+                          1.0F)};
     const auto backscatter{fminf(fmaxf(SampleProperty(
-                                      surface.fBackscatter, energyEv, 0.0F),
-                                  0.0F),
-                              1.0F)};
+                                           surface.fBackscatter, energyEv, 0.0F),
+                                       0.0F),
+                                 1.0F)};
     const auto total{spike + lobe + backscatter};
     const auto scale{total > 1.0F ? 1.0F / total : 1.0F};
     const auto sample{Uniform(seed, photonID, bounce, 4U, 0U)};
@@ -366,9 +364,7 @@ __global__ void __anyhit__ah() {
         optixIgnoreIntersection();
         return;
     }
-    const auto selectedRank{selectedVolumeID == invalidID
-                                ? 100U
-                                : SurfaceRank(currentID, selectedVolumeID)};
+    const auto selectedRank{selectedVolumeID == invalidID ? 100U : SurfaceRank(currentID, selectedVolumeID)};
     if (candidateRank < selectedRank ||
         (candidateRank == selectedRank && candidateID < selectedVolumeID)) {
         selectedVolumeID = candidateID;
@@ -436,9 +432,7 @@ __global__ void __raygen__rg() {
             SampleProperty(currentMaterial->fRindex, photon.fEnergyEv, NAN)};
         const auto velocity{SampleProperty(
             currentMaterial->fGroupVelocityMmPerNs, photon.fEnergyEv,
-            isfinite(refractiveIndex) && refractiveIndex > 0.0F
-                ? speedOfLightMmPerNs / refractiveIndex
-                : NAN)};
+            isfinite(refractiveIndex) && refractiveIndex > 0.0F ? speedOfLightMmPerNs / refractiveIndex : NAN)};
         if (!(velocity > 0.0F) || !isfinite(velocity)) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                       static_cast<unsigned long long>(1));
@@ -533,9 +527,7 @@ __global__ void __raygen__rg() {
 
         const auto surfaceID{FindSurfaceID(currentVolumeID, nextVolumeID)};
         const auto* surface{
-            surfaceID < gLaunchParams.fScene.fSurfaceCount
-                ? &gLaunchParams.fScene.fSurfaces[surfaceID]
-                : nullptr};
+            surfaceID < gLaunchParams.fScene.fSurfaceCount ? &gLaunchParams.fScene.fSurfaces[surfaceID] : nullptr};
         auto reflected{false};
         auto detected{false};
         auto surfaceAbsorbed{false};
@@ -638,9 +630,7 @@ __global__ void __raygen__rg() {
         }
 
         if (detected) {
-            const auto sensorID{nextVolume->fSensorID != invalidID
-                                    ? nextVolume->fSensorID
-                                    : currentVolume->fSensorID};
+            const auto sensorID{nextVolume->fSensorID != invalidID ? nextVolume->fSensorID : currentVolume->fSensorID};
             if (sensorID == invalidID) {
                 atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
                           static_cast<unsigned long long>(1));
@@ -668,9 +658,7 @@ __global__ void __raygen__rg() {
             break;
         }
         position = Add(boundaryPosition,
-                       Scale(normal, reflected
-                                        ? gLaunchParams.fBoundaryEpsilonMm
-                                        : -gLaunchParams.fBoundaryEpsilonMm));
+                       Scale(normal, reflected ? gLaunchParams.fBoundaryEpsilonMm : -gLaunchParams.fBoundaryEpsilonMm));
     }
 
     if (!terminated && bounce >= gLaunchParams.fMaxBounceCount) {

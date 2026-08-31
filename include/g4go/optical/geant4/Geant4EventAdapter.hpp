@@ -1,8 +1,8 @@
 #pragma once
 
 #include "G4Types.hh"
-#include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/optical/PhotonTransport.hpp"
+#include "g4go/optical/PhotonTransportConfig.hpp"
 
 #include <memory>
 #include <span>
