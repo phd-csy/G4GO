@@ -23,6 +23,7 @@ DetectorConstruction::DetectorConstruction() :
     fCheckOverlap{false} {}
 
 auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
+    moduleID = 0;
     const auto nist{G4NistManager::Instance()};
 
     const auto hydrogenElement{nist->FindOrBuildElement("H")};
@@ -211,7 +212,7 @@ auto DetectorConstruction::ConstructSDandField() -> void {
     SetSensitiveDetector("Crystal", scintillatorSD, true);
 
     auto sensorSD{
-        new SensorSD("SensorSD", "SensorHitsCollection")};
+        new SensorSD(SensorSensitiveDetectorName, "SensorHitsCollection")};
     G4SDManager::GetSDMpointer()->AddNewDetector(sensorSD);
     SetSensitiveDetector("SiPM", sensorSD, true);
 }

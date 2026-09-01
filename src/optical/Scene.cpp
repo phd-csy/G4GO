@@ -88,6 +88,9 @@ auto Scene::FindGeometry(std::uint32_t geometryID) const -> const Geometry* {
 }
 
 auto Scene::FindVolume(std::uint32_t volumeID) const -> const Volume* {
+    if (volumeID < fVolumes.size() && fVolumes[volumeID].fVolumeID == volumeID) {
+        return &fVolumes[volumeID];
+    }
     const auto volume{std::find_if(
         fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
             return candidate.fVolumeID == volumeID;
@@ -109,6 +112,10 @@ auto Scene::FindVolume(std::uint32_t physicalVolumeID,
 
 auto Scene::SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
                                                bool value) -> void {
+    if (volumeID < fVolumes.size() && fVolumes[volumeID].fVolumeID == volumeID) {
+        fVolumes[volumeID].fMayHaveCoincidentBoundary = value;
+        return;
+    }
     const auto volume{std::find_if(
         fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
             return candidate.fVolumeID == volumeID;

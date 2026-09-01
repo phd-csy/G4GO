@@ -6,6 +6,8 @@
 
 namespace G4GO::Detector {
 
+inline constexpr char SensorSensitiveDetectorName[] = "SensorSD";
+
 class SensorSD : public G4VSensitiveDetector {
 public:
     SensorSD(const G4String&, const G4String&);

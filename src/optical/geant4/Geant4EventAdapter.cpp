@@ -53,6 +53,7 @@ auto Geant4EventAdapter::EndRun() -> void {
 
 auto Geant4EventAdapter::BeginEvent(G4int eventID) -> void {
     fEventID = eventID;
+    fNextPhotonID = 0;
     fPhotons.clear();
     fEventDetections.clear();
     fEventStatistics = {};

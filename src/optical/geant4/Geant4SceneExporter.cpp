@@ -15,6 +15,7 @@
 #include "G4VPVParameterisation.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4VSolid.hh"
+#include "g4go/detector/SensorSD.hpp"
 #include "g4go/optical/GeometryTransformer.hpp"
 
 #include <algorithm>
@@ -25,7 +26,6 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace G4GO::Optical {
@@ -139,18 +139,11 @@ private:
             physicalVolume->GetLogicalVolume()->GetMaterial(), false);
     }
 
-    auto AllocateVolumeID(G4int preferred) -> std::uint32_t {
-        if (preferred >= 0) {
-            const auto candidate{static_cast<std::uint32_t>(preferred)};
-            if (candidate != InvalidID && usedVolumeIDs.insert(candidate).second) {
-                return candidate;
-            }
+    auto AllocateVolumeID() -> std::uint32_t {
+        if (scene.Volumes().size() >= InvalidID) {
+            throw std::overflow_error("scene contains too many volumes");
         }
-        while (nextVolumeID == InvalidID ||
-               !usedVolumeIDs.insert(nextVolumeID).second) {
-            ++nextVolumeID;
-        }
-        return nextVolumeID++;
+        return static_cast<std::uint32_t>(scene.Volumes().size());
     }
 
     static auto RestorePhysicalVolume(G4VPhysicalVolume* physicalVolume,
@@ -188,7 +181,7 @@ private:
 
         Volume volume{};
         volume.fName = physicalVolume->GetName();
-        volume.fVolumeID = AllocateVolumeID(physicalVolume->GetInstanceID());
+        volume.fVolumeID = AllocateVolumeID();
         volume.fPhysicalVolumeID = static_cast<std::uint32_t>(
             std::max(physicalVolume->GetInstanceID(), 0));
         volume.fCopyNo = copyNo;
@@ -197,7 +190,9 @@ private:
         volume.fParentVolumeID = parentVolumeID;
         volume.fDepth = depth;
         volume.fTransform = transform;
-        if (logicalVolume->GetSensitiveDetector() != nullptr) {
+        const auto* sensitiveDetector{logicalVolume->GetSensitiveDetector()};
+        if (dynamic_cast<const G4GO::Detector::SensorSD*>(
+                sensitiveDetector) != nullptr) {
             volume.fSensorID = volume.fCopyNo;
         }
 
@@ -629,8 +624,6 @@ private:
                        std::vector<std::uint32_t>>
         volumeIDs{};
     std::unordered_map<std::uint32_t, Bounds> volumeBounds{};
-    std::unordered_set<std::uint32_t> usedVolumeIDs{};
-    std::uint32_t nextVolumeID{};
     std::uint32_t meshRotationSteps{};
 };
 

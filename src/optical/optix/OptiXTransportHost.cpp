@@ -657,6 +657,13 @@ private:
                 binding.fSurfaceID,
             });
         }
+        std::sort(deviceBindings.begin(), deviceBindings.end(),
+                  [](const auto& left, const auto& right) {
+                      if (left.fFromVolumeID != right.fFromVolumeID) {
+                          return left.fFromVolumeID < right.fFromVolumeID;
+                      }
+                      return left.fToVolumeID < right.fToVolumeID;
+                  });
 
         const auto materialPointer{Upload<DeviceMaterial>(
             materials, sceneAllocations)};

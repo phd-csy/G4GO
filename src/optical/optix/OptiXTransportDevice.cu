@@ -48,12 +48,9 @@ __device__ __forceinline__ auto Normalize(DeviceVector3 vector)
 }
 
 __device__ auto FindVolume(std::uint32_t volumeID) -> const DeviceVolume* {
-    for (auto index{0U}; index < gLaunchParams.fScene.fVolumeCount; ++index) {
-        if (gLaunchParams.fScene.fVolumes[index].fVolumeID == volumeID) {
-            return &gLaunchParams.fScene.fVolumes[index];
-        }
-    }
-    return nullptr;
+    return volumeID < gLaunchParams.fScene.fVolumeCount ?
+               &gLaunchParams.fScene.fVolumes[volumeID] :
+               nullptr;
 }
 
 __device__ auto FindMaterial(std::uint32_t materialID)
@@ -165,9 +162,21 @@ __device__ auto SampleProperty(const DeviceProperty& property,
 
 __device__ auto FindSurfaceID(std::uint32_t fromVolumeID,
                               std::uint32_t toVolumeID) -> std::uint32_t {
-    for (auto index{0U};
-         index < gLaunchParams.fScene.fSurfaceBindingCount; ++index) {
-        const auto& binding{gLaunchParams.fScene.fSurfaceBindings[index]};
+    auto first{0U};
+    auto last{gLaunchParams.fScene.fSurfaceBindingCount};
+    while (first < last) {
+        const auto middle{first + (last - first) / 2U};
+        const auto& binding{gLaunchParams.fScene.fSurfaceBindings[middle]};
+        if (binding.fFromVolumeID < fromVolumeID ||
+            (binding.fFromVolumeID == fromVolumeID &&
+             binding.fToVolumeID < toVolumeID)) {
+            first = middle + 1U;
+        } else {
+            last = middle;
+        }
+    }
+    if (first < gLaunchParams.fScene.fSurfaceBindingCount) {
+        const auto& binding{gLaunchParams.fScene.fSurfaceBindings[first]};
         if (binding.fFromVolumeID == fromVolumeID &&
             binding.fToVolumeID == toVolumeID) {
             return binding.fSurfaceID;
@@ -182,7 +191,7 @@ __device__ auto FindSurfaceID(std::uint32_t fromVolumeID,
 }
 
 __device__ auto Uniform(std::uint64_t seed,
-                        std::uint64_t photonID,
+                        std::uint64_t photonKey,
                         std::uint32_t bounce,
                         std::uint32_t process,
                         std::uint32_t draw) -> float {
@@ -190,8 +199,8 @@ __device__ auto Uniform(std::uint64_t seed,
     constexpr auto multiplier1{0xCD9E8D57U};
     constexpr auto keyStep0{0x9E3779B9U};
     constexpr auto keyStep1{0xBB67AE85U};
-    auto x0{static_cast<std::uint32_t>(photonID)};
-    auto x1{static_cast<std::uint32_t>(photonID >> 32)};
+    auto x0{static_cast<std::uint32_t>(photonKey)};
+    auto x1{static_cast<std::uint32_t>(photonKey >> 32)};
     auto x2{bounce};
     auto x3{(process << 16U) ^ draw};
     auto key0{static_cast<std::uint32_t>(seed)};
@@ -225,7 +234,7 @@ __device__ auto Uniform(std::uint64_t seed,
 __device__ auto SampleAbsorption(const DeviceMaterial& material,
                                  float energyEv,
                                  std::uint64_t seed,
-                                 std::uint64_t photonID,
+                                 std::uint64_t photonKey,
                                  std::uint32_t bounce) -> float {
     const auto absorptionLength{
         SampleProperty(material.fAbsLengthMm, energyEv, CUDART_INF_F)};
@@ -233,24 +242,24 @@ __device__ auto SampleAbsorption(const DeviceMaterial& material,
         return CUDART_INF_F;
     }
     return -absorptionLength *
-           logf(Uniform(seed, photonID, bounce, 0U, 0U));
+           logf(Uniform(seed, photonKey, bounce, 0U, 0U));
 }
 
 __device__ auto Gaussian(std::uint64_t seed,
-                         std::uint64_t photonID,
+                         std::uint64_t photonKey,
                          std::uint32_t bounce,
                          std::uint32_t draw) -> float {
     constexpr auto twoPi{6.28318530717958647692F};
-    const auto first{fmaxf(Uniform(seed, photonID, bounce, 3U, draw),
+    const auto first{fmaxf(Uniform(seed, photonKey, bounce, 3U, draw),
                            1.0e-7F)};
-    const auto second{Uniform(seed, photonID, bounce, 3U, draw + 1U)};
+    const auto second{Uniform(seed, photonKey, bounce, 3U, draw + 1U)};
     return sqrtf(-2.0F * logf(first)) * cosf(twoPi * second);
 }
 
 __device__ auto SampleFacetNormal(const DeviceSurface& surface,
                                   DeviceVector3 normal,
                                   std::uint64_t seed,
-                                  std::uint64_t photonID,
+                                  std::uint64_t photonKey,
                                   std::uint32_t bounce) -> DeviceVector3 {
     auto sigma{0.0F};
     if (surface.fModel == unifiedModel) {
@@ -277,8 +286,8 @@ __device__ auto SampleFacetNormal(const DeviceSurface& surface,
                                     normal[0] * tangent[1] -
                                         normal[1] * tangent[0]})};
     return Normalize(Add(
-        Add(normal, Scale(tangent, sigma * Gaussian(seed, photonID, bounce, 0U))),
-        Scale(bitangent, sigma * Gaussian(seed, photonID, bounce, 2U))));
+        Add(normal, Scale(tangent, sigma * Gaussian(seed, photonKey, bounce, 0U))),
+        Scale(bitangent, sigma * Gaussian(seed, photonKey, bounce, 2U))));
 }
 
 __device__ auto SampleSurfaceReflection(const DeviceSurface& surface,
@@ -286,20 +295,20 @@ __device__ auto SampleSurfaceReflection(const DeviceSurface& surface,
                                         DeviceVector3 normal,
                                         float energyEv,
                                         std::uint64_t seed,
-                                        std::uint64_t photonID,
+                                        std::uint64_t photonKey,
                                         std::uint32_t bounce) -> DeviceVector3 {
     const auto isGround{surface.fFinish == groundFinish ||
                         surface.fFinish == groundFrontPaintedFinish ||
                         surface.fFinish == groundBackPaintedFinish};
-    const auto facetNormal{SampleFacetNormal(surface, normal, seed, photonID,
+    const auto facetNormal{SampleFacetNormal(surface, normal, seed, photonKey,
                                              bounce)};
     if (surface.fModel == glisurModel) {
         const auto polish{fminf(fmaxf(surface.fModelValue, 0.0F), 1.0F)};
         if (isGround ||
-            Uniform(seed, photonID, bounce, 4U, 0U) >= polish) {
+            Uniform(seed, photonKey, bounce, 4U, 0U) >= polish) {
             return BoundaryPhysics::SampleLambertian(
-                normal, Uniform(seed, photonID, bounce, 4U, 1U),
-                Uniform(seed, photonID, bounce, 4U, 2U));
+                normal, Uniform(seed, photonKey, bounce, 4U, 1U),
+                Uniform(seed, photonKey, bounce, 4U, 2U));
         }
         return BoundaryPhysics::ReflectDirection(direction, facetNormal);
     }
@@ -319,7 +328,7 @@ __device__ auto SampleSurfaceReflection(const DeviceSurface& surface,
                                  1.0F)};
     const auto total{spike + lobe + backscatter};
     const auto scale{total > 1.0F ? 1.0F / total : 1.0F};
-    const auto sample{Uniform(seed, photonID, bounce, 4U, 0U)};
+    const auto sample{Uniform(seed, photonKey, bounce, 4U, 0U)};
     const auto backLimit{backscatter * scale};
     const auto lobeLimit{backLimit + lobe * scale};
     if (sample < backLimit) {
@@ -332,8 +341,8 @@ __device__ auto SampleSurfaceReflection(const DeviceSurface& surface,
         return BoundaryPhysics::ReflectDirection(direction, normal);
     }
     return BoundaryPhysics::SampleLambertian(
-        normal, Uniform(seed, photonID, bounce, 4U, 1U),
-        Uniform(seed, photonID, bounce, 4U, 2U));
+        normal, Uniform(seed, photonKey, bounce, 4U, 1U),
+        Uniform(seed, photonKey, bounce, 4U, 2U));
 }
 
 } // namespace
@@ -404,6 +413,8 @@ __global__ void __raygen__rg() {
     }
 
     auto photon{gLaunchParams.fPhotons[photonID]};
+    const auto photonKey{(static_cast<std::uint64_t>(photon.fEventID) << 32U) |
+                         photon.fPhotonID};
     auto position{photon.fPositionMm};
     auto direction{Normalize(photon.fDirection)};
     auto polarization{BoundaryPhysics::ProjectPolarization(
@@ -491,7 +502,7 @@ __global__ void __raygen__rg() {
 
         const auto absorptionDistance{SampleAbsorption(
             *currentMaterial, photon.fEnergyEv, gLaunchParams.fSeed,
-            photon.fPhotonID, bounce)};
+            photonKey, bounce)};
         if (absorptionDistance < distance) {
             photon.fTimeNs += absorptionDistance / velocity;
             atomicAdd(&gLaunchParams.fStats->fAbsorbedCount,
@@ -551,7 +562,7 @@ __global__ void __raygen__rg() {
             const auto surfaceOutcome{BoundaryPhysics::ClassifySurface(
                 reflectivity, transmittance, surface->fReflectivity.fCount != 0,
                 surface->fTransmittance.fCount != 0,
-                Uniform(gLaunchParams.fSeed, photon.fPhotonID, bounce, 1U,
+                Uniform(gLaunchParams.fSeed, photonKey, bounce, 1U,
                         0U))};
             if (surfaceOutcome == BoundaryPhysics::SurfaceOutcome::Absorb) {
                 surfaceAbsorbed = true;
@@ -559,7 +570,7 @@ __global__ void __raygen__rg() {
                                efficiency,
                                nextVolume->fSensorID != invalidID ||
                                    currentVolume->fSensorID != invalidID,
-                               Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                               Uniform(gLaunchParams.fSeed, photonKey,
                                        bounce, 1U, 3U)) ==
                            BoundaryPhysics::SurfaceOutcome::Detect;
             } else if (surfaceOutcome ==
@@ -577,13 +588,13 @@ __global__ void __raygen__rg() {
                         const auto interactionNormal{
                             SampleFacetNormal(*surface, normal,
                                               gLaunchParams.fSeed,
-                                              photon.fPhotonID, bounce)};
+                                              photonKey, bounce)};
                         const auto fresnel{BoundaryPhysics::ComputeFresnel(
                             direction, polarization, interactionNormal,
                             refractiveIndex, indexTo)};
                         reflected =
                             fresnel.fTotalInternalReflection ||
-                            Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                            Uniform(gLaunchParams.fSeed, photonKey,
                                     bounce, 2U, 0U) >
                                 fresnel.fTransmittance;
                         if (reflected) {
@@ -599,7 +610,7 @@ __global__ void __raygen__rg() {
                     reflected = true;
                     direction = SampleSurfaceReflection(
                         *surface, direction, normal, photon.fEnergyEv,
-                        gLaunchParams.fSeed, photon.fPhotonID, bounce);
+                        gLaunchParams.fSeed, photonKey, bounce);
                     polarization = BoundaryPhysics::ReflectPolarization(
                         polarization, normal, direction);
                 }
@@ -616,7 +627,7 @@ __global__ void __raygen__rg() {
             } else {
                 const auto fresnel{BoundaryPhysics::ComputeFresnel(
                     direction, polarization, normal, refractiveIndex, indexTo)};
-                reflected = Uniform(gLaunchParams.fSeed, photon.fPhotonID,
+                reflected = Uniform(gLaunchParams.fSeed, photonKey,
                                     bounce, 2U, 0U) > fresnel.fTransmittance;
                 if (reflected) {
                     direction = fresnel.fReflectedDirection;
