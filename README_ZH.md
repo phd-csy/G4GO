@@ -50,9 +50,9 @@ GPU backend 使用事件聚合的异步流水线。Geant4 worker 将事件提交
 
 ### GPU backend
 
-- NVIDIA GPU 与兼容驱动。
+- NVIDIA GPU 与版本号高于 R590 的 NVIDIA 驱动；OptiX runtime 由 NVIDIA 驱动提供。
 - CUDA Toolkit 12.0 或更高版本，包含 `nvcc` 和 `bin2c`。
-- OptiX 9.1 headers 由 CMake 的 `FetchContent` 获取。
+- OptiX 9.1 development headers 由 CMake 从 `NVIDIA/optix-dev` 获取；完整 OptiX SDK 对 G4GO 属于可选依赖。
 - `G4GO_CUDA_ARCHITECTURE` 与目标 GPU 的 compute capability 一致。
 
 ### 测试与结果检查
@@ -72,7 +72,7 @@ cmake -S . -B build \
 cmake --build build -j
 ```
 
-配置阶段会检查 CUDA compiler、CUDA Toolkit、`bin2c` 和 OptiX headers。依赖完整时会构建 OptiX backend；依赖不完整时仍会生成支持 Geant4 backend 的 `g4go`。
+配置阶段会检查 CUDA compiler、CUDA Toolkit、`bin2c` 和 OptiX headers。完整 OptiX SDK 不属于必需依赖，因为 CMake 会自动获取 development headers。依赖完整时会构建 OptiX backend；依赖不完整时仍会生成支持 Geant4 backend 的 `g4go`。
 
 `G4GO_CUDA_ARCHITECTURE` 使用 CUDA 的 `compute_XX` 数值，默认值为 `120`。例如目标架构为 `compute_89` 时使用：
 
@@ -250,7 +250,7 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
 | `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | CPU/GPU `CrystalHit.nOptPho` 谱和总量比较 |
+| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | 单核 CPU、全核 CPU 与 GPU 的 `CrystalHit.nOptPho` 比较 |
 
 运行全部测试：
 
@@ -258,22 +258,32 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 ctest --test-dir build --output-on-failure
 ```
 
-### CPU/GPU `nOptPho` 回归
+### CPU 单核/全核与 GPU `nOptPho` 回归
 
 ```bash
-ctest --test-dir build -V -R '^g4go_noptpho_regression$'
+(
+  cd build
+  ctest --no-label-summary --output-on-failure \
+    -R '^g4go_noptpho_regression$'
+)
 ```
 
-回归编排器使用 `scripts/run_beam_eminus.mac` 依次运行 CPU、GPU 和 ROOT 比较。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
+回归编排器使用 `scripts/run_beam_eminus.mac` 依次运行单核 CPU、全核 CPU、全核 GPU 和 ROOT 比较。默认情况下，“全核”使用检测到的全部物理核心；可通过 `--threads N` 覆盖 worker 数量。普通模式只打印阶段摘要，同时将子进程完整输出保存到阶段日志；直接运行编排器时增加 `--verbose` 可以实时显示子进程输出。统计比较使用全核 CPU 结果作为 Geant4 参考，同时报告 GPU 相对于两种 CPU 运行的加速比。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
+
+命令特意不使用 CTest 的 `-V` 选项。`--no-label-summary` 隐藏重复的标签耗时表，`--output-on-failure` 仅在测试失败时显示测试输出。需要查看完整回归输出时，直接运行：
+
+```bash
+bash build/test/regression_test.sh --build-dir build --verbose
+```
 
 ROOT 比较宏 `test/TestOpticalTransport.cxx` 使用未加权 `Chi2TestX(..., "UU P OF")` 比较 `nOptPho` 分布，同时检查 CPU/GPU 总光子数相对差异。`Z > 5`、卡方条件无效或总量相对差异超过 10% 时测试失败；`3 < Z <= 5` 标记为 `SUSPICIOUS`，其余有效结果通过。
 
 每次运行的产物位于 `build/test/regression/noptpho_<timestamp>/`：
 
-- `noptpho_cpu.root`、`noptpho_gpu.root`：CPU/GPU 输入数据。
+- `noptpho_cpu_single.root`、`noptpho_cpu_all.root`、`noptpho_gpu.root`：单核 CPU、全核 CPU 和 GPU 输入数据。
 - `noptpho_comparison.png`、`noptpho_regression_report.root`：分布、pull 和统计结果。
-- `regression_result.txt`：结论、墙钟时间和 `CPU wall time / GPU wall time` 加速比。
-- `cpu.log`、`gpu.log`、`regression.log`：完整执行日志。
+- `regression_result.txt`：结论、三组墙钟时间和 GPU 相对于两种 CPU 运行的加速比。
+- `cpu_single.log`、`cpu_all.log`、`gpu.log`、`comparison.log`：各阶段完整日志；`regression.log` 保存编排输出，verbose 模式下也包含透传的子进程输出。
 
 ## WSL2 OptiX runtime 排障
 

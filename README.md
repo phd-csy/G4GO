@@ -50,9 +50,9 @@ The GPU backend uses an asynchronous event-aggregation pipeline. Geant4 workers 
 
 ### GPU backend
 
-- An NVIDIA GPU and compatible driver.
+- An NVIDIA GPU and an NVIDIA driver newer than R590. The OptiX runtime is provided by the NVIDIA driver.
 - CUDA Toolkit 12.0 or newer, including `nvcc` and `bin2c`.
-- OptiX 9.1 headers fetched by CMake with `FetchContent`.
+- OptiX 9.1 development headers fetched by CMake from `NVIDIA/optix-dev`; the full OptiX SDK is optional for G4GO.
 - `G4GO_CUDA_ARCHITECTURE` matching the target GPU compute capability.
 
 ### Testing and result inspection
@@ -72,7 +72,7 @@ cmake -S . -B build \
 cmake --build build -j
 ~~~
 
-The configure step checks for a CUDA compiler, the CUDA Toolkit, `bin2c`, and OptiX headers. When all dependencies are available, the OptiX backend is built; otherwise `g4go` is still generated with the Geant4 backend.
+The configure step checks for a CUDA compiler, the CUDA Toolkit, `bin2c`, and OptiX headers. The full OptiX SDK is not required because CMake fetches the development headers. When all dependencies are available, the OptiX backend is built; otherwise `g4go` is still generated with the Geant4 backend.
 
 `G4GO_CUDA_ARCHITECTURE` uses CUDA's `compute_XX` numeric value. For example, use the following configuration for `compute_89`:
 
@@ -250,7 +250,7 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel, Brewster angle, total internal reflection, surface probabilities, and Lambertian directions |
 | `g4go_smoke_auto` | `smoke;integration;auto` | Single-photon end-to-end initialization and transport |
-| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | CPU/GPU `CrystalHit.nOptPho` spectrum and total-yield comparison |
+| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | Single-core CPU, all-core CPU, and GPU `CrystalHit.nOptPho` comparison |
 
 Run all tests:
 
@@ -258,22 +258,32 @@ Run all tests:
 ctest --test-dir build --output-on-failure
 ~~~
 
-### CPU/GPU `nOptPho` regression
+### CPU single-core/all-core and GPU `nOptPho` regression
 
 ~~~bash
-ctest --test-dir build -V -R '^g4go_noptpho_regression$'
+(
+  cd build
+  ctest --no-label-summary --output-on-failure \
+    -R '^g4go_noptpho_regression$'
+)
 ~~~
 
-The regression driver runs `scripts/run_beam_eminus.mac` with CPU and GPU backends, then invokes the ROOT comparison. The GPU run explicitly uses `--backend gpu`, so missing GPU, OptiX runtime, driver, or ROOT causes the test to fail while preserving diagnostic files.
+The regression driver runs `scripts/run_beam_eminus.mac` with a single-core CPU run, an all-core CPU run, and an all-core GPU run, then invokes the ROOT comparison. By default, “all-core” uses all detected physical cores; pass `--threads N` to override the worker count. Normal mode prints phase summaries while preserving complete child-process output in stage logs. Use `--verbose` when running the driver directly to stream child-process output. The statistical comparison uses the all-core CPU result as the Geant4 reference and reports GPU speedups relative to both CPU runs. The GPU run explicitly uses `--backend gpu`, so missing GPU, OptiX runtime, driver, or ROOT causes the test to fail while preserving diagnostic files.
+
+The command omits CTest's `-V` option. `--no-label-summary` hides the repeated label timing table, and `--output-on-failure` prints test output only when the test fails. To inspect the full regression stream, run:
+
+~~~bash
+bash build/test/regression_test.sh --build-dir build --verbose
+~~~
 
 The ROOT comparison macro `test/TestOpticalTransport.cxx` uses unweighted `Chi2TestX(..., "UU P OF")` for the `nOptPho` distribution and checks the total photon count. The test fails when `Z > 5`, the chi-square condition is invalid, or the relative total-yield difference exceeds 10%. Results with `3 < Z <= 5` are marked `SUSPICIOUS`; other valid results pass.
 
 Artifacts are stored in `build/test/regression/noptpho_<timestamp>/`:
 
-- `noptpho_cpu.root`, `noptpho_gpu.root`: CPU/GPU input data.
+- `noptpho_cpu_single.root`, `noptpho_cpu_all.root`, `noptpho_gpu.root`: single-core CPU, all-core CPU, and GPU input data.
 - `noptpho_comparison.png`, `noptpho_regression_report.root`: Distribution, pull, and statistical reports.
-- `regression_result.txt`: Conclusion, wall-clock time, and `CPU wall time / GPU wall time` speedup.
-- `cpu.log`, `gpu.log`, `regression.log`: Complete execution logs.
+- `regression_result.txt`: Conclusion, three wall-clock times, and GPU speedups relative to both CPU runs.
+- `cpu_single.log`, `cpu_all.log`, `gpu.log`, `comparison.log`: Complete stage logs; `regression.log` contains orchestration output and streamed child output in verbose mode.
 
 ## WSL2 OptiX runtime troubleshooting
 
