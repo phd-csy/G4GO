@@ -49,6 +49,7 @@ build_dir="$(cd -- "$build_dir" && pwd)"
 
 g4go="${build_dir}/g4go"
 source_macro="${project_dir}/scripts/run_beam_eminus.mac"
+determinism_source_macro="${project_dir}/scripts/run_optical_determinism.mac"
 compare_macro="${script_dir}/TestOpticalTransport.cxx"
 root_executable="$(command -v root || true)"
 
@@ -58,6 +59,10 @@ if [[ ! -x "$g4go" ]]; then
 fi
 if [[ ! -f "$source_macro" ]]; then
     echo "Source macro is missing: $source_macro" >&2
+    exit 1
+fi
+if [[ ! -f "$determinism_source_macro" ]]; then
+    echo "Determinism macro is missing: $determinism_source_macro" >&2
     exit 1
 fi
 if [[ ! -f "$compare_macro" ]]; then
@@ -177,45 +182,84 @@ echo "[regression] verbose=${verbose}"
 echo "[regression] output_dir=${test_dir}"
 
 cpu_single_start_ns="$(now_ns)"
-run_phase "1/4" cpu-single cpu_single.log "$g4go" \
+run_phase "1/5" cpu-single cpu_single.log "$g4go" \
     --backend cpu \
     --threads 1 \
     --seed 42 \
     "$source_macro"
 cpu_single_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - cpu_single_start_ns ))")"
-echo "[1/4] cpu-single: PASS wall_time=${cpu_single_elapsed_seconds}s log=cpu_single.log"
+echo "[1/5] cpu-single: PASS wall_time=${cpu_single_elapsed_seconds}s log=cpu_single.log"
 run_command test -s run_beam_eminus.root
 run_command mv run_beam_eminus.root noptpho_cpu_single.root
 
 cpu_all_start_ns="$(now_ns)"
-run_phase "2/4" cpu-all cpu_all.log "$g4go" \
+run_phase "2/5" cpu-all cpu_all.log "$g4go" \
     --backend cpu \
     --threads "$threads" \
     --seed 42 \
     "$source_macro"
 cpu_all_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - cpu_all_start_ns ))")"
-echo "[2/4] cpu-all: PASS wall_time=${cpu_all_elapsed_seconds}s log=cpu_all.log"
+echo "[2/5] cpu-all: PASS wall_time=${cpu_all_elapsed_seconds}s log=cpu_all.log"
 run_command test -s run_beam_eminus.root
 run_command mv run_beam_eminus.root noptpho_cpu_all.root
 
 gpu_start_ns="$(now_ns)"
-run_phase "3/4" gpu gpu.log "$g4go" \
+run_phase "3/5" gpu gpu.log "$g4go" \
     --backend gpu \
     --threads "$threads" \
     --seed 42 \
     "$source_macro"
 gpu_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - gpu_start_ns ))")"
-echo "[3/4] gpu: PASS wall_time=${gpu_elapsed_seconds}s log=gpu.log"
+echo "[3/5] gpu: PASS wall_time=${gpu_elapsed_seconds}s log=gpu.log"
 run_command grep -F "[g4go] optical backend: gpu" gpu.log
 run_command test -s run_beam_eminus.root
 run_command mv run_beam_eminus.root noptpho_gpu.root
 
 compare_call="${compare_macro}(\"${test_dir}/noptpho_cpu_single.root\",\"${test_dir}/noptpho_cpu_all.root\",\"${test_dir}/noptpho_gpu.root\",${cpu_single_elapsed_seconds},${cpu_all_elapsed_seconds},${gpu_elapsed_seconds},\"${test_dir}\")"
-run_phase "4/4" comparison comparison.log "$root_executable" -l -b -q "$compare_call"
-echo "[4/4] comparison: PASS log=comparison.log"
+run_phase "4/5" comparison comparison.log "$root_executable" -l -b -q "$compare_call"
+echo "[4/5] comparison: PASS log=comparison.log"
 run_command test -s regression_result.txt
 run_command test -s noptpho_comparison.png
 run_command test -s noptpho_regression_report.root
+
+run_gpu_determinism() {
+    local thread_count log_file command_status stats reference_stats
+    for thread_count in 1 2 4 8; do
+        log_file="gpu_threads_${thread_count}.log"
+        echo "[determinism] threads=${thread_count}: START"
+        run_logged "$log_file" "$g4go" \
+            --backend gpu \
+            --threads "$thread_count" \
+            --seed 42 \
+            "$determinism_source_macro"
+        command_status="$?"
+        if ((command_status != 0)); then
+            echo "[determinism] threads=${thread_count}: FAIL exit_code=${command_status} log=${log_file}"
+            return "$command_status"
+        fi
+        if ! grep -F "[g4go] optical backend: gpu" "$log_file" >/dev/null 2>&1; then
+            echo "[determinism] threads=${thread_count}: GPU backend marker is missing"
+            return 1
+        fi
+        stats="$(sed -n 's/.*\[g4go\] optical backend: gpu, //p' "$log_file" | sed -E 's/, transport_ms:.*//')"
+        if [[ -z "$stats" ]]; then
+            echo "[determinism] threads=${thread_count}: GPU statistics are missing"
+            return 1
+        fi
+        if [[ "$thread_count" == 1 ]]; then
+            reference_stats="$stats"
+        elif [[ "$stats" != "$reference_stats" ]]; then
+            echo "[determinism] threads=${thread_count}: statistics differ"
+            echo "[determinism] reference=${reference_stats}"
+            echo "[determinism] candidate=${stats}"
+            return 1
+        fi
+        echo "[determinism] threads=${thread_count}: PASS"
+    done
+}
+
+run_phase "5/5" gpu-determinism gpu_determinism.log run_gpu_determinism
+echo "[5/5] gpu-determinism: PASS log=gpu_determinism.log"
 
 echo "[regression] RESULT: PASSED"
 print_summary

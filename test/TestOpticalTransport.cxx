@@ -37,6 +37,8 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
         ROOT::RDataFrame cpuSingleData{"CrystalHit", cpuSingleFileName};
         ROOT::RDataFrame cpuData{"CrystalHit", cpuAllFileName};
         ROOT::RDataFrame gpuData{"CrystalHit", gpuFileName};
+        ROOT::RDataFrame cpuSensorData{"SensorHit", cpuAllFileName};
+        ROOT::RDataFrame gpuSensorData{"SensorHit", gpuFileName};
 
         auto cpuSingleEntries{cpuSingleData.Count()};
         auto cpuSingleTotalResult{cpuSingleData.Sum<int>("nOptPho")};
@@ -53,6 +55,12 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
         auto gpuRms{gpuData.StdDev<int>("nOptPho")};
         auto cpuMaximumResult{cpuData.Max<int>("nOptPho")};
         auto gpuMaximumResult{gpuData.Max<int>("nOptPho")};
+        auto cpuSensorEntries{cpuSensorData.Count()};
+        auto gpuSensorEntries{gpuSensorData.Count()};
+        auto cpuTofMean{cpuSensorData.Mean<double>("timeOfFlight")};
+        auto gpuTofMean{gpuSensorData.Mean<double>("timeOfFlight")};
+        auto cpuTofRms{cpuSensorData.StdDev<double>("timeOfFlight")};
+        auto gpuTofRms{gpuSensorData.StdDev<double>("timeOfFlight")};
 
         if (*cpuSingleEntries < 500U || *cpuEntries < 500U ||
             *gpuEntries < 500U) {
@@ -65,6 +73,9 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
         const auto gpuTotal{static_cast<std::uint64_t>(*gpuTotalResult)};
         if (cpuSingleTotal == 0U || cpuTotal == 0U || gpuTotal == 0U) {
             throw std::runtime_error("nOptPho total is zero");
+        }
+        if (*cpuSensorEntries == 0U || *gpuSensorEntries == 0U) {
+            throw std::runtime_error("SensorHit contains no detections");
         }
 
         constexpr auto plotBins{100};
@@ -82,12 +93,15 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
 
         const auto maximumNOptPho{std::max(
             {*cpuSingleMaximumResult, *cpuMaximumResult, *gpuMaximumResult})};
-        std::vector<double> comparisonEdges{
-            0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 75.0, 100.0, 250.0};
         const auto comparisonUpperEdge{
             static_cast<double>(maximumNOptPho) + 1.0};
-        if (comparisonUpperEdge > comparisonEdges.back()) {
-            comparisonEdges.push_back(comparisonUpperEdge);
+        constexpr auto comparisonBinCount{4};
+        std::vector<double> comparisonEdges{};
+        comparisonEdges.reserve(comparisonBinCount + 1);
+        for (auto index{0}; index <= comparisonBinCount; ++index) {
+            comparisonEdges.push_back(
+                comparisonUpperEdge * static_cast<double>(index) /
+                static_cast<double>(comparisonBinCount));
         }
         const auto comparisonBins{
             static_cast<int>(comparisonEdges.size() - std::size_t{1})};
@@ -99,11 +113,31 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
             {"gpu_nOptPho_comparison", histogramTitle, comparisonBins,
              comparisonEdges.data()},
             "nOptPho")};
+        auto cpuTofHistogram{cpuSensorData.Histo1D(
+            {"cpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0,
+             1000.0},
+            "timeOfFlight")};
+        auto gpuTofHistogram{gpuSensorData.Histo1D(
+            {"gpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0,
+             1000.0},
+            "timeOfFlight")};
+        auto cpuOccupancyHistogram{cpuSensorData.Histo1D(
+            {"cpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64,
+             0.0, 64.0},
+            "sensorID")};
+        auto gpuOccupancyHistogram{gpuSensorData.Histo1D(
+            {"gpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64,
+             0.0, 64.0},
+            "sensorID")};
 
         auto* cpuHistogramPtr{cpuHistogram.GetPtr()};
         auto* gpuHistogramPtr{gpuHistogram.GetPtr()};
         auto* cpuComparisonHistogramPtr{cpuComparisonHistogram.GetPtr()};
         auto* gpuComparisonHistogramPtr{gpuComparisonHistogram.GetPtr()};
+        auto* cpuTofHistogramPtr{cpuTofHistogram.GetPtr()};
+        auto* gpuTofHistogramPtr{gpuTofHistogram.GetPtr()};
+        auto* cpuOccupancyHistogramPtr{cpuOccupancyHistogram.GetPtr()};
+        auto* gpuOccupancyHistogramPtr{gpuOccupancyHistogram.GetPtr()};
         double chi2{};
         int ndf{};
         int igood{};
@@ -126,9 +160,22 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
         const auto relativeTotalDifference{
             std::abs(static_cast<double>(gpuTotal) - static_cast<double>(cpuTotal)) /
             static_cast<double>(cpuTotal)};
+        const auto relativeSensorDifference{
+            std::abs(static_cast<double>(*gpuSensorEntries) -
+                     static_cast<double>(*cpuSensorEntries)) /
+            static_cast<double>(*cpuSensorEntries)};
+        const auto sensorTotalPassed{relativeSensorDifference <= 0.10};
+        const auto validTof{std::isfinite(*cpuTofMean) &&
+                            std::isfinite(*gpuTofMean) &&
+                            std::isfinite(*cpuTofRms) &&
+                            std::isfinite(*gpuTofRms)};
         const auto totalPassed{relativeTotalDifference <= 0.10};
-        const auto regressionStatus{totalPassed ? significanceStatus : "FAILED"};
-        const auto regressionPassed{totalPassed && zValue <= 5.0};
+        const auto regressionStatus{totalPassed && sensorTotalPassed &&
+                                            validTof ?
+                                        significanceStatus :
+                                        "FAILED"};
+        const auto regressionPassed{totalPassed && sensorTotalPassed &&
+                                    validTof && zValue <= 5.0};
         const auto hasTiming{cpuSingleElapsedSeconds > 0.0 &&
                              cpuAllElapsedSeconds > 0.0 &&
                              gpuElapsedSeconds > 0.0};
@@ -155,6 +202,16 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
                   << "  Total: " << gpuTotal << '\n'
                   << "  Mean: " << *gpuMean << '\n'
                   << "  RMS: " << *gpuRms << "\n\n"
+                  << "[sensor]\n"
+                  << "  CPU detections: " << *cpuSensorEntries << '\n'
+                  << "  GPU detections: " << *gpuSensorEntries << '\n'
+                  << "  CPU TOF mean: " << *cpuTofMean << " ns\n"
+                  << "  GPU TOF mean: " << *gpuTofMean << " ns\n"
+                  << "  CPU TOF RMS: " << *cpuTofRms << " ns\n"
+                  << "  GPU TOF RMS: " << *gpuTofRms << " ns\n"
+                  << "  Relative detection difference: "
+                  << relativeSensorDifference << '\n'
+                  << "  Sensor occupancy bins: 64\n\n"
                   << "[comparison]\n"
                   << "  Chi-square: " << chi2 << '\n'
                   << "  NDF: " << ndf << '\n'
@@ -163,7 +220,9 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
                   << "  Z-score: " << zValue << '\n'
                   << "  Significance: " << significanceStatus << '\n'
                   << "  Relative total difference: " << relativeTotalDifference
-                  << '\n';
+                  << '\n'
+                  << "  Sensor count status: "
+                  << (sensorTotalPassed ? "PASSED" : "FAILED") << '\n';
         if (hasTiming) {
             std::cout << '\n'
                       << "[timing]\n"
@@ -248,6 +307,10 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
         }
         cpuHistogramPtr->Write("cpu_nOptPho");
         gpuHistogramPtr->Write("gpu_nOptPho");
+        cpuTofHistogramPtr->Write("cpu_timeOfFlight");
+        gpuTofHistogramPtr->Write("gpu_timeOfFlight");
+        cpuOccupancyHistogramPtr->Write("cpu_sensorOccupancy");
+        gpuOccupancyHistogramPtr->Write("gpu_sensorOccupancy");
         cpuPlot.Write();
         gpuPlot.Write();
         pull.Write();
@@ -303,6 +366,16 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
                << "GPU\n"
                << "  Entries: " << *gpuEntries << '\n'
                << "  Total: " << gpuTotal << "\n\n"
+               << "Sensor\n"
+               << "  CPU detections: " << *cpuSensorEntries << '\n'
+               << "  GPU detections: " << *gpuSensorEntries << '\n'
+               << "  CPU TOF mean: " << *cpuTofMean << " ns\n"
+               << "  GPU TOF mean: " << *gpuTofMean << " ns\n"
+               << "  CPU TOF RMS: " << *cpuTofRms << " ns\n"
+               << "  GPU TOF RMS: " << *gpuTofRms << " ns\n"
+               << "  Relative detection difference: "
+               << relativeSensorDifference << "\n"
+               << "  Sensor occupancy bins: 64\n\n"
                << "Comparison\n"
                << "  Chi-square: " << chi2 << '\n'
                << "  NDF: " << ndf << '\n'
@@ -310,7 +383,10 @@ auto TestOpticalTransport(const char* cpuSingleFileName,
                << "  p-value: " << pValue << '\n'
                << "  Z-score: " << zValue << '\n'
                << "  Significance: " << significanceStatus << '\n'
-               << "  Relative total difference: " << relativeTotalDifference << '\n';
+               << "  Relative total difference: " << relativeTotalDifference
+               << '\n'
+               << "  Sensor count status: "
+               << (sensorTotalPassed ? "PASSED" : "FAILED") << '\n';
         if (hasTiming) {
             result << "\nTiming\n"
                    << "  CPU single-core: " << cpuSingleElapsedSeconds << " s\n"

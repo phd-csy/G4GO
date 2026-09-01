@@ -1,0 +1,14 @@
+/control/verbose 0
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+/run/initialize
+
+/gps/particle opticalphoton
+/gps/ene/mono 3.5 eV
+/gps/pos/centre 0 0 39 mm
+/gps/direction 0 0 1
+/gps/polarization 1 0 0
+
+/analysis/setFileName run_optical_determinism
+/run/beamOn 2000
