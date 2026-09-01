@@ -84,6 +84,10 @@ endif()
 
 include(${Geant4_USE_FILE})
 
+if(G4GO_ENABLE_CLANG_TIDY)
+    find_program(G4GO_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
+endif()
+
 function(g4go_configure_cpp_target target)
     target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}
@@ -91,6 +95,11 @@ function(g4go_configure_cpp_target target)
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    if(G4GO_ENABLE_CLANG_TIDY)
+        set_target_properties(${target} PROPERTIES
+            CXX_CLANG_TIDY "${G4GO_CLANG_TIDY_EXECUTABLE}")
     endif()
 endfunction()
 
@@ -227,12 +236,6 @@ target_link_libraries(g4go PRIVATE CLI11::CLI11 g4go_simulation ${Geant4_LIBRARI
 
 if(G4GO_BUILD_UIVIS)
     target_compile_definitions(g4go PRIVATE G4GO_USE_UIVIS)
-endif()
-
-if(G4GO_ENABLE_CLANG_TIDY)
-    find_program(G4GO_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
-    set_target_properties(g4go PROPERTIES
-        CXX_CLANG_TIDY "${G4GO_CLANG_TIDY_EXECUTABLE}")
 endif()
 
 set(G4GO_SCRIPT_DIR "${PROJECT_SOURCE_DIR}/scripts")
