@@ -186,7 +186,7 @@ auto main(int argc, char** argv) -> int {
         G4String fileName{*options.macroFile};
         uiManager->ApplyCommand(command + fileName);
     } else {
-        uiManager->ApplyCommand("/control/execute vis.mac");
+        uiManager->ApplyCommand("/control/execute scripts/vis.mac");
         ui->SessionStart();
         delete ui;
     }
