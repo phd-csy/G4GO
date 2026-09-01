@@ -23,18 +23,26 @@
 #include <string>
 #include <vector>
 
-auto TestOpticalTransport(const char* cpuFileName,
+auto TestOpticalTransport(const char* cpuSingleFileName,
+                          const char* cpuAllFileName,
                           const char* gpuFileName,
-                          double cpuElapsedSeconds = 0.0,
+                          double cpuSingleElapsedSeconds = 0.0,
+                          double cpuAllElapsedSeconds = 0.0,
                           double gpuElapsedSeconds = 0.0,
                           const char* outputDirectory = ".") -> void {
     gROOT->SetBatch(kTRUE);
 
     try {
         const std::filesystem::path outputPath{outputDirectory};
-        ROOT::RDataFrame cpuData{"CrystalHit", cpuFileName};
+        ROOT::RDataFrame cpuSingleData{"CrystalHit", cpuSingleFileName};
+        ROOT::RDataFrame cpuData{"CrystalHit", cpuAllFileName};
         ROOT::RDataFrame gpuData{"CrystalHit", gpuFileName};
 
+        auto cpuSingleEntries{cpuSingleData.Count()};
+        auto cpuSingleTotalResult{cpuSingleData.Sum<int>("nOptPho")};
+        auto cpuSingleMean{cpuSingleData.Mean<int>("nOptPho")};
+        auto cpuSingleRms{cpuSingleData.StdDev<int>("nOptPho")};
+        auto cpuSingleMaximumResult{cpuSingleData.Max<int>("nOptPho")};
         auto cpuEntries{cpuData.Count()};
         auto gpuEntries{gpuData.Count()};
         auto cpuTotalResult{cpuData.Sum<int>("nOptPho")};
@@ -46,19 +54,22 @@ auto TestOpticalTransport(const char* cpuFileName,
         auto cpuMaximumResult{cpuData.Max<int>("nOptPho")};
         auto gpuMaximumResult{gpuData.Max<int>("nOptPho")};
 
-        if (*cpuEntries < 500U || *gpuEntries < 500U) {
+        if (*cpuSingleEntries < 500U || *cpuEntries < 500U ||
+            *gpuEntries < 500U) {
             throw std::runtime_error("CrystalHit contains too few entries");
         }
 
+        const auto cpuSingleTotal{
+            static_cast<std::uint64_t>(*cpuSingleTotalResult)};
         const auto cpuTotal{static_cast<std::uint64_t>(*cpuTotalResult)};
         const auto gpuTotal{static_cast<std::uint64_t>(*gpuTotalResult)};
-        if (cpuTotal == 0U || gpuTotal == 0U) {
+        if (cpuSingleTotal == 0U || cpuTotal == 0U || gpuTotal == 0U) {
             throw std::runtime_error("nOptPho total is zero");
         }
 
-        constexpr auto plotBins{200};
+        constexpr auto plotBins{100};
         constexpr auto spectrumMinimum{0.0};
-        constexpr auto spectrumMaximum{1000.0};
+        constexpr auto spectrumMaximum{55.0};
         const auto histogramTitle{"nOptPho spectrum;nOptPho;Entries"};
         auto cpuHistogram{cpuData.Histo1D(
             {"cpu_nOptPho", histogramTitle, plotBins, spectrumMinimum,
@@ -69,8 +80,8 @@ auto TestOpticalTransport(const char* cpuFileName,
              spectrumMaximum},
             "nOptPho")};
 
-        const auto maximumNOptPho{
-            std::max(*cpuMaximumResult, *gpuMaximumResult)};
+        const auto maximumNOptPho{std::max(
+            {*cpuSingleMaximumResult, *cpuMaximumResult, *gpuMaximumResult})};
         std::vector<double> comparisonEdges{
             0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 75.0, 100.0, 250.0};
         const auto comparisonUpperEdge{
@@ -118,33 +129,57 @@ auto TestOpticalTransport(const char* cpuFileName,
         const auto totalPassed{relativeTotalDifference <= 0.10};
         const auto regressionStatus{totalPassed ? significanceStatus : "FAILED"};
         const auto regressionPassed{totalPassed && zValue <= 5.0};
-        const auto hasTiming{cpuElapsedSeconds > 0.0 &&
+        const auto hasTiming{cpuSingleElapsedSeconds > 0.0 &&
+                             cpuAllElapsedSeconds > 0.0 &&
                              gpuElapsedSeconds > 0.0};
-        const auto gpuSpeedup{hasTiming ? cpuElapsedSeconds /
-                                              gpuElapsedSeconds :
-                                          0.0};
+        const auto cpuSingleSpeedup{hasTiming ? cpuSingleElapsedSeconds /
+                                                    gpuElapsedSeconds :
+                                                0.0};
+        const auto cpuAllSpeedup{hasTiming ? cpuAllElapsedSeconds /
+                                                 gpuElapsedSeconds :
+                                             0.0};
 
         std::cout << std::fixed << std::setprecision(4)
-                  << "CPU: entries=" << *cpuEntries
-                  << ", nOptPho_total=" << cpuTotal
-                  << ", nOptPho_mean=" << *cpuMean
-                  << ", nOptPho_rms=" << *cpuRms << '\n'
-                  << "GPU: entries=" << *gpuEntries
-                  << ", nOptPho_total=" << gpuTotal
-                  << ", nOptPho_mean=" << *gpuMean
-                  << ", nOptPho_rms=" << *gpuRms << '\n'
-                  << "pValue=" << pValue << ", Z=" << zValue
-                  << ", significance=" << significanceStatus
-                  << ", relative_nOptPho_total_difference="
-                  << relativeTotalDifference << '\n';
+                  << "[statistics] CPU single-core\n"
+                  << "  Entries: " << *cpuSingleEntries << '\n'
+                  << "  Total: " << cpuSingleTotal << '\n'
+                  << "  Mean: " << *cpuSingleMean << '\n'
+                  << "  RMS: " << *cpuSingleRms << "\n\n"
+                  << "[statistics] CPU all-core\n"
+                  << "  Entries: " << *cpuEntries << '\n'
+                  << "  Total: " << cpuTotal << '\n'
+                  << "  Mean: " << *cpuMean << '\n'
+                  << "  RMS: " << *cpuRms << "\n\n"
+                  << "[statistics] GPU\n"
+                  << "  Entries: " << *gpuEntries << '\n'
+                  << "  Total: " << gpuTotal << '\n'
+                  << "  Mean: " << *gpuMean << '\n'
+                  << "  RMS: " << *gpuRms << "\n\n"
+                  << "[comparison]\n"
+                  << "  Chi-square: " << chi2 << '\n'
+                  << "  NDF: " << ndf << '\n'
+                  << "  Goodness flag: " << igood << '\n'
+                  << "  p-value: " << pValue << '\n'
+                  << "  Z-score: " << zValue << '\n'
+                  << "  Significance: " << significanceStatus << '\n'
+                  << "  Relative total difference: " << relativeTotalDifference
+                  << '\n';
         if (hasTiming) {
-            std::cout << std::setprecision(6)
-                      << "CPU wall time (s): " << cpuElapsedSeconds << '\n'
-                      << "GPU wall time (s): " << gpuElapsedSeconds << '\n'
+            std::cout << '\n'
+                      << "[timing]\n"
+                      << std::setprecision(6)
+                      << "  CPU single-core: " << cpuSingleElapsedSeconds
+                      << " s\n"
+                      << "  CPU all-core: " << cpuAllElapsedSeconds << " s\n"
+                      << "  GPU: " << gpuElapsedSeconds << " s\n"
                       << std::setprecision(4)
-                      << "GPU speedup: " << gpuSpeedup << "x\n";
+                      << "  GPU speedup vs single-core: " << cpuSingleSpeedup
+                      << "x\n"
+                      << "  GPU speedup vs all-core: " << cpuAllSpeedup << "x\n";
         } else {
-            std::cout << "GPU speedup: unavailable (timing was not provided)\n";
+            std::cout << '\n'
+                      << "[timing]\n"
+                      << "  GPU speedup: unavailable (timing was not provided)\n";
         }
 
         TH1D cpuPlot{*cpuHistogramPtr};
@@ -188,12 +223,12 @@ auto TestOpticalTransport(const char* cpuFileName,
         cpuPlot.Draw("HIST");
         gpuPlot.Draw("HIST SAME");
         TLegend legend{0.64, 0.73, 0.93, 0.91};
-        legend.AddEntry(&cpuPlot, "CPU / Geant4", "l");
+        legend.AddEntry(&cpuPlot, "CPU / Geant4 (all cores)", "l");
         std::ostringstream gpuLegendText{};
         gpuLegendText << "GPU / OptiX";
         if (hasTiming) {
             gpuLegendText << " (" << std::fixed << std::setprecision(2)
-                          << gpuSpeedup << "x)";
+                          << cpuAllSpeedup << "x vs all-core CPU)";
         }
         const auto gpuLegendLabel{gpuLegendText.str()};
         legend.AddEntry(&gpuPlot, gpuLegendLabel.c_str(), "l");
@@ -224,11 +259,16 @@ auto TestOpticalTransport(const char* cpuFileName,
         TParameter<double> zValueParameter{"Z", zValue};
         TParameter<double> totalDifferenceParameter{
             "relativeTotalDifference", relativeTotalDifference};
-        TParameter<double> cpuElapsedSecondsParameter{
-            "cpuElapsedSeconds", cpuElapsedSeconds};
+        TParameter<double> cpuAllElapsedSecondsParameter{
+            "cpuAllElapsedSeconds", cpuAllElapsedSeconds};
+        TParameter<double> cpuSingleElapsedSecondsParameter{
+            "cpuSingleElapsedSeconds", cpuSingleElapsedSeconds};
         TParameter<double> gpuElapsedSecondsParameter{
             "gpuElapsedSeconds", gpuElapsedSeconds};
-        TParameter<double> gpuSpeedupParameter{"gpuSpeedup", gpuSpeedup};
+        TParameter<double> gpuSpeedupVsCpuSingleParameter{
+            "gpuSpeedupVsCpuSingleCore", cpuSingleSpeedup};
+        TParameter<double> gpuSpeedupVsCpuAllParameter{
+            "gpuSpeedupVsCpuAllCore", cpuAllSpeedup};
         TParameter<bool> regressionPassedParameter{"regressionPassed",
                                                    regressionPassed};
         chi2Parameter.Write();
@@ -237,9 +277,10 @@ auto TestOpticalTransport(const char* cpuFileName,
         pValueParameter.Write();
         zValueParameter.Write();
         totalDifferenceParameter.Write();
-        cpuElapsedSecondsParameter.Write();
+        cpuAllElapsedSecondsParameter.Write();
         gpuElapsedSecondsParameter.Write();
-        gpuSpeedupParameter.Write();
+        gpuSpeedupVsCpuSingleParameter.Write();
+        gpuSpeedupVsCpuAllParameter.Write();
         regressionPassedParameter.Write();
         report.Write();
         report.Close();
@@ -252,29 +293,37 @@ auto TestOpticalTransport(const char* cpuFileName,
             throw std::runtime_error("unable to create regression result");
         }
         result << std::fixed << std::setprecision(6)
-               << "status=" << regressionStatus
-               << '\n'
-               << "cpu_entries=" << *cpuEntries << '\n'
-               << "gpu_entries=" << *gpuEntries << '\n'
-               << "cpu_nOptPho_total=" << cpuTotal << '\n'
-               << "gpu_nOptPho_total=" << gpuTotal << '\n'
-               << "chi2=" << chi2 << '\n'
-               << "ndf=" << ndf << '\n'
-               << "igood=" << igood << '\n'
-               << "pValue=" << pValue << '\n'
-               << "Z=" << zValue << '\n'
-               << "significance=" << significanceStatus << '\n'
-               << "relative_nOptPho_total_difference="
-               << relativeTotalDifference << '\n';
+               << "Status: " << regressionStatus << "\n\n"
+               << "CPU single-core\n"
+               << "  Entries: " << *cpuSingleEntries << '\n'
+               << "  Total: " << cpuSingleTotal << "\n\n"
+               << "CPU all-core\n"
+               << "  Entries: " << *cpuEntries << '\n'
+               << "  Total: " << cpuTotal << "\n\n"
+               << "GPU\n"
+               << "  Entries: " << *gpuEntries << '\n'
+               << "  Total: " << gpuTotal << "\n\n"
+               << "Comparison\n"
+               << "  Chi-square: " << chi2 << '\n'
+               << "  NDF: " << ndf << '\n'
+               << "  Goodness flag: " << igood << '\n'
+               << "  p-value: " << pValue << '\n'
+               << "  Z-score: " << zValue << '\n'
+               << "  Significance: " << significanceStatus << '\n'
+               << "  Relative total difference: " << relativeTotalDifference << '\n';
         if (hasTiming) {
-            result << "cpu_wall_time_seconds=" << cpuElapsedSeconds << '\n'
-                   << "gpu_wall_time_seconds=" << gpuElapsedSeconds << '\n'
-                   << "gpu_speedup=" << gpuSpeedup << "x\n";
+            result << "\nTiming\n"
+                   << "  CPU single-core: " << cpuSingleElapsedSeconds << " s\n"
+                   << "  CPU all-core: " << cpuAllElapsedSeconds << " s\n"
+                   << "  GPU: " << gpuElapsedSeconds << " s\n"
+                   << "  GPU speedup vs single-core: " << cpuSingleSpeedup
+                   << "x\n"
+                   << "  GPU speedup vs all-core: " << cpuAllSpeedup << "x\n";
         } else {
-            result << "gpu_speedup=unavailable\n";
+            result << "\nTiming\n"
+                   << "  GPU speedup vs single-core: unavailable\n"
+                   << "  GPU speedup vs all-core: unavailable\n";
         }
-        result << "comparison_image=" << imagePath.string() << '\n'
-               << "comparison_report=" << reportPath.string() << '\n';
         result.close();
 
         if (!regressionPassed) {
@@ -282,7 +331,8 @@ auto TestOpticalTransport(const char* cpuFileName,
             gSystem->Exit(1);
         }
 
-        std::cout << regressionStatus << ": nOptPho CPU/GPU regression\n";
+        std::cout << "[result] Status: " << regressionStatus
+                  << " (nOptPho CPU/GPU regression)\n";
         gSystem->Exit(0);
     } catch (const std::exception& exception) {
         std::cerr << "FAILED: " << exception.what() << '\n';
