@@ -35,6 +35,13 @@ auto Geant4BatchScheduler::BeginRun() -> void {
         fCondition.wait(lock, [this] { return fReady; });
         return;
     }
+    fRunStatistics = {};
+    fBatchStatistics = {};
+    fPendingRequests.clear();
+    fQueuedPhotonCount = 0;
+    fFailure = nullptr;
+    fStopRequested = false;
+    fReady = false;
     fStarted = true;
     fBackend = fConfiguration.fBackend;
 
