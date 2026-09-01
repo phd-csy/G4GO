@@ -116,14 +116,16 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
             fCheckOverlap)};
 
     const auto coupleThickness{0.1 * mm};
-    const auto windowThickness{1 * mm};
+    const auto windowThickness{0.2 * mm};
     const auto sipmWidth{3 * mm};
     const auto sipmThickness{0.1 * mm};
     const auto sipmArraySize{8};
     const auto sipmPitch{sipmWidth + 0.2 * mm};
     const auto sipmArrayOffset{(sipmArraySize - 1) * sipmPitch / 2};
 
-    const auto solidCoupler{new G4Box("Coupler", sipmWidth / 2, sipmWidth / 2, coupleThickness / 2)};
+    const auto solidCoupler{
+        new G4Box("Coupler", crystalWidth / 2, crystalWidth / 2,
+                  coupleThickness / 2)};
     const auto logicalCoupler{new G4LogicalVolume(solidCoupler, siliconeGrease, "Coupler")};
     new G4PVPlacement(
         transform(coupleThickness / 2),
@@ -135,20 +137,9 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
         fCheckOverlap);
 
     const auto solidWindow{
-        new G4Box(
-            "Window",
-            sipmWidth / 2,
-            sipmWidth / 2,
-            windowThickness / 2)};
+        new G4Box("Window", sipmWidth / 2, sipmWidth / 2,
+                  windowThickness / 2)};
     const auto logicalWindow{new G4LogicalVolume(solidWindow, epoxy, "Window")};
-    new G4PVPlacement(
-        transform(coupleThickness + windowThickness / 2),
-        logicalWindow,
-        "Window",
-        logicalWorld,
-        false,
-        0,
-        fCheckOverlap);
 
     const auto solidCrystal{new G4Box("Crystal", crystalWidth / 2, crystalWidth / 2, crystalLength / 2)};
     const auto logicalCrystal{new G4LogicalVolume(solidCrystal, cesiumIodide, "Crystal")};
@@ -156,11 +147,23 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
 
     const auto solidSiPM{new G4Box("SiPM", sipmWidth / 2, sipmWidth / 2, sipmThickness / 2)};
     const auto logicalSiPM{new G4LogicalVolume(solidSiPM, silicon, "SiPM")};
+    const auto windowPositionZ{
+        crystalLength / 2 + coupleThickness + windowThickness / 2};
     const auto sipmPositionZ{crystalLength / 2 + coupleThickness + windowThickness + sipmThickness / 2};
     for (auto i{0}; i < sipmArraySize; ++i) {
         for (auto j{0}; j < sipmArraySize; ++j) {
             const auto sipmPositionX{sipmArrayOffset - i * sipmPitch};
             const auto sipmPositionY{sipmArrayOffset - j * sipmPitch};
+            new G4PVPlacement(
+                G4Translate3D{
+                    G4ThreeVector{sipmPositionX, sipmPositionY, windowPositionZ}
+            },
+                logicalWindow,
+                "Window",
+                logicalWorld,
+                false,
+                i * sipmArraySize + j,
+                fCheckOverlap);
             new G4PVPlacement(
                 G4Translate3D{
                     G4ThreeVector{sipmPositionX, sipmPositionY, sipmPositionZ}
