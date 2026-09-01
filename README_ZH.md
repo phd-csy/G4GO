@@ -25,7 +25,7 @@ G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光�
 - 使用 CUDA 与 NVIDIA OptiX 9.1 执行 GPU 光学光子输运。
 - 支持 `auto`、`cpu` 和 `gpu` 三种 backend 选择策略。
 - 将 `CrystalHit` 和 `SensorHit` 写入 ROOT ntuple。
-- 提供光学边界单元测试、端到端 smoke test 和 CPU/GPU `nOptPho` 回归测试。
+- 提供光学边界单元测试、端到端 smoke test，以及包含 TOF、传感器占用和线程确定性检查的 CPU/GPU 光学回归测试。
 
 ## Backend
 
@@ -268,7 +268,7 @@ ctest --test-dir build --output-on-failure
 )
 ```
 
-回归编排器使用 `scripts/run_beam_eminus.mac` 依次运行单核 CPU、全核 CPU、全核 GPU 和 ROOT 比较。默认情况下，“全核”使用检测到的全部物理核心；可通过 `--threads N` 覆盖 worker 数量。普通模式只打印阶段摘要，同时将子进程完整输出保存到阶段日志；直接运行编排器时增加 `--verbose` 可以实时显示子进程输出。统计比较使用全核 CPU 结果作为 Geant4 参考，同时报告 GPU 相对于两种 CPU 运行的加速比。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
+回归编排器使用 `scripts/run_beam_eminus.mac` 依次运行单核 CPU、全核 CPU 和全核 GPU。ROOT 比较检查 `nOptPho`、`SensorHit` 探测数、光子飞行时间摘要和 64 个传感器占用分箱；随后使用确定性 optical-photon 宏，以 1、2、4、8 个 Geant4 worker 运行 GPU 输运，并比较生成、吸收、逃逸和探测统计。默认情况下，“全核”使用检测到的全部物理核心；可通过 `--threads N` 覆盖 worker 数量。普通模式只打印阶段摘要，同时将子进程完整输出保存到阶段日志；直接运行编排器时增加 `--verbose` 可以实时显示子进程输出。统计比较使用全核 CPU 结果作为 Geant4 参考，同时报告 GPU 相对于两种 CPU 运行的加速比。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
 
 命令特意不使用 CTest 的 `-V` 选项。`--no-label-summary` 隐藏重复的标签耗时表，`--output-on-failure` 仅在测试失败时显示测试输出。需要查看完整回归输出时，直接运行：
 
@@ -283,7 +283,7 @@ ROOT 比较宏 `test/TestOpticalTransport.cxx` 使用未加权 `Chi2TestX(..., "
 - `noptpho_cpu_single.root`、`noptpho_cpu_all.root`、`noptpho_gpu.root`：单核 CPU、全核 CPU 和 GPU 输入数据。
 - `noptpho_comparison.png`、`noptpho_regression_report.root`：分布、pull 和统计结果。
 - `regression_result.txt`：结论、三组墙钟时间和 GPU 相对于两种 CPU 运行的加速比。
-- `cpu_single.log`、`cpu_all.log`、`gpu.log`、`comparison.log`：各阶段完整日志；`regression.log` 保存编排输出，verbose 模式下也包含透传的子进程输出。
+- `cpu_single.log`、`cpu_all.log`、`gpu.log`、`comparison.log` 和 `gpu_determinism.log`：各阶段完整日志；`regression.log` 保存编排输出，verbose 模式下也包含透传的子进程输出。
 
 ## WSL2 OptiX runtime 排障
 

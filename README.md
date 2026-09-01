@@ -25,7 +25,7 @@ The project targets single-crystal optical detector cells. It provides unified C
 - GPU optical-photon transport with CUDA and NVIDIA OptiX 9.1.
 - `auto`, `cpu`, and `gpu` backend selection.
 - ROOT ntuple output for `CrystalHit` and `SensorHit`.
-- Optical-boundary unit tests, an end-to-end smoke test, and CPU/GPU `nOptPho` regression tests.
+- Optical-boundary unit tests, an end-to-end smoke test, and CPU/GPU optical regression tests with TOF, sensor occupancy, and thread-determinism checks.
 
 ## Backends
 
@@ -268,7 +268,7 @@ ctest --test-dir build --output-on-failure
 )
 ~~~
 
-The regression driver runs `scripts/run_beam_eminus.mac` with a single-core CPU run, an all-core CPU run, and an all-core GPU run, then invokes the ROOT comparison. By default, “all-core” uses all detected physical cores; pass `--threads N` to override the worker count. Normal mode prints phase summaries while preserving complete child-process output in stage logs. Use `--verbose` when running the driver directly to stream child-process output. The statistical comparison uses the all-core CPU result as the Geant4 reference and reports GPU speedups relative to both CPU runs. The GPU run explicitly uses `--backend gpu`, so missing GPU, OptiX runtime, driver, or ROOT causes the test to fail while preserving diagnostic files.
+The regression driver runs `scripts/run_beam_eminus.mac` with a single-core CPU run, an all-core CPU run, and an all-core GPU run. The ROOT comparison checks `nOptPho`, `SensorHit` detection counts, time-of-flight summaries, and a 64-bin sensor occupancy map. A separate deterministic optical-photon macro then runs GPU transport with 1, 2, 4, and 8 Geant4 worker threads and compares the generated, absorbed, escaped, and detected statistics. By default, “all-core” uses all detected physical cores; pass `--threads N` to override the worker count. Normal mode prints phase summaries while preserving complete child-process output in stage logs. Use `--verbose` when running the driver directly to stream child-process output. The statistical comparison uses the all-core CPU result as the Geant4 reference and reports GPU speedups relative to both CPU runs. The GPU run explicitly uses `--backend gpu`, so missing GPU, OptiX runtime, driver, or ROOT causes the test to fail while preserving diagnostic files.
 
 The command omits CTest's `-V` option. `--no-label-summary` hides the repeated label timing table, and `--output-on-failure` prints test output only when the test fails. To inspect the full regression stream, run:
 
@@ -283,7 +283,7 @@ Artifacts are stored in `build/test/regression/noptpho_<timestamp>/`:
 - `noptpho_cpu_single.root`, `noptpho_cpu_all.root`, `noptpho_gpu.root`: single-core CPU, all-core CPU, and GPU input data.
 - `noptpho_comparison.png`, `noptpho_regression_report.root`: Distribution, pull, and statistical reports.
 - `regression_result.txt`: Conclusion, three wall-clock times, and GPU speedups relative to both CPU runs.
-- `cpu_single.log`, `cpu_all.log`, `gpu.log`, `comparison.log`: Complete stage logs; `regression.log` contains orchestration output and streamed child output in verbose mode.
+- `cpu_single.log`, `cpu_all.log`, `gpu.log`, `comparison.log`, and `gpu_determinism.log`: Complete stage logs; `regression.log` contains orchestration output and streamed child output in verbose mode.
 
 ## WSL2 OptiX runtime troubleshooting
 
