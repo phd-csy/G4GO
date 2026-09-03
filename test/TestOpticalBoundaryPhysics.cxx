@@ -29,20 +29,20 @@ auto RequireNear(float actual,
 }
 
 auto TestNormalIncidence() -> void {
-    const auto result{Physics::ComputeFresnel(
+    const auto output{Physics::ComputeFresnel(
         {0.0F, 0.0F, 1.0F}, {1.0F, 0.0F, 0.0F},
         {0.0F, 0.0F, -1.0F}, 1.0F, 1.5F)};
 
-    Require(!result.fTotalInternalReflection,
+    Require(!output.fTotalInternalReflection,
             "normal incidence must transmit");
-    RequireNear(result.fTransmittance, 0.96F, 1.0e-5F,
+    RequireNear(output.fTransmittance, 0.96F, 1.0e-5F,
                 "normal-incidence transmittance");
-    RequireNear(result.fReflectedDirection[2], -1.0F, 1.0e-6F,
+    RequireNear(output.fReflectedDirection.at(2), -1.0F, 1.0e-6F,
                 "normal-incidence reflected direction");
-    RequireNear(result.fTransmittedDirection[2], 1.0F, 1.0e-6F,
+    RequireNear(output.fTransmittedDirection.at(2), 1.0F, 1.0e-6F,
                 "normal-incidence transmitted direction");
-    RequireNear(Physics::Dot(result.fReflectedDirection,
-                             result.fReflectedPolarization),
+    RequireNear(Physics::Dot(output.fReflectedDirection,
+                             output.fReflectedPolarization),
                 0.0F, 1.0e-6F,
                 "reflected polarization must be transverse");
 }
@@ -53,27 +53,27 @@ auto TestBrewsterAngle() -> void {
     const DeviceVector3 sDirection{0.0F, 1.0F, 0.0F};
     const auto pPolarization{Physics::Normalize(
         Physics::Cross(direction, sDirection))};
-    const auto result{Physics::ComputeFresnel(
+    const auto output{Physics::ComputeFresnel(
         direction, pPolarization, {0.0F, 0.0F, -1.0F}, 1.0F, 1.5F)};
 
-    RequireNear(result.fTransmittance, 1.0F, 1.0e-5F,
+    RequireNear(output.fTransmittance, 1.0F, 1.0e-5F,
                 "P-polarized Brewster transmittance");
 }
 
 auto TestTotalInternalReflection() -> void {
     constexpr auto angle{50.0F * std::numbers::pi_v<float> / 180.0F};
-    const auto result{Physics::ComputeFresnel(
+    const auto output{Physics::ComputeFresnel(
         {std::sin(angle), 0.0F, std::cos(angle)}, {0.0F, 1.0F, 0.0F},
         {0.0F, 0.0F, -1.0F}, 1.5F, 1.0F)};
 
-    Require(result.fTotalInternalReflection,
+    Require(output.fTotalInternalReflection,
             "50 degree glass-to-air incidence must be TIR");
-    RequireNear(result.fTransmittance, 0.0F, 1.0e-6F,
+    RequireNear(output.fTransmittance, 0.0F, 1.0e-6F,
                 "TIR transmittance");
-    Require(result.fReflectedDirection[2] < 0.0F,
+    Require(output.fReflectedDirection.at(2) < 0.0F,
             "TIR direction must return to the incident medium");
-    RequireNear(Physics::Dot(result.fReflectedDirection,
-                             result.fReflectedPolarization),
+    RequireNear(Physics::Dot(output.fReflectedDirection,
+                             output.fReflectedPolarization),
                 0.0F, 1.0e-6F,
                 "TIR polarization must be transverse");
 }

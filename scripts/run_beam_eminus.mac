@@ -12,4 +12,4 @@
 /analysis/setFileName run_beam_eminus
 
 /run/printProgress 1000
-/run/beamOn 2000
+/run/beamOn 10000
