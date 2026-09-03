@@ -22,6 +22,7 @@ constexpr auto groundFinish{3U};
 constexpr auto groundFrontPaintedFinish{4U};
 constexpr auto groundBackPaintedFinish{5U};
 constexpr auto speedOfLightMmPerNs{299.792458F};
+constexpr auto coincidentTriangleFlag{1U};
 
 __device__ __forceinline__ auto Add(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
@@ -47,9 +48,10 @@ __device__ __forceinline__ auto Normalize(DeviceVector3 vector)
     return Scale(vector, rsqrtf(lengthSquared));
 }
 
-__device__ auto FindVolume(std::uint32_t volumeID) -> const DeviceVolume* {
-    return volumeID < gLaunchParams.fScene.fVolumeCount ?
-               &gLaunchParams.fScene.fVolumes[volumeID] :
+// OptiXTransportHost remaps public Scene volume IDs to dense device indices.
+__device__ auto FindVolume(std::uint32_t volumeIndex) -> const DeviceVolume* {
+    return volumeIndex < gLaunchParams.fScene.fVolumeCount ?
+               &gLaunchParams.fScene.fVolumes[volumeIndex] :
                nullptr;
 }
 
@@ -74,21 +76,41 @@ __device__ auto TriangleNormal(std::uint32_t instanceIndex,
         triangleIndex >= geometry->fMesh.fTriangleCount) {
         return {};
     }
-    const auto* indices{geometry->fMesh.fIndices + 3U * triangleIndex};
-    const auto& first{geometry->fMesh.fVertices[indices[0]]};
-    const auto& second{geometry->fMesh.fVertices[indices[1]]};
-    const auto& third{geometry->fMesh.fVertices[indices[2]]};
-    const auto normal{Normalize({
-        (second[1] - first[1]) * (third[2] - first[2]) -
-            (second[2] - first[2]) * (third[1] - first[1]),
-        (second[2] - first[2]) * (third[0] - first[0]) -
-            (second[0] - first[0]) * (third[2] - first[2]),
-        (second[0] - first[0]) * (third[1] - first[1]) -
-            (second[1] - first[1]) * (third[0] - first[0]),
-    })};
+    DeviceVector3 normal{};
+    if (geometry->fMesh.fNormals != nullptr) {
+        normal = Normalize(geometry->fMesh.fNormals[triangleIndex]);
+    } else {
+        const auto* indices{geometry->fMesh.fIndices + 3U * triangleIndex};
+        const auto& first{geometry->fMesh.fVertices[indices[0]]};
+        const auto& second{geometry->fMesh.fVertices[indices[1]]};
+        const auto& third{geometry->fMesh.fVertices[indices[2]]};
+        normal = Normalize({
+            (second[1] - first[1]) * (third[2] - first[2]) -
+                (second[2] - first[2]) * (third[1] - first[1]),
+            (second[2] - first[2]) * (third[0] - first[0]) -
+                (second[0] - first[0]) * (third[2] - first[2]),
+            (second[0] - first[0]) * (third[1] - first[1]) -
+                (second[1] - first[1]) * (third[0] - first[0]),
+        });
+    }
     const auto worldNormal{optixTransformNormalFromObjectToWorldSpace(
         make_float3(normal[0], normal[1], normal[2]))};
     return Normalize({worldNormal.x, worldNormal.y, worldNormal.z});
+}
+
+__device__ auto TriangleFlags(std::uint32_t instanceIndex,
+                              std::uint32_t triangleIndex) -> std::uint8_t {
+    if (instanceIndex >= gLaunchParams.fScene.fVolumeCount) {
+        return 0;
+    }
+    const auto& volume{gLaunchParams.fScene.fVolumes[instanceIndex]};
+    const auto* geometry{FindGeometry(volume.fGeometryID)};
+    if (geometry == nullptr ||
+        triangleIndex >= geometry->fMesh.fTriangleCount ||
+        geometry->fMesh.fTriangleFlags == nullptr) {
+        return 0;
+    }
+    return geometry->fMesh.fTriangleFlags[triangleIndex];
 }
 
 __device__ auto SurfaceRank(std::uint32_t currentVolumeID,
@@ -136,12 +158,12 @@ __device__ auto ResolveTopology(std::uint32_t currentVolumeID,
 
 __device__ auto SampleProperty(const DeviceProperty& property,
                                float energy,
-                               float fallback) -> float {
+                               float defaultValue) -> float {
     if (property.fCount == 0 || property.fEnergyEv == nullptr ||
         property.fValues == nullptr) {
-        return fallback;
+        return defaultValue;
     }
-    if (property.fCount == 1 || energy <= property.fEnergyEv[0]) {
+    if (property.fConstant != 0 || energy <= property.fEnergyEv[0]) {
         return property.fValues[0];
     }
     const auto last{property.fCount - 1U};
@@ -229,6 +251,250 @@ __device__ auto Uniform(std::uint64_t seed,
                                        draw % 4U == 2U     ? x2 :
                                                              x3};
     return (static_cast<float>(word) + 0.5F) / 4294967296.0F;
+}
+
+__device__ __forceinline__ auto Cross(DeviceVector3 left,
+                                      DeviceVector3 right) -> DeviceVector3 {
+    return {left[1] * right[2] - left[2] * right[1],
+            left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0]};
+}
+
+__device__ auto RotateFromZ(DeviceVector3 vector, DeviceVector3 axis)
+    -> DeviceVector3 {
+    const auto z{Normalize(axis)};
+    const auto helper{
+        fabsf(z[2]) < 0.999F ? DeviceVector3{0.0F, 0.0F, 1.0F}
+            : DeviceVector3{0.0F, 1.0F, 0.0F}
+    };
+    const auto x{Normalize(Cross(helper, z))};
+    const auto y{Cross(z, x)};
+    return Normalize(Add(Add(Scale(x, vector[0]), Scale(y, vector[1])),
+                         Scale(z, vector[2])));
+}
+
+__device__ auto FindEmissionIndex(std::uint32_t photonID)
+    -> std::uint32_t {
+    if (gLaunchParams.fEmissions == nullptr ||
+        gLaunchParams.fEmissionOffsets == nullptr ||
+        gLaunchParams.fEmissionCount == 0) {
+        return invalidID;
+    }
+    auto first{0U};
+    auto last{gLaunchParams.fEmissionCount};
+    while (first < last) {
+        const auto middle{first + (last - first) / 2U};
+        if (photonID >= gLaunchParams.fEmissionOffsets[middle + 1U]) {
+            first = middle + 1U;
+        } else {
+            last = middle;
+        }
+    }
+    return first < gLaunchParams.fEmissionCount ? first : invalidID;
+}
+
+__device__ auto SampleSpectrum(const DeviceProperty& spectrum,
+                               float random) -> float {
+    if (spectrum.fCount == 0 || spectrum.fEnergyEv == nullptr ||
+        spectrum.fValues == nullptr) {
+        return NAN;
+    }
+    const auto u{fminf(fmaxf(random, 0.0F), 1.0F)};
+    if (spectrum.fCount == 1 || u <= spectrum.fValues[0]) {
+        return spectrum.fEnergyEv[0];
+    }
+    const auto last{spectrum.fCount - 1U};
+    if (u >= spectrum.fValues[last]) {
+        return spectrum.fEnergyEv[last];
+    }
+    auto index{0U};
+    while (index + 1U < spectrum.fCount &&
+           u > spectrum.fValues[index + 1U]) {
+        ++index;
+    }
+    const auto denominator{spectrum.fValues[index + 1U] -
+                           spectrum.fValues[index]};
+    if (!(denominator > 0.0F)) {
+        return spectrum.fEnergyEv[index];
+    }
+    const auto fraction{(u - spectrum.fValues[index]) / denominator};
+    return spectrum.fEnergyEv[index] +
+           fraction * (spectrum.fEnergyEv[index + 1U] -
+                       spectrum.fEnergyEv[index]);
+}
+
+__device__ auto GeneratePhoton(const DeviceOpticalEmission& emission,
+                               std::uint32_t photonID,
+                               std::uint32_t localPhotonID)
+    -> DevicePhoton {
+    DevicePhoton photon{};
+    photon.fEventID = emission.fEventID;
+    photon.fPhotonID = photonID;
+    photon.fVolumeID = emission.fVolumeID;
+    photon.fWeight = emission.fWeight;
+    photon.fSource = emission.fType;
+    photon.fPositionMm = emission.fPositionMm;
+    photon.fTimeNs = emission.fTimeNs;
+    photon.fDirection = Normalize(emission.fDirection);
+    photon.fPolarization = emission.fPolarization;
+    photon.fEnergyEv = emission.fEnergyEv;
+
+    const auto photonKey{(static_cast<std::uint64_t>(emission.fEventID) << 32U) |
+                         photonID};
+    auto draw{0U};
+    if (emission.fType == 1U) {
+        const auto* material{FindMaterial(emission.fMaterialID)};
+        if (material == nullptr) {
+            return photon;
+        }
+        const auto refractiveIndex{SampleProperty(
+            material->fRindex, emission.fEnergyEv, NAN)};
+        const auto preVelocity{emission.fPreVelocityMmPerNs};
+        const auto beta{(preVelocity +
+                         0.5F * emission.fDeltaVelocityMmPerNs) /
+                        speedOfLightMmPerNs};
+        if (!(beta > 0.0F) || !(beta < 1.0F) ||
+            material->fRindex.fCount == 0) {
+            return photon;
+        }
+        const auto& rindex{material->fRindex};
+        const auto energyMin{rindex.fEnergyEv[0]};
+        const auto energyMax{rindex.fEnergyEv[rindex.fCount - 1U]};
+        const auto nMax{SampleProperty(rindex, energyMax, NAN)};
+        const auto betaInverse{1.0F / beta};
+        const auto maxCos{betaInverse / nMax};
+        const auto maxSin2{1.0F - maxCos * maxCos};
+        const auto deltaEnergy{energyMax - energyMin};
+        float sampledEnergy{energyMin};
+        float cosTheta{0.0F};
+        float sin2Theta{0.0F};
+        do {
+            const auto random{Uniform(gLaunchParams.fSeed, photonKey, 0U,
+                                      10U, draw++)};
+            sampledEnergy = energyMin + random * deltaEnergy;
+            const auto n{SampleProperty(rindex, sampledEnergy, NAN)};
+            cosTheta = betaInverse / n;
+            sin2Theta = 1.0F - cosTheta * cosTheta;
+        } while (Uniform(gLaunchParams.fSeed, photonKey, 0U, 10U, draw++) *
+                     maxSin2 >
+                 sin2Theta);
+        const auto phi{6.28318530717958647692F *
+                       Uniform(gLaunchParams.fSeed, photonKey, 0U, 10U,
+                               draw++)};
+        const auto sinTheta{sqrtf(fmaxf(sin2Theta, 0.0F))};
+        const auto localDirection{
+            DeviceVector3{
+                          sinTheta * cosf(phi), sinTheta * sinf(phi), cosTheta}
+        };
+        const auto localPolarization{
+            DeviceVector3{
+                          cosTheta * cosf(phi), cosTheta * sinf(phi), -sinTheta}
+        };
+        photon.fDirection = RotateFromZ(localDirection, emission.fDirection);
+        photon.fPolarization =
+            RotateFromZ(localPolarization, emission.fDirection);
+
+        const auto meanPre{emission.fPreMeanPhotonCount};
+        const auto meanPost{emission.fPostMeanPhotonCount};
+        const auto deltaMean{meanPre - meanPost};
+        const auto maxMean{fmaxf(meanPre, meanPost)};
+        float positionFraction{};
+        do {
+            positionFraction =
+                Uniform(gLaunchParams.fSeed, photonKey, 0U, 10U, draw++);
+        } while (Uniform(gLaunchParams.fSeed, photonKey, 0U, 10U, draw++) *
+                     maxMean >
+                 meanPre - positionFraction * deltaMean);
+        photon.fPositionMm = Add(
+            emission.fPositionMm,
+            Scale(emission.fStepDeltaMm, positionFraction));
+        const auto velocity{emission.fPreVelocityMmPerNs +
+                            0.5F * positionFraction *
+                                emission.fDeltaVelocityMmPerNs};
+        if (velocity > 0.0F && isfinite(velocity)) {
+            photon.fTimeNs +=
+                positionFraction * emission.fStepLengthMm / velocity;
+        }
+        photon.fEnergyEv = sampledEnergy;
+        static_cast<void>(localPhotonID);
+        return photon;
+    }
+
+    if (emission.fType == 2U) {
+        const auto* material{FindMaterial(emission.fMaterialID)};
+        if (material == nullptr || emission.fSpectrumID >= 3U) {
+            return photon;
+        }
+        photon.fEnergyEv = SampleSpectrum(
+            material->fScintillationSpectrum[emission.fSpectrumID],
+            Uniform(gLaunchParams.fSeed, photonKey, 0U, 20U, draw++));
+        const auto cosTheta{1.0F -
+                            2.0F * Uniform(gLaunchParams.fSeed, photonKey,
+                                           0U, 20U, draw++)};
+        const auto sinTheta{sqrtf(fmaxf(0.0F, 1.0F - cosTheta * cosTheta))};
+        const auto phi{6.28318530717958647692F *
+                       Uniform(gLaunchParams.fSeed, photonKey, 0U, 20U,
+                               draw++)};
+        const auto localDirection{
+            DeviceVector3{
+                          sinTheta * cosf(phi), sinTheta * sinf(phi), cosTheta}
+        };
+        auto localPolarization{
+            DeviceVector3{
+                          cosTheta * cosf(phi), cosTheta * sinf(phi), -sinTheta}
+        };
+        const auto perpendicular{Cross(localDirection, localPolarization)};
+        const auto polarizationPhi{
+            6.28318530717958647692F *
+            Uniform(gLaunchParams.fSeed, photonKey, 0U, 20U, draw++)};
+        localPolarization = Normalize(Add(
+            Scale(localPolarization, cosf(polarizationPhi)),
+            Scale(perpendicular, sinf(polarizationPhi))));
+        photon.fDirection = localDirection;
+        photon.fPolarization = localPolarization;
+
+        const auto positionFraction{emission.fCharge == 0.0F ?
+                                        1.0F :
+                                        Uniform(gLaunchParams.fSeed, photonKey,
+                                                0U, 20U, draw++)};
+        photon.fPositionMm = Add(
+            emission.fPositionMm,
+            Scale(emission.fStepDeltaMm, positionFraction));
+        const auto velocity{emission.fPreVelocityMmPerNs +
+                            0.5F * positionFraction *
+                                emission.fDeltaVelocityMmPerNs};
+        if (velocity > 0.0F && isfinite(velocity)) {
+            photon.fTimeNs +=
+                positionFraction * emission.fStepLengthMm / velocity;
+        }
+        const auto decay{emission.fDecayTimeNs};
+        if (decay > 0.0F && isfinite(decay)) {
+            if (!(emission.fRiseTimeNs > 0.0F) ||
+                !isfinite(emission.fRiseTimeNs)) {
+                photon.fTimeNs -=
+                    decay * logf(fmaxf(
+                                Uniform(gLaunchParams.fSeed, photonKey, 0U, 20U,
+                                        draw++),
+                                1.0e-7F));
+            } else {
+                float sample{};
+                float acceptance{};
+                do {
+                    sample = -decay * logf(
+                                          fmaxf(1.0e-7F,
+                                                1.0F - Uniform(gLaunchParams.fSeed,
+                                                               photonKey, 0U, 20U, draw++)));
+                    acceptance = Uniform(gLaunchParams.fSeed, photonKey, 0U,
+                                         20U, draw++);
+                } while (acceptance >
+                         (1.0F - expf(-sample / emission.fRiseTimeNs)));
+                photon.fTimeNs += sample;
+            }
+        }
+        return photon;
+    }
+
+    return photon;
 }
 
 __device__ auto SampleAbsorption(const DeviceMaterial& material,
@@ -354,9 +620,13 @@ __constant__ OptixLaunchParams gLaunchParams;
 __global__ void __miss__ms() {}
 
 __global__ void __anyhit__ah() {
-    const auto photonID{optixGetLaunchIndex().x};
     const auto instanceIndex{optixGetInstanceId()};
     if (instanceIndex >= gLaunchParams.fScene.fVolumeCount) {
+        optixIgnoreIntersection();
+        return;
+    }
+    if ((TriangleFlags(instanceIndex, optixGetPrimitiveIndex()) &
+         coincidentTriangleFlag) == 0U) {
         optixIgnoreIntersection();
         return;
     }
@@ -365,9 +635,9 @@ __global__ void __anyhit__ah() {
     auto normalY{optixGetPayload_2()};
     auto normalZ{optixGetPayload_3()};
     auto candidateCount{optixGetPayload_4()};
+    const auto currentID{optixGetPayload_5()};
     const auto candidateID{
         gLaunchParams.fScene.fVolumes[instanceIndex].fVolumeID};
-    const auto currentID{gLaunchParams.fPhotons[photonID].fVolumeID};
     const auto candidateRank{SurfaceRank(currentID, candidateID)};
     if (candidateRank >= 100U) {
         optixIgnoreIntersection();
@@ -389,6 +659,7 @@ __global__ void __anyhit__ah() {
     optixSetPayload_2(normalY);
     optixSetPayload_3(normalZ);
     optixSetPayload_4(candidateCount);
+    optixSetPayload_5(currentID);
     optixIgnoreIntersection();
 }
 
@@ -404,6 +675,7 @@ __global__ void __closesthit__ch() {
     optixSetPayload_2(__float_as_uint(normal[1]));
     optixSetPayload_3(__float_as_uint(normal[2]));
     optixSetPayload_4(volume.fVolumeID);
+    optixSetPayload_5(TriangleFlags(instanceIndex, optixGetPrimitiveIndex()));
 }
 
 __global__ void __raygen__rg() {
@@ -412,7 +684,22 @@ __global__ void __raygen__rg() {
         return;
     }
 
-    auto photon{gLaunchParams.fPhotons[photonID]};
+    const auto emissionIndex{FindEmissionIndex(photonID)};
+    if (emissionIndex == invalidID) {
+        atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
+                  static_cast<unsigned long long>(1));
+        return;
+    }
+    const auto& emission{gLaunchParams.fEmissions[emissionIndex]};
+    const auto emissionOffset{gLaunchParams.fEmissionOffsets[emissionIndex]};
+    const auto localPhotonID{photonID - emissionOffset};
+    if (localPhotonID >= emission.fPhotonCount) {
+        atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
+                  static_cast<unsigned long long>(1));
+        return;
+    }
+    auto photon{GeneratePhoton(
+        emission, emission.fFirstPhotonID + localPhotonID, localPhotonID)};
     const auto photonKey{(static_cast<std::uint64_t>(photon.fEventID) << 32U) |
                          photon.fPhotonID};
     auto position{photon.fPositionMm};
@@ -423,10 +710,9 @@ __global__ void __raygen__rg() {
     auto terminated{false};
 
     auto bounce{0U};
+    auto bounceCount{0U};
     for (; bounce < gLaunchParams.fMaxBounceCount && !terminated; ++bounce) {
-        gLaunchParams.fPhotons[photonID].fVolumeID = currentVolumeID;
-        atomicMax(&gLaunchParams.fStats->fMaxBounceCount,
-                  static_cast<unsigned long long>(bounce + 1U));
+        ++bounceCount;
         const auto* currentVolume{FindVolume(currentVolumeID)};
         if (currentVolume == nullptr) {
             atomicAdd(&gLaunchParams.fStats->fInvalidStateCount,
@@ -455,13 +741,14 @@ __global__ void __raygen__rg() {
         auto payload2{0U};
         auto payload3{0U};
         auto payload4{invalidID};
+        auto payload5{0U};
         optixTrace(
             static_cast<OptixTraversableHandle>(gLaunchParams.fTraversable),
             make_float3(position[0], position[1], position[2]),
             make_float3(direction[0], direction[1], direction[2]),
             gLaunchParams.fBoundaryEpsilonMm, CUDART_INF_F, 0.0F,
             OptixVisibilityMask(255), OPTIX_RAY_FLAG_DISABLE_ANYHIT, 0, 1, 0,
-            payload0, payload1, payload2, payload3, payload4);
+            payload0, payload1, payload2, payload3, payload4, payload5);
 
         const auto distance{__uint_as_float(payload0)};
         if (payload4 == invalidID || !isfinite(distance)) {
@@ -474,13 +761,18 @@ __global__ void __raygen__rg() {
         auto normal{Normalize({__uint_as_float(payload1),
                                __uint_as_float(payload2),
                                __uint_as_float(payload3)})};
-        if (currentVolume->fMayHaveCoincidentBoundary != 0) {
-            gLaunchParams.fPhotons[photonID].fVolumeID = currentVolumeID;
+        if (currentVolume->fMayHaveCoincidentBoundary != 0 &&
+            (payload5 & coincidentTriangleFlag) != 0U) {
+            if (gLaunchParams.fEnablePerformanceDiagnostics != 0) {
+                atomicAdd(&gLaunchParams.fStats->fCoincidentCandidateTraceCount,
+                          static_cast<unsigned long long>(1));
+            }
             auto candidatePayload0{invalidID};
             auto candidatePayload1{0U};
             auto candidatePayload2{0U};
             auto candidatePayload3{0U};
             auto candidatePayload4{0U};
+            auto candidatePayload5{currentVolumeID};
             const auto tolerance{gLaunchParams.fBoundaryEpsilonMm};
             optixTrace(
                 static_cast<OptixTraversableHandle>(gLaunchParams.fTraversable),
@@ -491,12 +783,18 @@ __global__ void __raygen__rg() {
                 OPTIX_RAY_FLAG_ENFORCE_ANYHIT |
                     OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
                 0, 1, 0, candidatePayload0, candidatePayload1,
-                candidatePayload2, candidatePayload3, candidatePayload4);
+                candidatePayload2, candidatePayload3, candidatePayload4,
+                candidatePayload5);
             if (candidatePayload0 != invalidID) {
                 hitVolumeID = candidatePayload0;
                 normal = Normalize({__uint_as_float(candidatePayload1),
                                     __uint_as_float(candidatePayload2),
                                     __uint_as_float(candidatePayload3)});
+                if (gLaunchParams.fEnablePerformanceDiagnostics != 0) {
+                    atomicAdd(
+                        &gLaunchParams.fStats->fCoincidentCandidateHitCount,
+                        static_cast<unsigned long long>(1));
+                }
             }
         }
 
@@ -672,6 +970,16 @@ __global__ void __raygen__rg() {
                        Scale(normal, reflected ? gLaunchParams.fBoundaryEpsilonMm : -gLaunchParams.fBoundaryEpsilonMm));
     }
 
+    const auto executedBounceCount{
+        bounce >= gLaunchParams.fMaxBounceCount ?
+            gLaunchParams.fMaxBounceCount :
+            bounceCount};
+    atomicMax(&gLaunchParams.fStats->fMaxBounceCount,
+              static_cast<unsigned long long>(executedBounceCount));
+    if (gLaunchParams.fEnablePerformanceDiagnostics != 0) {
+        atomicAdd(&gLaunchParams.fStats->fTotalBounceCount,
+                  static_cast<unsigned long long>(bounceCount));
+    }
     if (!terminated && bounce >= gLaunchParams.fMaxBounceCount) {
         atomicAdd(&gLaunchParams.fStats->fTruncatedCount,
                   static_cast<unsigned long long>(1));

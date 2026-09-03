@@ -4,12 +4,18 @@
 #include "g4go/optical/PhotonTransport.hpp"
 #include "g4go/optical/PhotonTransportConfig.hpp"
 
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 class G4Track;
 class G4VPhysicalVolume;
+class G4CerenkovQuasiTrackInfo;
+class G4ScintillationQuasiTrackInfo;
 
 namespace G4GO::Optical {
 
@@ -19,7 +25,7 @@ class Geant4EventAdapter final {
 public:
     explicit Geant4EventAdapter(
         PhotonTransportConfig configuration,
-        std::shared_ptr<Geant4BatchScheduler> batchScheduler = {});
+        std::shared_ptr<Geant4BatchScheduler> batchScheduler);
     ~Geant4EventAdapter();
 
     Geant4EventAdapter(const Geant4EventAdapter&) = delete;
@@ -30,39 +36,88 @@ public:
     auto BeginEvent(G4int eventID) -> void;
     auto EndEvent() -> PhotonTransportFuture;
 
-    auto ObserveGenerated() -> void;
+    auto ObserveGenerated(const G4Track& track) -> void;
     auto Capture(const G4Track& track) -> void;
+    auto CaptureOffloaded(const G4Track& track) -> void;
 
     auto SelectedBackend() const -> PhotonTransportBackend;
     auto Configuration() const -> const PhotonTransportConfig& {
         return fConfiguration;
     }
-    auto Photons() const -> std::span<const Photon> { return fPhotons; }
-    auto EventDetections() const -> std::span<const PhotonDetection> {
-        return fEventDetections;
+    auto Emissions() const -> std::span<const OpticalEmission> {
+        return fEmissions;
     }
     auto EventStatistics() const -> const PhotonTransportStatistics& {
         return fEventStatistics;
     }
+    auto EventPerformance() const -> const PhotonTransportPerformance& {
+        return fEventPerformance;
+    }
+    auto RunPerformance() const -> const PhotonTransportPerformance& {
+        return fRunPerformance;
+    }
     auto RunStatistics() const -> const PhotonTransportStatistics&;
 
 private:
-    auto PhotonSourceFrom(const G4Track& track) const -> PhotonSource;
+    auto AppendOffloadedEmission(
+        const G4Track& track,
+        OpticalEmission emission,
+        std::size_t photonCount,
+        std::chrono::steady_clock::time_point captureStart,
+        const char* operation,
+        const char* volumeDescription) -> bool;
+    auto CaptureCerenkov(const G4Track& track,
+                         const G4CerenkovQuasiTrackInfo& info) -> void;
+    auto CaptureScintillation(
+        const G4Track& track,
+        const G4ScintillationQuasiTrackInfo& info) -> void;
     auto LocateVolume(const G4Track& track) const -> const G4VPhysicalVolume*;
     auto VolumeIDFromTrack(const G4Track& track,
                            const G4VPhysicalVolume* locatedVolume) const
         -> std::uint32_t;
+    auto MaterialIDFromVolume(std::uint32_t volumeID) const -> std::uint32_t;
     auto AccumulateEventStatistics() -> void;
+
+    struct VolumeLookupKey {
+        std::uint32_t fPhysicalVolumeID{};
+        std::uint32_t fCopyNo{};
+        std::uint32_t fParentVolumeID{};
+
+        auto operator==(const VolumeLookupKey&) const -> bool = default;
+    };
+
+    struct VolumeLookupKeyHash {
+        auto operator()(const VolumeLookupKey& key) const -> std::size_t {
+            auto hash{static_cast<std::size_t>(key.fPhysicalVolumeID)};
+            hash ^= static_cast<std::size_t>(key.fCopyNo) +
+                    static_cast<std::size_t>(0x9e3779b9U) + (hash << 6U) +
+                    (hash >> 2U);
+            hash ^= static_cast<std::size_t>(key.fParentVolumeID) +
+                    static_cast<std::size_t>(0x9e3779b9U) + (hash << 6U) +
+                    (hash >> 2U);
+            return hash;
+        }
+    };
 
     PhotonTransportBackend fRequestedBackend{PhotonTransportBackend::Auto};
     PhotonTransportConfig fConfiguration{};
-    std::vector<Photon> fPhotons{};
-    std::vector<PhotonDetection> fEventDetections{};
+    std::vector<OpticalEmission> fEmissions{};
+    mutable std::unordered_map<VolumeLookupKey,
+                               std::uint32_t,
+                               VolumeLookupKeyHash>
+        fVolumeIDCache{};
+    mutable const G4VPhysicalVolume* fCachedLocatedVolume{};
+    mutable std::uint32_t fCachedLocatedCopyNo{};
+    mutable std::uint32_t fCachedVolumeID{InvalidID};
     std::shared_ptr<Geant4BatchScheduler> fBatchScheduler{};
     PhotonTransportStatistics fEventStatistics{};
+    PhotonTransportPerformance fEventPerformance{};
     PhotonTransportStatistics fRunStatistics{};
+    PhotonTransportPerformance fRunPerformance{};
     G4int fEventID{-1};
     std::uint32_t fNextPhotonID{};
+    std::uint32_t fNextEmissionID{};
+    std::uint64_t fEventPhotonCount{};
 };
 
 } // namespace G4GO::Optical

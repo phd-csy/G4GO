@@ -32,8 +32,11 @@ struct PhotonTransportConfig {
     std::uint32_t fTargetPhotonsPerBatch{1'000'000};
     std::uint32_t fMaxEventsPerBatch{10'000};
     std::uint32_t fMaxQueuedPhotons{2'000'000};
-    std::uint32_t fBatchCollectionTimeoutMs{5};
+    std::uint32_t fMaxQueuedSubmissions{1'024};
+    std::uint32_t fMaxPendingEvents{64};
+    std::uint32_t fBatchCollectionTimeoutMs{10};
     std::uint32_t fMeshRotationSteps{360};
+    bool fEnablePerformanceDiagnostics{};
 };
 
 } // namespace G4GO::Optical

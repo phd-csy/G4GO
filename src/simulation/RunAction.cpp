@@ -6,6 +6,7 @@
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
+#include <chrono>
 #include <utility>
 
 namespace G4GO::Simulation {
@@ -27,14 +28,14 @@ RunAction::RunAction(
     analysisManager->SetNtupleMerging(true);
 #endif
 
-    analysisManager->CreateNtuple("CrystalHit", "crystal hit results");
+    analysisManager->CreateNtuple("CrystalHit", "crystal hit output");
     analysisManager->CreateNtupleIColumn("eventID");
     analysisManager->CreateNtupleIColumn("moduleID");
     analysisManager->CreateNtupleDColumn("Edep");
     analysisManager->CreateNtupleIColumn("nOptPho");
     analysisManager->FinishNtuple();
 
-    analysisManager->CreateNtuple("SensorHit", "sensor hit results");
+    analysisManager->CreateNtuple("SensorHit", "sensor hit output");
     analysisManager->CreateNtupleIColumn("eventID");
     analysisManager->CreateNtupleIColumn("sensorID");
     analysisManager->CreateNtupleDColumn("timeOfFlight");
@@ -58,6 +59,13 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
     }
     if (fAdapter) {
         fAdapter->EndRun();
+        if (fAdapter->Configuration().fEnablePerformanceDiagnostics) {
+            const auto& performance{fAdapter->RunPerformance()};
+            G4cout << "[g4go] source performance: cerenkov_photon_count="
+                   << performance.fCerenkovPhotonCount
+                   << ", scintillation_photon_count="
+                   << performance.fScintillationPhotonCount << G4endl;
+        }
     }
     if (fIsMaster && fBatchScheduler &&
         fBatchScheduler->SelectedBackend() !=
@@ -81,11 +89,73 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                << ", batch_photons: " << batches.fPhotonCount
                << ", max_batch_photons: " << batches.fMaxBatchPhotonCount
                << G4endl;
+        if (fBatchScheduler->PerformanceDiagnosticsEnabled()) {
+            const auto& performance{
+                fBatchScheduler->PerformanceStatistics()};
+            const auto averageBatchPhotons{
+                batches.fBatchCount == 0 ?
+                    0.0 :
+                    static_cast<double>(batches.fPhotonCount) /
+                        static_cast<double>(batches.fBatchCount)};
+            G4cout << "[g4go] performance: capture_total_ms="
+                   << performance.fCaptureTotalMs
+                   << ", capture_locate_volume_ms="
+                   << performance.fCaptureLocateVolumeMs
+                   << ", capture_volume_mapping_ms="
+                   << performance.fCaptureVolumeMappingMs
+                   << ", scheduler_queue_wait_ms="
+                   << performance.fSchedulerQueueWaitMs
+                   << ", scheduler_batch_flatten_ms="
+                   << performance.fSchedulerBatchFlattenMs
+                   << ", scheduler_batch_flatten_bytes="
+                   << performance.fSchedulerBatchFlattenBytes
+                   << ", host_to_device_ms=" << performance.fHostToDeviceMs
+                   << ", device_memset_ms=" << performance.fDeviceMemsetMs
+                   << ", optix_kernel_ms=" << performance.fOptiXKernelMs
+                   << ", device_hit_compaction_ms="
+                   << performance.fDeviceHitCompactionMs
+                   << ", device_to_host_ms=" << performance.fDeviceToHostMs
+                   << ", host_hit_compaction_ms="
+                   << performance.fHostHitCompactionMs
+                   << ", total_bounce_count="
+                   << performance.fTotalBounceCount
+                   << ", coincident_candidate_trace_count="
+                   << performance.fCoincidentCandidateTraceCount
+                   << ", coincident_candidate_hit_count="
+                   << performance.fCoincidentCandidateHitCount
+                   << ", cerenkov_photon_count="
+                   << performance.fCerenkovPhotonCount
+                   << ", scintillation_photon_count="
+                   << performance.fScintillationPhotonCount
+                   << ", detected_count=" << statistics.fDetectedCount
+                   << ", absorbed_count=" << statistics.fAbsorbedCount
+                   << ", escaped_count=" << statistics.fEscapedCount
+                   << ", truncated_count=" << statistics.fTruncatedCount
+                   << ", invalid_state_count="
+                   << statistics.fInvalidStateCount
+                   << ", queue_wait_count=" << batches.fTotalQueueWaitCount
+                   << ", average_batch_photons=" << averageBatchPhotons
+                   << ", min_batch_photons=" << batches.fMinBatchPhotonCount
+                   << G4endl;
+        }
     }
 
+    const auto diagnostics{
+        fBatchScheduler && fBatchScheduler->PerformanceDiagnosticsEnabled()};
+    const auto rootOutputStart{
+        diagnostics ? std::chrono::steady_clock::now() :
+                      std::chrono::steady_clock::time_point{}};
     auto analysisManager{G4AnalysisManager::Instance()};
     analysisManager->Write();
     analysisManager->CloseFile();
+    if (diagnostics) {
+        const auto rootOutputMs{std::chrono::duration<double, std::milli>{
+            std::chrono::steady_clock::now() -
+            rootOutputStart}
+                                    .count()};
+        G4cout << "[g4go] performance_output: root_output_ms="
+               << rootOutputMs << G4endl;
+    }
 }
 
 } // namespace G4GO::Simulation

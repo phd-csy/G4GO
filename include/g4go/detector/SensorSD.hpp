@@ -15,7 +15,6 @@ public:
 
     auto Initialize(G4HCofThisEvent*) -> void override;
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
-    auto EndOfEvent(G4HCofThisEvent*) -> void override;
 
 private:
     SensorHC* hc{nullptr};

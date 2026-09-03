@@ -60,7 +60,7 @@ public:
             throw;
         }
         G4Polyhedron::SetNumberOfRotationSteps(previousRotationSteps);
-        return std::move(scene);
+        return scene;
     }
 
 private:
@@ -172,9 +172,6 @@ private:
                            bool forceUniqueGeometry) -> std::uint32_t {
         const auto transform{Compose(parentTransform, physicalVolume)};
         const auto* logicalVolume{physicalVolume->GetLogicalVolume()};
-        if (logicalVolume == nullptr) {
-            throw std::runtime_error("physical volume has no logical volume");
-        }
 
         const auto geometryID{AddGeometry(solid, !forceUniqueGeometry)};
         const auto materialID{AddMaterial(material)};
@@ -203,7 +200,7 @@ private:
                 AddSurface(skinSurface->GetSurfaceProperty());
         }
 
-        volumeIDs[physicalVolume].push_back(volume.fVolumeID);
+        volumeIDs[physicalVolume].emplace_back(volume.fVolumeID);
         volumeBounds.emplace(volume.fVolumeID,
                              MakeBounds(scene.FindGeometry(geometryID),
                                         transform));
@@ -250,14 +247,21 @@ private:
 
             const auto faceNormal{polyhedron->GetUnitNormal(face)};
             for (auto point{1}; point + 1 < count; ++point) {
-                const auto first{points[0]};
-                auto second{points[point]};
-                auto third{points[point + 1]};
+                const auto first{points.at(0)};
+                auto second{points.at(point)};
+                auto third{points.at(point + 1)};
                 const auto edge0{second - first};
                 const auto edge1{third - first};
-                const auto cross{edge0.cross(edge1)};
+                auto cross{edge0.cross(edge1)};
                 if (cross.dot(faceNormal) < 0.0) {
                     std::swap(second, third);
+                    cross = (second - first).cross(third - first);
+                }
+                if (!(cross.mag2() > 0.0)) {
+                    delete polyhedron;
+                    throw std::runtime_error(
+                        "degenerate polyhedron facet for solid " +
+                        std::string{solid->GetName()});
                 }
                 const auto base{static_cast<std::uint32_t>(
                     geometry.fMesh.fVerticesMm.size())};
@@ -266,7 +270,8 @@ private:
                     {ToVector(first), ToVector(second), ToVector(third)});
                 geometry.fMesh.fIndices.insert(
                     geometry.fMesh.fIndices.end(), {base, base + 1, base + 2});
-                geometry.fMesh.fTriangleFlags.push_back(0);
+                geometry.fMesh.fTriangleNormals.emplace_back(cross.unit());
+                geometry.fMesh.fTriangleFlags.emplace_back(0);
             }
         }
         delete polyhedron;
@@ -291,19 +296,6 @@ private:
                            std::numeric_limits<double>::lowest()};
     };
 
-    static auto TransformPoint(const Transform& transform,
-                               const G4ThreeVector& point) -> G4ThreeVector {
-        const auto& r{transform.fRotation};
-        return {
-            r.fXX * point.x() + r.fXY * point.y() + r.fXZ * point.z() +
-                transform.fTranslationMm.x(),
-            r.fYX * point.x() + r.fYY * point.y() + r.fYZ * point.z() +
-                transform.fTranslationMm.y(),
-            r.fZX * point.x() + r.fZY * point.y() + r.fZZ * point.z() +
-                transform.fTranslationMm.z(),
-        };
-    }
-
     static auto MakeBounds(const Geometry* geometry,
                            const Transform& transform) -> Bounds {
         if (geometry == nullptr || geometry->fMesh.fVerticesMm.empty()) {
@@ -311,7 +303,7 @@ private:
         }
         Bounds bounds{};
         for (const auto& vertex : geometry->fMesh.fVerticesMm) {
-            const auto point{TransformPoint(transform, vertex)};
+            const auto point{GeometryTransformer::ToWorld(transform, vertex)};
             bounds.fMin.setX(std::min(bounds.fMin.x(), point.x()));
             bounds.fMin.setY(std::min(bounds.fMin.y(), point.y()));
             bounds.fMin.setZ(std::min(bounds.fMin.z(), point.z()));
@@ -354,30 +346,153 @@ private:
                  std::abs(second.fMax.x() - first.fMin.x()) <= tolerance));
     }
 
+    static auto Coordinate(const G4ThreeVector& point, int axis) -> double {
+        return axis == 0 ? point.x() : axis == 1 ? point.y() :
+                                                   point.z();
+    }
+
+    static auto TriangleTouchesPlane(const Geometry& geometry,
+                                     std::size_t triangle,
+                                     const Transform& transform,
+                                     const Bounds& otherBounds,
+                                     int axis,
+                                     double plane,
+                                     double tolerance) -> bool {
+        const auto base{3U * triangle};
+        const std::array<G4ThreeVector, 3> points{
+            GeometryTransformer::ToWorld(
+                transform,
+                geometry.fMesh.fVerticesMm.at(
+                    geometry.fMesh.fIndices.at(base))),
+            GeometryTransformer::ToWorld(
+                transform,
+                geometry.fMesh.fVerticesMm.at(
+                    geometry.fMesh.fIndices.at(base + 1U))),
+            GeometryTransformer::ToWorld(
+                transform,
+                geometry.fMesh.fVerticesMm.at(
+                    geometry.fMesh.fIndices.at(base + 2U)))};
+        if (std::any_of(points.begin(), points.end(), [&](const auto& point) {
+                return std::abs(Coordinate(point, axis) - plane) > tolerance;
+            })) {
+            return false;
+        }
+
+        for (auto projectedAxis{0}; projectedAxis < 3; ++projectedAxis) {
+            if (projectedAxis == axis) {
+                continue;
+            }
+            const auto triangleMin{std::min(
+                {Coordinate(points.at(0), projectedAxis),
+                 Coordinate(points.at(1), projectedAxis),
+                 Coordinate(points.at(2), projectedAxis)})};
+            const auto triangleMax{std::max(
+                {Coordinate(points.at(0), projectedAxis),
+                 Coordinate(points.at(1), projectedAxis),
+                 Coordinate(points.at(2), projectedAxis)})};
+            if (!Overlap(triangleMin, triangleMax,
+                         Coordinate(otherBounds.fMin, projectedAxis),
+                         Coordinate(otherBounds.fMax, projectedAxis),
+                         tolerance)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static auto MarkTrianglesOnContactPlane(Geometry& geometry,
+                                            const Volume& volume,
+                                            const Bounds& otherBounds,
+                                            int axis,
+                                            double plane,
+                                            double tolerance) -> void {
+        const auto triangleCount{geometry.fMesh.fIndices.size() / 3U};
+        if (geometry.fMesh.fTriangleFlags.size() != triangleCount) {
+            throw std::runtime_error(
+                "geometry triangle flag count does not match triangle count");
+        }
+        for (auto triangle{std::size_t{}}; triangle < triangleCount;
+             ++triangle) {
+            if (TriangleTouchesPlane(geometry, triangle, volume.fTransform,
+                                     otherBounds, axis, plane, tolerance)) {
+                geometry.fMesh.fTriangleFlags[triangle] |= 1U;
+            }
+        }
+    }
+
+    auto MarkCoincidentTriangles(const Volume& first,
+                                 const Bounds& firstBounds,
+                                 const Volume& second,
+                                 const Bounds& secondBounds,
+                                 double tolerance) -> void {
+        auto* firstGeometry{scene.FindGeometry(first.fGeometryID)};
+        auto* secondGeometry{scene.FindGeometry(second.fGeometryID)};
+        if (firstGeometry == nullptr || secondGeometry == nullptr) {
+            throw std::runtime_error(
+                "coincident volume references an unknown geometry");
+        }
+        const auto markAxis{
+            [&](int axis,
+                double firstMin,
+                double firstMax,
+                double secondMin,
+                double secondMax) {
+                if (std::abs(firstMax - secondMin) <= tolerance) {
+                    MarkTrianglesOnContactPlane(
+                        *firstGeometry, first, secondBounds, axis, firstMax,
+                        tolerance);
+                    MarkTrianglesOnContactPlane(
+                        *secondGeometry, second, firstBounds, axis, secondMin,
+                        tolerance);
+                }
+                if (std::abs(secondMax - firstMin) <= tolerance) {
+                    MarkTrianglesOnContactPlane(
+                        *firstGeometry, first, secondBounds, axis, firstMin,
+                        tolerance);
+                    MarkTrianglesOnContactPlane(
+                        *secondGeometry, second, firstBounds, axis, secondMax,
+                        tolerance);
+                }
+            }};
+        markAxis(0, firstBounds.fMin.x(), firstBounds.fMax.x(),
+                 secondBounds.fMin.x(), secondBounds.fMax.x());
+        markAxis(1, firstBounds.fMin.y(), firstBounds.fMax.y(),
+                 secondBounds.fMin.y(), secondBounds.fMax.y());
+        markAxis(2, firstBounds.fMin.z(), firstBounds.fMax.z(),
+                 secondBounds.fMin.z(), secondBounds.fMax.z());
+    }
+
     auto MarkCoincidentBoundaries() -> void {
-        const auto tolerance{static_cast<float>(
+        const auto tolerance{static_cast<double>(
             G4GeometryTolerance::GetInstance()->GetSurfaceTolerance() / mm)};
+        const auto triangleTolerance{std::max(tolerance, 1.0e-5)};
         const auto& volumes{scene.Volumes()};
         for (auto first{std::size_t{}}; first < volumes.size(); ++first) {
             for (auto second{first + 1}; second < volumes.size(); ++second) {
                 const auto sameParent{
-                    volumes[first].fParentVolumeID != InvalidID &&
-                    volumes[first].fParentVolumeID ==
-                        volumes[second].fParentVolumeID};
+                    volumes.at(first).fParentVolumeID != InvalidID &&
+                    volumes.at(first).fParentVolumeID ==
+                        volumes.at(second).fParentVolumeID};
                 const auto parentChild{
-                    volumes[first].fParentVolumeID == volumes[second].fVolumeID ||
-                    volumes[second].fParentVolumeID == volumes[first].fVolumeID};
+                    volumes.at(first).fParentVolumeID ==
+                        volumes.at(second).fVolumeID ||
+                    volumes.at(second).fParentVolumeID ==
+                        volumes.at(first).fVolumeID};
                 if (!sameParent && !parentChild) {
                     continue;
                 }
-                const auto firstBounds{volumeBounds.at(volumes[first].fVolumeID)};
+                const auto firstBounds{
+                    volumeBounds.at(volumes.at(first).fVolumeID)};
                 const auto secondBounds{
-                    volumeBounds.at(volumes[second].fVolumeID)};
+                    volumeBounds.at(volumes.at(second).fVolumeID)};
                 if (Touches(firstBounds, secondBounds, tolerance)) {
                     scene.SetVolumeMayHaveCoincidentBoundary(
-                        volumes[first].fVolumeID, true);
+                        volumes.at(first).fVolumeID, true);
                     scene.SetVolumeMayHaveCoincidentBoundary(
-                        volumes[second].fVolumeID, true);
+                        volumes.at(second).fVolumeID, true);
+                    MarkCoincidentTriangles(volumes.at(first), firstBounds,
+                                            volumes.at(second), secondBounds,
+                                            triangleTolerance);
                 }
             }
         }
@@ -405,6 +520,11 @@ private:
             opticalMaterial.fGroupVelocityMmPerNs =
                 ReadProperty(table, "GROUPVEL", mm / ns);
             opticalMaterial.fAbsLengthMm = ReadProperty(table, "ABSLENGTH", mm);
+            opticalMaterial.fScintillationSpectrum = {
+                ReadProperty(table, "SCINTILLATIONCOMPONENT1", 1.0),
+                ReadProperty(table, "SCINTILLATIONCOMPONENT2", 1.0),
+                ReadProperty(table, "SCINTILLATIONCOMPONENT3", 1.0),
+            };
         }
         const auto materialID{scene.AddMaterial(std::move(opticalMaterial))};
         materialIDs.emplace(material, materialID);
@@ -487,7 +607,7 @@ private:
             surface.fBackscatter =
                 ReadProperty(table, "BACKSCATTERCONSTANT", 1.0);
             if (table->ConstPropertyExists("SURFACEROUGHNESS")) {
-                surface.fSurfaceRoughness.fValues.push_back(static_cast<float>(
+                surface.fSurfaceRoughness.fValues.emplace_back(static_cast<float>(
                     table->GetConstProperty("SURFACEROUGHNESS")));
             }
             if (table->ConstPropertyExists("COATEDTHICKNESS")) {
@@ -548,9 +668,9 @@ private:
         property.fEnergyEv.reserve(length);
         property.fValues.reserve(length);
         for (auto index{std::size_t{}}; index < length; ++index) {
-            property.fEnergyEv.push_back(
+            property.fEnergyEv.emplace_back(
                 static_cast<float>(vector->Energy(index) / eV));
-            property.fValues.push_back(
+            property.fValues.emplace_back(
                 static_cast<float>((*vector)[index] / unit));
         }
         return property;

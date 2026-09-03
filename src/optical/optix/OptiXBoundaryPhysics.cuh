@@ -19,7 +19,7 @@ enum class SurfaceOutcome : unsigned char {
     SurfaceInteraction,
 };
 
-struct FresnelResult {
+struct FresnelOutput {
     DeviceVector3 fReflectedDirection{};
     DeviceVector3 fTransmittedDirection{};
     DeviceVector3 fReflectedPolarization{};
@@ -72,16 +72,16 @@ G4GO_OPTICAL_HD inline auto ClampProbability(float value) -> float {
 G4GO_OPTICAL_HD inline auto ProjectPolarization(DeviceVector3 polarization,
                                                 DeviceVector3 direction)
     -> DeviceVector3 {
-    auto result{Subtract(polarization,
+    auto output{Subtract(polarization,
                          Scale(direction, Dot(polarization, direction)))};
-    if (Dot(result, result) < 1.0e-12F) {
+    if (Dot(output, output) < 1.0e-12F) {
         const auto helper{
             fabsf(direction[2]) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
                 : DeviceVector3{1.0F, 0.0F, 0.0F}
         };
-        result = Cross(direction, helper);
+        output = Cross(direction, helper);
     }
-    return Normalize(result);
+    return Normalize(output);
 }
 
 G4GO_OPTICAL_HD inline auto ReflectDirection(DeviceVector3 direction,
@@ -155,7 +155,7 @@ G4GO_OPTICAL_HD inline auto ComputeFresnel(DeviceVector3 direction,
                                            DeviceVector3 polarization,
                                            DeviceVector3 normal,
                                            float indexFrom,
-                                           float indexTo) -> FresnelResult {
+                                           float indexTo) -> FresnelOutput {
     direction = Normalize(direction);
     normal = Normalize(normal);
     polarization = ProjectPolarization(polarization, direction);
@@ -166,18 +166,18 @@ G4GO_OPTICAL_HD inline auto ComputeFresnel(DeviceVector3 direction,
     const auto sineTransmittedSquared{
         eta * eta * (1.0F - cosineIncident * cosineIncident)};
 
-    FresnelResult result{};
-    result.fReflectedDirection = ReflectDirection(direction, normal);
-    result.fTotalInternalReflection = sineTransmittedSquared >= 1.0F;
-    if (result.fTotalInternalReflection) {
-        result.fReflectedPolarization = ReflectPolarization(
-            polarization, normal, result.fReflectedDirection);
-        return result;
+    FresnelOutput output{};
+    output.fReflectedDirection = ReflectDirection(direction, normal);
+    output.fTotalInternalReflection = sineTransmittedSquared >= 1.0F;
+    if (output.fTotalInternalReflection) {
+        output.fReflectedPolarization = ReflectPolarization(
+            polarization, normal, output.fReflectedDirection);
+        return output;
     }
 
     const auto cosineTransmitted{
         sqrtf(fmaxf(0.0F, 1.0F - sineTransmittedSquared))};
-    result.fTransmittedDirection = Normalize(Add(
+    output.fTransmittedDirection = Normalize(Add(
         Scale(direction, eta),
         Scale(normal, eta * cosineIncident - cosineTransmitted)));
 
@@ -186,12 +186,12 @@ G4GO_OPTICAL_HD inline auto ComputeFresnel(DeviceVector3 direction,
     if (transverseLengthSquared < 1.0e-12F) {
         const auto denominator{indexFrom + indexTo};
         const auto reflectionAmplitude{(indexFrom - indexTo) / denominator};
-        result.fTransmittance = ClampProbability(
+        output.fTransmittance = ClampProbability(
             1.0F - reflectionAmplitude * reflectionAmplitude);
-        result.fReflectedPolarization =
+        output.fReflectedPolarization =
             indexTo > indexFrom ? Scale(polarization, -1.0F) : polarization;
-        result.fTransmittedPolarization = polarization;
-        return result;
+        output.fTransmittedPolarization = polarization;
+        return output;
     }
 
     const auto sDirection{Normalize(transverse)};
@@ -215,19 +215,19 @@ G4GO_OPTICAL_HD inline auto ComputeFresnel(DeviceVector3 direction,
     const auto reflectionProbability{
         incidentS * incidentS * reflectedS * reflectedS +
         incidentP * incidentP * reflectedP * reflectedP};
-    result.fTransmittance = ClampProbability(1.0F - reflectionProbability);
+    output.fTransmittance = ClampProbability(1.0F - reflectionProbability);
 
     const auto reflectedPDirection{
-        Normalize(Cross(result.fReflectedDirection, sDirection))};
+        Normalize(Cross(output.fReflectedDirection, sDirection))};
     const auto transmittedPDirection{
-        Normalize(Cross(result.fTransmittedDirection, sDirection))};
-    result.fReflectedPolarization = Normalize(Add(
+        Normalize(Cross(output.fTransmittedDirection, sDirection))};
+    output.fReflectedPolarization = Normalize(Add(
         Scale(sDirection, incidentS * reflectedS),
         Scale(reflectedPDirection, incidentP * reflectedP)));
-    result.fTransmittedPolarization = Normalize(Add(
+    output.fTransmittedPolarization = Normalize(Add(
         Scale(sDirection, incidentS * transmittedS),
         Scale(transmittedPDirection, incidentP * transmittedP)));
-    return result;
+    return output;
 }
 
 } // namespace G4GO::Optical::BoundaryPhysics

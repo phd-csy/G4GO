@@ -12,7 +12,7 @@ SensorSD::SensorSD(const G4String& sdname, const G4String& hcName) :
 }
 
 auto SensorSD::Initialize(G4HCofThisEvent* hcOfThisEvent) -> void {
-    hc = new SensorHC(SensitiveDetectorName, collectionName[0]);
+    hc = new SensorHC(SensitiveDetectorName, collectionName.at(0));
     if (hcID < 0) {
         hcID = GetCollectionID(0);
     }
@@ -41,7 +41,5 @@ auto SensorSD::ProcessHits(G4Step* theStep, G4TouchableHistory*) -> G4bool {
 
     return true;
 }
-
-auto SensorSD::EndOfEvent(G4HCofThisEvent*) -> void {}
 
 } // namespace G4GO::Detector

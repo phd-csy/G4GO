@@ -4,6 +4,7 @@
 #include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/optical/Scene.hpp"
 
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -24,6 +25,9 @@ struct PhotonBatchStatistics {
     std::uint64_t fMaxBatchPhotonCount{};
     std::uint64_t fMaxBatchEventCount{};
     std::uint64_t fQueueHighWaterMark{};
+    std::uint64_t fMinBatchPhotonCount{};
+    std::uint64_t fTotalQueueWaitCount{};
+    PhotonTransportPerformance fPerformance{};
 };
 
 class Geant4BatchScheduler final {
@@ -39,29 +43,31 @@ public:
     auto BeginRun() -> void;
     auto EndRun() -> void;
 
-    auto Schedule(std::int32_t eventID,
-                  std::vector<Photon> photons,
-                  PhotonTransportStatistics sourceStatistics)
+    auto Submit(OpticalSubmission submission)
         -> PhotonTransportFuture;
 
     auto SelectedBackend() const -> PhotonTransportBackend;
+    auto PerformanceDiagnosticsEnabled() const -> bool {
+        return fConfiguration.fEnablePerformanceDiagnostics;
+    }
     auto ExportedScene() const -> const Scene& { return fScene; }
     auto RunStatistics() const -> const PhotonTransportStatistics&;
     auto BatchStatistics() const -> const PhotonBatchStatistics&;
+    auto PerformanceStatistics() const -> const PhotonTransportPerformance&;
 
 private:
     struct TransportRequest {
-        std::int32_t fEventID{};
-        std::vector<Photon> fPhotons{};
-        PhotonTransportStatistics fSourceStatistics{};
+        OpticalSubmission fSubmission{};
         std::shared_ptr<std::promise<PhotonTransportOutput>> fPromise{};
         std::chrono::steady_clock::time_point fQueuedAt{};
     };
 
     auto ProcessBatches() -> void;
-    auto FailPendingRequests(std::exception_ptr error) -> void;
-    auto SetFatalError(const char* operation, const std::exception& error)
+    auto CompleteBatch(std::vector<TransportRequest> requests,
+                       std::size_t photonCount,
+                       PhotonTransportOutput transportOutput)
         -> void;
+    auto FailPendingRequests(std::exception_ptr error) -> void;
 
     PhotonTransportConfig fConfiguration{};
     PhotonTransportBackend fBackend{PhotonTransportBackend::Auto};
@@ -74,6 +80,7 @@ private:
     std::condition_variable fCondition{};
     std::deque<TransportRequest> fPendingRequests{};
     std::size_t fQueuedPhotonCount{};
+    std::size_t fQueuedSubmissionCount{};
     std::thread fGpuThread{};
     std::exception_ptr fFailure{};
     bool fStarted{};
@@ -82,6 +89,8 @@ private:
 
     PhotonTransportStatistics fRunStatistics{};
     PhotonBatchStatistics fBatchStatistics{};
+    PhotonTransportPerformance fPerformance{};
+    std::vector<OpticalEmission> fBatchBuffer{};
 };
 
 } // namespace G4GO::Optical

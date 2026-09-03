@@ -11,6 +11,7 @@
 #include "g4go/detector/DetectorConstruction.hpp"
 #include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/simulation/ActionInitialization.hpp"
+#include "g4go/simulation/PhysicsList.hpp"
 #ifdef G4GO_USE_UIVIS
 #    include "G4UIExecutive.hh"
 #endif
@@ -36,6 +37,16 @@ struct CommandLineOptions {
     std::uint32_t threads{};
     bool help{};
 };
+
+auto UseOpticalOffload(G4GO::Optical::PhotonTransportBackend backend) -> bool {
+#ifdef G4GO_ENABLE_OPTIX
+    return backend == G4GO::Optical::PhotonTransportBackend::OptiX ||
+           backend == G4GO::Optical::PhotonTransportBackend::Auto;
+#else
+    static_cast<void>(backend);
+    return false;
+#endif
+}
 
 } // namespace
 
@@ -77,6 +88,16 @@ auto main(int argc, char** argv) -> int {
            "Target optical photons per GPU batch")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
+    app.add_option(
+           "--batch-timeout-ms",
+           options.photonTransportConfig.fBatchCollectionTimeoutMs,
+           "Maximum GPU batch collection wait in milliseconds")
+        ->check(CLI::Range(0U, 10'000U))
+        ->capture_default_str();
+    app.add_flag(
+        "--perf-diagnostics",
+        options.photonTransportConfig.fEnablePerformanceDiagnostics,
+        "Enable optical transport performance diagnostics");
     app.add_option(
            "--mesh-rotation-steps",
            options.photonTransportConfig.fMeshRotationSteps,
@@ -120,6 +141,9 @@ auto main(int argc, char** argv) -> int {
         return 0;
     }
 
+    const auto useOpticalOffload{
+        UseOpticalOffload(options.photonTransportConfig.fBackend)};
+
     const auto timer{new G4Timer()};
     timer->Start();
 
@@ -162,9 +186,19 @@ auto main(int argc, char** argv) -> int {
     runManager->SetUserInitialization(
         new G4GO::Detector::DetectorConstruction());
 
+    auto* opticalParameters{G4OpticalParameters::Instance()};
+    if (useOpticalOffload) {
+        opticalParameters->SetProcessActivation("Cerenkov", false);
+        opticalParameters->SetProcessActivation("Scintillation", false);
+        opticalParameters->SetCerenkovOffloadPhotons(true);
+        opticalParameters->SetScintOffloadPhotons(true);
+    }
     G4VModularPhysicsList* physicsList{new FTFP_BERT(0)};
     physicsList->RegisterPhysics(new G4OpticalPhysics(0));
-    G4OpticalParameters::Instance()->SetBoundaryInvokeSD(true);
+    if (useOpticalOffload) {
+        G4GO::Simulation::RegisterOpticalOffloadProcesses(*physicsList);
+    }
+    opticalParameters->SetBoundaryInvokeSD(true);
     physicsList->RegisterPhysics(new G4RadioactiveDecayPhysics(0));
     physicsList->ReplacePhysics(new G4EmStandardPhysics_option3(0));
     runManager->SetUserInitialization(physicsList);

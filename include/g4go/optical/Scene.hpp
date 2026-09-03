@@ -2,6 +2,7 @@
 
 #include "G4ThreeVector.hh"
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -62,7 +63,7 @@ struct PropertyTable {
 
     auto Empty() const -> bool { return fEnergyEv.empty(); }
     auto Constant() const -> bool;
-    auto Sample(float energyEv, float fallback) const -> float;
+    auto Sample(float energyEv, float defaultValue) const -> float;
 };
 
 struct Material {
@@ -70,6 +71,7 @@ struct Material {
     PropertyTable fRindex{};
     PropertyTable fGroupVelocityMmPerNs{};
     PropertyTable fAbsLengthMm{};
+    std::array<PropertyTable, 3> fScintillationSpectrum{};
 };
 
 struct Surface {
@@ -98,6 +100,7 @@ struct MeshGeometry {
     std::string fName{};
     std::vector<G4ThreeVector> fVerticesMm{};
     std::vector<std::uint32_t> fIndices{};
+    std::vector<G4ThreeVector> fTriangleNormals{};
     std::vector<std::uint8_t> fTriangleFlags{};
 };
 
@@ -138,6 +141,7 @@ public:
     auto AddVolume(Volume volume) -> std::uint32_t;
     auto AddSurfaceBinding(SurfaceBinding binding) -> void;
 
+    auto FindGeometry(std::uint32_t geometryID) -> Geometry*;
     auto FindMaterial(std::uint32_t materialID) const -> const Material*;
     auto FindSurface(std::uint32_t surfaceID) const -> const Surface*;
     auto FindGeometry(std::uint32_t geometryID) const -> const Geometry*;

@@ -3,7 +3,9 @@
 #include "g4go/optical/PhotonTransport.hpp"
 #include "g4go/optical/PhotonTransportConfig.hpp"
 
+#include <cstddef>
 #include <memory>
+#include <span>
 
 namespace G4GO::Optical {
 
@@ -15,7 +17,10 @@ public:
     OptiXTransportHost(const OptiXTransportHost&) = delete;
     auto operator=(const OptiXTransportHost&) -> OptiXTransportHost& = delete;
 
-    auto Propagate(const Scene& scene, std::span<const Photon> photons)
+    auto PrepareScene(const Scene& scene) -> void;
+
+    auto PropagateEmissions(const Scene& scene,
+                            std::span<const OpticalEmission> emissions)
         -> PhotonTransportOutput override;
 
 private:

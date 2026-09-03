@@ -11,26 +11,46 @@
 
 namespace G4GO::Optical {
 
-enum class PhotonSource : std::uint8_t {
-    Unknown,
-    Scintillation,
+enum class OpticalEmissionType : std::uint8_t {
+    Direct,
     Cerenkov,
+    Scintillation,
 };
 
-struct alignas(16) Photon {
+// Compact metadata produced by Geant4.  The GPU expands one record into its
+// photons in the ray-generation program; the CPU never materialises those
+// photons for the offload path.
+struct alignas(16) OpticalEmission {
     std::array<float, 3> fPositionMm{};
     float fTimeNs{};
 
     std::array<float, 3> fDirection{};
-    float fEnergyEv{};
+    float fStepLengthMm{};
+
+    std::array<float, 3> fStepDeltaMm{};
+    float fPreVelocityMmPerNs{};
 
     std::array<float, 3> fPolarization{};
-    float fWeight{1.0F};
+    float fDeltaVelocityMmPerNs{};
 
+    float fEnergyEv{};
+    float fWeight{1.0F};
+    float fPreMeanPhotonCount{};
+    float fPostMeanPhotonCount{};
+
+    float fDecayTimeNs{};
+    float fRiseTimeNs{};
+    float fCharge{};
     std::uint32_t fEventID{};
-    std::uint32_t fPhotonID{};
-    std::uint32_t fVolumeID{};
-    PhotonSource fSource{PhotonSource::Unknown};
+
+    std::uint32_t fEmissionID{};
+    std::uint32_t fFirstPhotonID{};
+    std::uint32_t fPhotonCount{};
+    std::uint32_t fVolumeID{InvalidID};
+
+    std::uint32_t fMaterialID{InvalidID};
+    std::uint32_t fSpectrumID{};
+    OpticalEmissionType fType{OpticalEmissionType::Direct};
     std::uint8_t fFlags{};
     std::uint16_t fReserved{};
 };
@@ -61,16 +81,66 @@ struct PhotonTransportStatistics {
     double fTransportTimeMs{};
 };
 
+struct PhotonTransportPerformance {
+    double fCaptureTotalMs{};
+    double fCaptureLocateVolumeMs{};
+    double fCaptureVolumeMappingMs{};
+    double fSchedulerQueueWaitMs{};
+    double fSchedulerBatchFlattenMs{};
+    std::uint64_t fSchedulerBatchFlattenBytes{};
+    double fHostToDeviceMs{};
+    double fDeviceMemsetMs{};
+    double fOptiXKernelMs{};
+    double fDeviceHitCompactionMs{};
+    double fDeviceToHostMs{};
+    double fHostHitCompactionMs{};
+    std::uint64_t fTotalBounceCount{};
+    std::uint64_t fCoincidentCandidateTraceCount{};
+    std::uint64_t fCoincidentCandidateHitCount{};
+    std::uint64_t fCerenkovPhotonCount{};
+    std::uint64_t fScintillationPhotonCount{};
+
+    auto Accumulate(const PhotonTransportPerformance& other) -> void {
+        fCaptureTotalMs += other.fCaptureTotalMs;
+        fCaptureLocateVolumeMs += other.fCaptureLocateVolumeMs;
+        fCaptureVolumeMappingMs += other.fCaptureVolumeMappingMs;
+        fSchedulerQueueWaitMs += other.fSchedulerQueueWaitMs;
+        fSchedulerBatchFlattenMs += other.fSchedulerBatchFlattenMs;
+        fSchedulerBatchFlattenBytes += other.fSchedulerBatchFlattenBytes;
+        fHostToDeviceMs += other.fHostToDeviceMs;
+        fDeviceMemsetMs += other.fDeviceMemsetMs;
+        fOptiXKernelMs += other.fOptiXKernelMs;
+        fDeviceHitCompactionMs += other.fDeviceHitCompactionMs;
+        fDeviceToHostMs += other.fDeviceToHostMs;
+        fHostHitCompactionMs += other.fHostHitCompactionMs;
+        fTotalBounceCount += other.fTotalBounceCount;
+        fCoincidentCandidateTraceCount +=
+            other.fCoincidentCandidateTraceCount;
+        fCoincidentCandidateHitCount += other.fCoincidentCandidateHitCount;
+        fCerenkovPhotonCount += other.fCerenkovPhotonCount;
+        fScintillationPhotonCount += other.fScintillationPhotonCount;
+    }
+};
+
 struct PhotonTransportOutput {
     std::vector<PhotonDetection> fDetections{};
     PhotonTransportStatistics fStatistics{};
+    PhotonTransportPerformance fPerformance{};
+};
+
+struct OpticalSubmission {
+    std::uint32_t fEventID{};
+    std::vector<OpticalEmission> fEmissions{};
+    std::uint64_t fPhotonCount{};
+    PhotonTransportStatistics fSourceStatistics{};
+    PhotonTransportPerformance fSourcePerformance{};
 };
 
 using PhotonTransportFuture = std::shared_future<PhotonTransportOutput>;
 
-static_assert(std::is_trivially_copyable_v<Photon>);
 static_assert(std::is_trivially_copyable_v<PhotonDetection>);
-static_assert(sizeof(Photon) == 64);
+static_assert(std::is_trivially_copyable_v<OpticalEmission>);
+static_assert(sizeof(OpticalEmission) == 128);
 static_assert(sizeof(PhotonDetection) == 48);
 
 class PhotonTransport {
@@ -81,7 +151,8 @@ public:
     PhotonTransport(const PhotonTransport&) = delete;
     auto operator=(const PhotonTransport&) -> PhotonTransport& = delete;
 
-    virtual auto Propagate(const Scene& scene, std::span<const Photon> photons)
+    virtual auto PropagateEmissions(
+        const Scene& scene, std::span<const OpticalEmission> emissions)
         -> PhotonTransportOutput = 0;
 };
 

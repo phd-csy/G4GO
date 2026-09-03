@@ -62,18 +62,18 @@ if(G4GO_ENABLE_OPTIX)
                 message(STATUS "G4GO OptiX build: enabled")
             else()
                 message(STATUS
-                    "G4GO OptiX build dependencies are incomplete; using Geant4 fallback")
+                    "G4GO OptiX build dependencies are incomplete; building Geant4 backend")
             endif()
         else()
             message(STATUS
-                "G4GO OptiX build dependencies are incomplete; using Geant4 fallback")
+                "G4GO OptiX build dependencies are incomplete; building Geant4 backend")
         endif()
     else()
         message(STATUS
-            "CUDA compiler was not detected; using Geant4 fallback")
+            "CUDA compiler was not detected; building Geant4 backend")
     endif()
 else()
-    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; using Geant4 fallback")
+    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; building Geant4 backend")
 endif()
 
 if(G4GO_BUILD_UIVIS)
@@ -130,6 +130,8 @@ if(G4GO_OPTIX_AVAILABLE)
         "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cuh"
         "${PROJECT_SOURCE_DIR}/include/g4go/optical/optix/*.hpp"
     )
+    set(G4GO_OPTIX_COMPACTION_SOURCE
+        "${PROJECT_SOURCE_DIR}/src/optical/optix/OptiXHitCompaction.cu")
 
     add_custom_command(
         OUTPUT ${G4GO_OPTIX_IR}
@@ -167,9 +169,15 @@ if(G4GO_OPTIX_AVAILABLE)
 
     add_library(g4go_optical_optix STATIC
         ${G4GO_OPTIX_HOST_FILES}
+        ${G4GO_OPTIX_COMPACTION_SOURCE}
         ${G4GO_OPTIX_IR_HEADER}
     )
     g4go_configure_cpp_target(g4go_optical_optix)
+    set_target_properties(g4go_optical_optix PROPERTIES
+        CUDA_STANDARD 20
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_ARCHITECTURES ${G4GO_CUDA_ARCHITECTURE}
+    )
     add_dependencies(g4go_optical_optix g4go_optix_module)
     target_include_directories(g4go_optical_optix PRIVATE
         ${optix_dev_SOURCE_DIR}/include
@@ -195,7 +203,7 @@ target_link_libraries(g4go_optical_geant4
     PRIVATE ${Geant4_LIBRARIES})
 
 if(G4GO_OPTIX_AVAILABLE)
-    target_compile_definitions(g4go_optical_geant4 PRIVATE G4GO_ENABLE_OPTIX)
+    target_compile_definitions(g4go_optical_geant4 PUBLIC G4GO_ENABLE_OPTIX)
     target_include_directories(g4go_optical_geant4 PRIVATE
         ${PROJECT_SOURCE_DIR}/src/optical/optix)
     target_link_libraries(g4go_optical_geant4 PRIVATE
