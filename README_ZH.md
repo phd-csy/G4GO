@@ -17,7 +17,7 @@
 
 G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光学光子输运模拟的项目。
 
-项目面向单晶体光学探测单元，提供统一的 CPU/GPU optical backend、Geant4 event adapter 和 ROOT ntuple 输出。GPU backend 负责光学光子的批量输运，Geant4 继续负责粒子相互作用、几何定义、材料属性、事件管理和结果写入。
+项目面向单晶体光学探测单元，提供统一的 CPU/GPU optical backend、Geant4 event adapter 和 ROOT ntuple 输出。GPU backend 负责光学光子的批量输运，Geant4 继续负责粒子相互作用、几何定义、材料属性、事件管理和输出数据写入。
 
 ## 主要能力
 
@@ -25,17 +25,17 @@ G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光�
 - 使用 CUDA 与 NVIDIA OptiX 9.1 执行 GPU 光学光子输运。
 - 支持 `auto`、`cpu` 和 `gpu` 三种 backend 选择策略。
 - 将 `CrystalHit` 和 `SensorHit` 写入 ROOT ntuple。
-- 提供光学边界单元测试、端到端 smoke test，以及包含 TOF、传感器占用和线程确定性检查的 CPU/GPU 光学回归测试。
+- 提供光学边界单元测试、端到端 smoke test，以及包含 TOF 和传感器占用检查的 CPU/GPU 光学回归测试。
 
 ## Backend
 
 | Backend | 光学光子处理 | 适用场景 | 失败行为 |
 | --- | --- | --- | --- |
-| `auto` | 优先使用 OptiX，初始化失败时切换到 Geant4 | 通用运行与 smoke test | 保留告警并继续使用 CPU |
-| `cpu` | Geant4 原生 optical tracking | 基准结果、无 NVIDIA GPU 环境 | Geant4 错误直接上报 |
+| `auto` | 构建了 GPU backend 时选择 OptiX，否则选择 Geant4 | 通用运行与 smoke test | OptiX 运行时错误直接上报 |
+| `cpu` | Geant4 原生 optical tracking | 基准输出、无 NVIDIA GPU 环境 | Geant4 错误直接上报 |
 | `gpu` | 捕获 Geant4 生成的光学光子并交给 OptiX | GPU 验证、性能测试、回归测试 | OptiX 不可用时直接失败 |
 
-GPU backend 使用事件聚合的异步流水线。Geant4 worker 将事件提交到共享队列，独立 GPU executor 聚合多个事件后执行 OptiX launch；结果按 event ID 返回原 worker，并由 Geant4 analysis manager 写入 ROOT 文件。
+GPU backend 使用事件聚合流水线。Geant4 worker 将事件提交到有界共享队列，独立 GPU executor 聚合多个事件后执行 OptiX launch。每个 batch 使用异步 CUDA copy 和 non-blocking stream；GPU executor 复用 transport slot 完成设备执行和输出数据回收。输出按 event ID 返回原 worker，并由 Geant4 analysis manager 写入 ROOT 文件。
 
 ## 依赖
 
@@ -55,7 +55,7 @@ GPU backend 使用事件聚合的异步流水线。Geant4 worker 将事件提交
 - OptiX 9.1 development headers 由 CMake 从 `NVIDIA/optix-dev` 获取；完整 OptiX SDK 对 G4GO 属于可选依赖。
 - `G4GO_CUDA_ARCHITECTURE` 与目标 GPU 的 compute capability 一致。
 
-### 测试与结果检查
+### 测试与输出检查
 
 - Bash 用于 CPU/GPU 回归测试编排。
 - ROOT 命令行程序用于回归比较，`rootls` 可用于检查输出文件。
@@ -155,8 +155,10 @@ g4go [OPTIONS] [macro]
 | `--seed UINT64` | `42` | 设置 Geant4 和 OptiX 随机种子 |
 | `--threads UINT32` | `0` | Geant4 worker 数量；`0` 表示使用检测到的 CPU core 数量 |
 | `--batch-photons UINT32` | `1000000` | GPU batch 的目标光子数 |
+| `--batch-timeout-ms UINT32` | `10` | 发射 GPU batch 前等待更多 event 的最长时间 |
 | `--max-photons UINT32` | `5000000` | 单事件允许捕获的最大光子数 |
 | `--max-bounces UINT32` | `4096` | 单光子的最大边界交互次数 |
+| `--perf-diagnostics` | disabled | 输出 capture、scheduler、CUDA stage、OptiX 和 transport counter 诊断 |
 | `--mesh-rotation-steps UINT32` | `360` | Geant4 polyhedron 旋转采样数，有效范围为 8 到 4096 |
 | `macro` | — | Geant4 macro 文件；无 UI 构建时必须提供 |
 
@@ -165,16 +167,32 @@ g4go [OPTIONS] [macro]
 | 文件 | 用途 | Analysis 文件名 |
 | --- | --- | --- |
 | `scripts/run_optical_test.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_test.root` |
-| `scripts/run_beam_eminus.mac` | 从晶体前方发射 5 MeV 电子束，共 2000 个 event | `run_beam_eminus.root` |
+| `scripts/run_beam_eminus.mac` | 从晶体前方发射 0.511 MeV 电子束，共 10000 个 event | `run_beam_eminus.root` |
 | `scripts/vis.mac` | 交互式几何与轨迹可视化 | `vis.root` |
 
-ROOT 文件写入当前工作目录。仓库自带 macro 的文件名由各自的 `/analysis/setFileName` 命令确定；event 没有产生可写 ntuple 记录时，Geant4 analysis manager 可能不会保留空文件。可在束流运行后检查结果：
+ROOT 文件写入当前工作目录。仓库自带 macro 的文件名由各自的 `/analysis/setFileName` 命令确定；event 没有产生可写 ntuple 记录时，Geant4 analysis manager 可能不会保留空文件。可在束流运行后检查输出：
 
 ```bash
 cd build
 ./g4go --backend cpu scripts/run_beam_eminus.mac
 rootls -t run_beam_eminus.root
 ```
+
+## 性能基准
+
+`test/regression_test.sh` 使用 `--threads 1`，并将 CPU 与 GPU 运行绑定到同一个 Linux CPU affinity。默认 affinity 为 CPU `2`，默认 batch collection timeout 为 `10 ms`；该值来自已测 timeout 扫描中的端到端 wall time 测量。脚本会将每次运行的日志与 ROOT 文件保存在 `build/test/regression/noptpho_<timestamp>/` 下。
+
+执行三次并取中位数，同时启用分段诊断：
+
+```bash
+G4GO_CPU_AFFINITY=2 \
+G4GO_BATCH_TIMEOUT_MS=10 \
+G4GO_BENCHMARK_RUNS=3 \
+G4GO_PERF_DIAGNOSTICS=1 \
+test/regression_test.sh --build-dir build
+```
+
+生成的 `benchmark_summary.txt` 记录 CPU/GPU wall time 中位数，以及 GPU 相对单核 CPU 的加速比。启用诊断后，`performance_summary.txt` 汇总 `capture_total_ms`、`capture_locate_volume_ms`、`capture_volume_mapping_ms`、`scheduler_queue_wait_ms`、`scheduler_batch_flatten_ms`、`scheduler_batch_flatten_bytes`、`host_to_device_ms`、`device_memset_ms`、`optix_kernel_ms`、`device_hit_compaction_ms`、`device_to_host_ms`、`host_hit_compaction_ms`、bounce count 和共面边界计数。ROOT 比较仍由 `test/TestOpticalTransport.cxx` 完成，图片与报告保存在同一个回归目录。
 
 ## 探测器模型
 
@@ -250,7 +268,7 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
 | `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | 单核 CPU、全核 CPU 与 GPU 的 `CrystalHit.nOptPho` 比较 |
+| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | 单核 CPU 与单核 GPU 的 `nOptPho`、TOF 和传感器占用率比较 |
 
 运行全部测试：
 
@@ -258,7 +276,7 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 ctest --test-dir build --output-on-failure
 ```
 
-### CPU 单核/全核与 GPU `nOptPho` 回归
+### 单核 CPU 与 GPU `nOptPho` 回归
 
 ```bash
 (
@@ -268,7 +286,7 @@ ctest --test-dir build --output-on-failure
 )
 ```
 
-回归编排器使用 `scripts/run_beam_eminus.mac` 依次运行单核 CPU、全核 CPU 和全核 GPU。ROOT 比较检查 `nOptPho`、`SensorHit` 探测数、光子飞行时间摘要和 64 个传感器占用分箱；随后使用确定性 optical-photon 宏，以 1、2、4、8 个 Geant4 worker 运行 GPU 输运，并比较生成、吸收、逃逸和探测统计。默认情况下，“全核”使用检测到的全部物理核心；可通过 `--threads N` 覆盖 worker 数量。普通模式只打印阶段摘要，同时将子进程完整输出保存到阶段日志；直接运行编排器时增加 `--verbose` 可以实时显示子进程输出。统计比较使用全核 CPU 结果作为 Geant4 参考，同时报告 GPU 相对于两种 CPU 运行的加速比。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
+回归编排器使用 `scripts/run_beam_eminus.mac`，让 CPU 和 GPU backend 都以 1 个 Geant4 worker 运行。ROOT 比较检查 `nOptPho` 和光子飞行时间分布、`SensorHit` 探测数以及 64 个传感器占用分箱，并报告 GPU 相对于单核 CPU 基线的加速比。普通模式只打印阶段摘要，同时将子进程完整输出保存到阶段日志；直接运行编排器时增加 `--verbose` 可以实时显示子进程输出。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
 
 命令特意不使用 CTest 的 `-V` 选项。`--no-label-summary` 隐藏重复的标签耗时表，`--output-on-failure` 仅在测试失败时显示测试输出。需要查看完整回归输出时，直接运行：
 
@@ -276,14 +294,15 @@ ctest --test-dir build --output-on-failure
 bash build/test/regression_test.sh --build-dir build --verbose
 ```
 
-ROOT 比较宏 `test/TestOpticalTransport.cxx` 使用未加权 `Chi2TestX(..., "UU P OF")` 比较 `nOptPho` 分布，同时检查 CPU/GPU 总光子数相对差异。`Z > 5`、卡方条件无效或总量相对差异超过 10% 时测试失败；`3 < Z <= 5` 标记为 `SUSPICIOUS`，其余有效结果通过。
+ROOT 比较宏 `test/TestOpticalTransport.cxx` 使用未加权 `Chi2TestX(..., "UU P OF")` 比较 `nOptPho`、光子飞行时间和 64 个传感器占用分布。`nOptPho` 和 TOF 的卡方字段继续完整记录，用于诊断；CPU 原生 optical tracking 与 GPU emission offload 使用独立随机流，因此 `nOptPho` 回归门槛使用总量、均值和 RMS 容差。TOF 回归门槛使用固定 40 分箱的形状检验以及均值、RMS 容差，避免独立 CPU/GPU Monte Carlo 样本在总体量较大时将微小效应放大为误报。`nOptPho` 图使用 200 个未归一化分箱，光子飞行时间图使用 100 个未归一化分箱，时间范围覆盖观测到的有限非负值且上限至少为 1000 ns。宏同时检查 CPU/GPU 总光子数与探测数，并拒绝非法值、直方图下溢或上溢。必需比较无效、形状或计数容差超限，或对应计数相对差异超过 10% 时测试失败；卡方 `3 < Z <= 5` 标记为 `SUSPICIOUS`，更高 Z 保留为诊断状态，其余有效输出通过。
 
 每次运行的产物位于 `build/test/regression/noptpho_<timestamp>/`：
 
-- `noptpho_cpu_single.root`、`noptpho_cpu_all.root`、`noptpho_gpu.root`：单核 CPU、全核 CPU 和 GPU 输入数据。
-- `noptpho_comparison.png`、`noptpho_regression_report.root`：分布、pull 和统计结果。
-- `regression_result.txt`：结论、三组墙钟时间和 GPU 相对于两种 CPU 运行的加速比。
-- `cpu_single.log`、`cpu_all.log`、`gpu.log`、`comparison.log` 和 `gpu_determinism.log`：各阶段完整日志；`regression.log` 保存编排输出，verbose 模式下也包含透传的子进程输出。
+- `noptpho_cpu_single.root`、`noptpho_gpu_single.root`：单核 CPU 和单核 GPU 输入数据。
+- `noptpho_comparison.png`、`tof_comparison.png`：`nOptPho` 和光子飞行时间的分布与 pull 图。
+- `noptpho_regression_report.root`：ROOT 分布、pull 和统计输出。
+- `regression_output.txt`：结论、两组墙钟时间和 GPU 相对于单核 CPU 运行的加速比。
+- `cpu_single.log`、`gpu.log` 和 `comparison.log`：各阶段完整日志；`regression.log` 保存编排输出，verbose 模式下也包含透传的子进程输出。
 
 ## WSL2 OptiX runtime 排障
 
@@ -325,7 +344,7 @@ LD_LIBRARY_PATH="$G4GO_OPTIX_RUNTIME:/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIB
 
 ## 贡献
 
-提交 issue 或 pull request 时请说明问题背景、复现方式、backend、Geant4/CUDA/OptiX 版本和验证结果。代码改动应保持模块边界，补充与改动直接相关的测试，并在提交前运行：
+提交 issue 或 pull request 时请说明问题背景、复现方式、backend、Geant4/CUDA/OptiX 版本和验证输出。代码改动应保持模块边界，补充与改动直接相关的测试，并在提交前运行：
 
 ```bash
 cmake --build build --target g4go-format-check
