@@ -9,7 +9,9 @@
 namespace G4GO::Detector {
 
 ScintillatorSD::ScintillatorSD(const G4String& sdName, const G4String& hcName) :
-    G4VSensitiveDetector{sdName} {
+    G4VSensitiveDetector{sdName},
+    hc{nullptr},
+    hcID{-1} {
     collectionName.insert(hcName);
 }
 
@@ -24,7 +26,7 @@ auto ScintillatorSD::Initialize(G4HCofThisEvent* hcOfThisEvent) -> void {
         hcID = GetCollectionID(0);
     }
     hcOfThisEvent->AddHitsCollection(hcID, hc);
-    for (auto i{0}; i < moduleID; ++i) {
+    for (int i{}; i < moduleID; ++i) {
         hc->insert(new ScintillatorHit());
     }
 }

@@ -4,7 +4,7 @@
 #include "G4QuasiOpticalPhoton.hh"
 #include "G4Track.hh"
 #include "G4VProcess.hh"
-#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
+#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -12,7 +12,7 @@
 namespace G4GO::Simulation {
 
 StackingAction::StackingAction(
-    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter) :
+    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter) :
     fAdapter{std::move(adapter)} {
     if (!fAdapter) {
         throw std::invalid_argument(
@@ -46,10 +46,8 @@ auto StackingAction::ClassifyNewTrack(const G4Track* track)
         const auto& processName{creatorProcess->GetProcessName()};
         if (processName == "QuasiCerenkov" ||
             processName == "QuasiScintillation") {
-            // Geant4's quasi scintillation process also materializes regular
-            // optical secondaries while producing its offload metadata. The
-            // quasi track is the authoritative GPU emission; discard this
-            // duplicate host expansion before it reaches the adapter.
+            // Keep a defensive kill switch for a misconfigured process that
+            // accidentally creates a regular photon beside its quasi track.
             return fKill;
         }
     }

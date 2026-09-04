@@ -1,13 +1,18 @@
 #pragma once
 
-class G4VModularPhysicsList;
+#include "FTFP_BERT.hh"
 
 namespace G4GO::Simulation {
 
-// Registers Geant4's built-in quasi optical processes used by the offload
-// path.  The process implementations stay in Geant4; G4GO only selects and
-// configures them so that they emit compact quasi-photon metadata.
-auto RegisterOpticalOffloadProcesses(G4VModularPhysicsList& physicsList)
-    -> void;
+class PhysicsList final : public FTFP_BERT {
+public:
+    explicit PhysicsList(G4bool useOpticalOffload);
+
+    auto ConstructParticle() -> void override;
+    auto ConstructProcess() -> void override;
+
+private:
+    G4bool fUseOpticalOffload{};
+};
 
 } // namespace G4GO::Simulation

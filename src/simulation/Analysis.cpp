@@ -69,6 +69,8 @@ auto Analysis::WriteEvent(PendingEvent event) -> void {
         analysisManager->FillNtupleDColumn(0, 2, crystalHit.fEnergyDeposit);
         analysisManager->FillNtupleIColumn(
             0, 3, static_cast<int>(detectedCount));
+        analysisManager->FillNtupleIColumn(
+            0, 4, crystalHit.fGeneratedPhotonCount);
         analysisManager->AddNtupleRow(0);
     }
 

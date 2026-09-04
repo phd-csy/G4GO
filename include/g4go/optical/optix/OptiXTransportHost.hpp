@@ -20,12 +20,12 @@ public:
     auto PrepareScene(const Scene& scene) -> void;
 
     auto PropagateEmissions(const Scene& scene,
-                            std::span<const OpticalEmission> emissions)
+                            const PhotonTransportBatch& batch)
         -> PhotonTransportOutput override;
 
 private:
     class Impl;
-    std::unique_ptr<Impl> fImpl{};
+    std::unique_ptr<Impl> fImpl;
 };
 
 } // namespace G4GO::Optical

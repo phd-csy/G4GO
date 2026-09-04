@@ -7,7 +7,7 @@
 #include "g4go/detector/DetectorConstruction.hpp"
 #include "g4go/detector/ScintillatorHit.hpp"
 #include "g4go/detector/SensorHit.hpp"
-#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
+#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
 #include <cstddef>
@@ -16,7 +16,7 @@
 namespace G4GO::Simulation {
 
 EventAction::EventAction(
-    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter,
     std::shared_ptr<Analysis> analysis) :
     fAdapter{std::move(adapter)},
     fAnalysis{std::move(analysis)} {}
@@ -43,14 +43,17 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
                             G4RunManager::GetRunManager()->GetUserDetectorConstruction())
                             ->ModuleID()};
     const auto eventID{event->GetEventID()};
+    const auto generatedPhotonCount{static_cast<int>(
+        fAdapter->EventStatistics().fGeneratedCount)};
     std::vector<CrystalHitOutput> crystalHits{};
     crystalHits.reserve(moduleID);
-    for (auto i{0}; i < moduleID; ++i) {
+    for (int i{}; i < moduleID; ++i) {
         const auto energyDeposit{
-            scintHC->GetVector()->at(static_cast<std::size_t>(i))->GetEnergyDeposit()};
+            scintHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
         if (energyDeposit > 0.) {
             crystalHits.emplace_back(
-                CrystalHitOutput{eventID, i, energyDeposit});
+                CrystalHitOutput{eventID, i, energyDeposit,
+                                 generatedPhotonCount});
         }
     }
 
@@ -61,8 +64,8 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
             const auto* sensorHit{sensorHC->GetVector()->at(index)};
             sensorHits.emplace_back(SensorHitOutput{
                 eventID,
-                sensorHit->GetCopyNo(),
-                static_cast<double>(sensorHit->GetGlobalTime() / ns),
+                sensorHit->CopyNo(),
+                static_cast<double>(sensorHit->GlobalTime() / ns),
             });
         }
     }

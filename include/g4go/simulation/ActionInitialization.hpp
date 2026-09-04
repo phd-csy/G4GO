@@ -6,7 +6,7 @@
 #include <memory>
 
 namespace G4GO::Optical {
-class Geant4BatchScheduler;
+class G4GOBatchScheduler;
 } // namespace G4GO::Optical
 
 namespace G4GO::Simulation {
@@ -21,8 +21,8 @@ public:
     auto Build() const -> void override;
 
 private:
-    G4GO::Optical::PhotonTransportConfig fConfiguration{};
-    std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> fBatchScheduler{};
+    G4GO::Optical::PhotonTransportConfig fConfiguration;
+    std::shared_ptr<G4GO::Optical::G4GOBatchScheduler> fBatchScheduler;
 };
 
 } // namespace G4GO::Simulation

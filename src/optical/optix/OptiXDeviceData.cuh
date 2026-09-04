@@ -20,9 +20,7 @@ struct DevicePhoton {
     std::uint32_t fEventID{};
     std::uint32_t fPhotonID{};
     std::uint32_t fVolumeID{};
-    std::uint8_t fSource{};
-    std::uint8_t fFlags{};
-    std::uint16_t fReserved{};
+    std::uint32_t fEventIndex{};
 };
 
 struct DevicePhotonHit {
@@ -82,9 +80,10 @@ struct DeviceProperty {
 
 struct DeviceMaterial {
     DeviceProperty fRindex{};
+    float fRindexMax{1.0F};
     DeviceProperty fGroupVelocityMmPerNs{};
     DeviceProperty fAbsLengthMm{};
-    DeviceProperty fScintillationSpectrum[3]{};
+    std::array<DeviceProperty, 3> fScintillationSpectrum{};
 };
 
 struct DeviceSurface {
@@ -97,17 +96,10 @@ struct DeviceSurface {
     DeviceProperty fEfficiency{};
     DeviceProperty fTransmittance{};
     DeviceProperty fRindex{};
-    DeviceProperty fRealRindex{};
-    DeviceProperty fImaginaryRindex{};
-    DeviceProperty fCoatedRindex{};
     DeviceProperty fSpecularLobe{};
     DeviceProperty fSpecularSpike{};
     DeviceProperty fBackscatter{};
     DeviceProperty fSurfaceRoughness{};
-    DeviceProperty fDichroic{};
-    float fCoatedThicknessMm{};
-    std::uint8_t fCoatedFrustratedTransmission{1};
-    std::uint8_t fReservedSurface[3]{};
 };
 
 struct DeviceMeshGeometry {
@@ -170,17 +162,30 @@ struct DeviceTransportStats {
     unsigned long long fCoincidentCandidateHitCount{};
 };
 
+struct DeviceEventTransportStats {
+    unsigned long long fDetectedCount{};
+    unsigned long long fAbsorbedCount{};
+    unsigned long long fEscapedCount{};
+    unsigned long long fTruncatedCount{};
+    unsigned long long fMaxBounceCount{};
+    unsigned long long fInvalidStateCount{};
+    unsigned long long fZeroStepCount{};
+};
+
 struct OptixLaunchParams {
     DeviceOpticalEmission* fEmissions{};
+    const std::uint32_t* fEmissionEventIndices{};
     const std::uint32_t* fEmissionOffsets{};
     DevicePhotonHit* fHits{};
     std::uint32_t* fHitFlags{};
     DeviceTransportStats* fStats{};
+    DeviceEventTransportStats* fEventStats{};
     DeviceScene fScene{};
     std::uint64_t fTraversable{};
     std::uint64_t fSeed{};
     std::uint32_t fMaxBounceCount{};
     std::uint32_t fEmissionCount{};
+    std::uint32_t fEventCount{};
     std::uint32_t fPhotonCount{};
     std::uint32_t fEnablePerformanceDiagnostics{};
     float fBoundaryEpsilonMm{};

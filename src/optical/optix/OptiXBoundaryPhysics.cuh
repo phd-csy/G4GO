@@ -30,30 +30,34 @@ struct FresnelOutput {
 
 G4GO_OPTICAL_HD inline auto Add(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
-    return {left[0] + right[0], left[1] + right[1], left[2] + right[2]};
+    return {left.at(0) + right.at(0), left.at(1) + right.at(1),
+            left.at(2) + right.at(2)};
 }
 
 G4GO_OPTICAL_HD inline auto Subtract(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
-    return {left[0] - right[0], left[1] - right[1], left[2] - right[2]};
+    return {left.at(0) - right.at(0), left.at(1) - right.at(1),
+            left.at(2) - right.at(2)};
 }
 
 G4GO_OPTICAL_HD inline auto Scale(DeviceVector3 vector, float value)
     -> DeviceVector3 {
-    return {vector[0] * value, vector[1] * value, vector[2] * value};
+    return {vector.at(0) * value, vector.at(1) * value,
+            vector.at(2) * value};
 }
 
 G4GO_OPTICAL_HD inline auto Dot(DeviceVector3 left, DeviceVector3 right)
     -> float {
-    return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+    return left.at(0) * right.at(0) + left.at(1) * right.at(1) +
+           left.at(2) * right.at(2);
 }
 
 G4GO_OPTICAL_HD inline auto Cross(DeviceVector3 left, DeviceVector3 right)
     -> DeviceVector3 {
     return {
-        left[1] * right[2] - left[2] * right[1],
-        left[2] * right[0] - left[0] * right[2],
-        left[0] * right[1] - left[1] * right[0],
+        left.at(1) * right.at(2) - left.at(2) * right.at(1),
+        left.at(2) * right.at(0) - left.at(0) * right.at(2),
+        left.at(0) * right.at(1) - left.at(1) * right.at(0),
     };
 }
 
@@ -76,7 +80,7 @@ G4GO_OPTICAL_HD inline auto ProjectPolarization(DeviceVector3 polarization,
                          Scale(direction, Dot(polarization, direction)))};
     if (Dot(output, output) < 1.0e-12F) {
         const auto helper{
-            fabsf(direction[2]) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
+            fabsf(direction.at(2)) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
                 : DeviceVector3{1.0F, 0.0F, 0.0F}
         };
         output = Cross(direction, helper);
@@ -106,16 +110,22 @@ G4GO_OPTICAL_HD inline auto ClassifySurface(float reflectivity,
                                             bool hasReflectivity,
                                             bool hasTransmittance,
                                             float sample) -> SurfaceOutcome {
-    const auto directTransmission{ClampProbability(transmittance)};
-    const auto surfaceInteraction{
-        hasReflectivity ? (1.0F - directTransmission) * ClampProbability(reflectivity) : (hasTransmittance ? 0.0F : 1.0F)};
-    if (sample < directTransmission) {
-        return SurfaceOutcome::DirectTransmit;
-    }
-    if (sample < directTransmission + surfaceInteraction) {
+    const auto normalizedSample{ClampProbability(sample)};
+    const auto reflectionThreshold{
+        hasReflectivity ? ClampProbability(reflectivity) : 0.0F};
+    const auto transmissionThreshold{
+        hasTransmittance ? ClampProbability(transmittance) : 0.0F};
+    if (!hasReflectivity && !hasTransmittance) {
         return SurfaceOutcome::SurfaceInteraction;
     }
-    return SurfaceOutcome::Absorb;
+    if (normalizedSample >
+        reflectionThreshold + transmissionThreshold) {
+        return SurfaceOutcome::Absorb;
+    }
+    if (normalizedSample > reflectionThreshold) {
+        return SurfaceOutcome::DirectTransmit;
+    }
+    return SurfaceOutcome::SurfaceInteraction;
 }
 
 G4GO_OPTICAL_HD inline auto EvaluateAbsorption(float efficiency,
@@ -140,7 +150,7 @@ G4GO_OPTICAL_HD inline auto SampleLambertian(DeviceVector3 normal,
     const auto normalComponent{
         sqrtf(fmaxf(0.0F, 1.0F - radialSample))};
     const auto helper{
-        fabsf(normal[2]) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
+        fabsf(normal.at(2)) < 0.9F ? DeviceVector3{0.0F, 0.0F, 1.0F}
             : DeviceVector3{1.0F, 0.0F, 0.0F}
     };
     const auto tangent{Normalize(Cross(helper, normal))};

@@ -1,9 +1,18 @@
 #include "g4go/optical/Scene.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <utility>
 
 namespace G4GO::Optical {
+
+Scene::Scene() :
+    fMaterials{},
+    fSurfaces{},
+    fGeometries{},
+    fVolumes{},
+    fSurfaceBindings{},
+    fWorldVolumeID{InvalidID} {}
 
 auto PropertyTable::Constant() const -> bool {
     return fValues.size() == 1 ||
@@ -118,8 +127,8 @@ auto Scene::FindVolume(std::uint32_t physicalVolumeID,
     return volume == fVolumes.end() ? nullptr : &*volume;
 }
 
-auto Scene::SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
-                                               bool value) -> void {
+auto Scene::VolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                            bool value) -> void {
     if (volumeID < fVolumes.size() &&
         fVolumes.at(volumeID).fVolumeID == volumeID) {
         fVolumes[volumeID].fMayHaveCoincidentBoundary = value;
@@ -134,6 +143,32 @@ auto Scene::SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
     }
 }
 
+auto Scene::EnsureUniqueGeometry(std::uint32_t volumeID) -> void {
+    auto volumeIterator{std::find_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
+            return candidate.fVolumeID == volumeID;
+        })};
+    if (volumeIterator == fVolumes.end()) {
+        throw std::invalid_argument(
+            "cannot make geometry unique for an unknown volume");
+    }
+    const auto geometryID{volumeIterator->fGeometryID};
+    if (geometryID >= fGeometries.size()) {
+        throw std::invalid_argument(
+            "volume references an unknown geometry");
+    }
+    const auto references{std::count_if(
+        fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
+            return candidate.fGeometryID == geometryID;
+        })};
+    if (references <= 1) {
+        return;
+    }
+    auto geometry{fGeometries.at(geometryID)};
+    const auto uniqueGeometryID{AddGeometry(std::move(geometry))};
+    volumeIterator->fGeometryID = uniqueGeometryID;
+}
+
 auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID,
                                 std::uint32_t toVolumeID) const
     -> const Surface* {
@@ -146,16 +181,30 @@ auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID,
         return FindSurface(binding->fSurfaceID);
     }
 
+    const auto* fromVolume{FindVolume(fromVolumeID)};
     const auto* toVolume{FindVolume(toVolumeID)};
-    if (toVolume != nullptr && toVolume->fSkinSurfaceID != InvalidID) {
-        return FindSurface(toVolume->fSkinSurfaceID);
+    if (fromVolume == nullptr || toVolume == nullptr) {
+        return nullptr;
     }
 
-    const auto* fromVolume{FindVolume(fromVolumeID)};
-    if (fromVolume != nullptr && fromVolume->fSkinSurfaceID != InvalidID) {
-        return FindSurface(fromVolume->fSkinSurfaceID);
+    const auto findSkinSurface{[&](const Volume* volume) -> const Surface* {
+        if (volume == nullptr || volume->fSkinSurfaceID == InvalidID) {
+            return nullptr;
+        }
+        return FindSurface(volume->fSkinSurfaceID);
+    }};
+    if (toVolume->fParentVolumeID == fromVolumeID) {
+        if (const auto* surface{findSkinSurface(toVolume)};
+            surface != nullptr) {
+            return surface;
+        }
+        return findSkinSurface(fromVolume);
     }
-    return nullptr;
+    if (const auto* surface{findSkinSurface(fromVolume)};
+        surface != nullptr) {
+        return surface;
+    }
+    return findSkinSurface(toVolume);
 }
 
 } // namespace G4GO::Optical

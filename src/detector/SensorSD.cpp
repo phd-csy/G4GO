@@ -7,7 +7,9 @@
 namespace G4GO::Detector {
 
 SensorSD::SensorSD(const G4String& sdname, const G4String& hcName) :
-    G4VSensitiveDetector{sdname} {
+    G4VSensitiveDetector{sdname},
+    hc{nullptr},
+    hcID{-1} {
     collectionName.insert(hcName);
 }
 
@@ -35,8 +37,8 @@ auto SensorSD::ProcessHits(G4Step* theStep, G4TouchableHistory*) -> G4bool {
     const auto touchable{postStepPoint->GetTouchableHandle()};
     const auto globalTime{postStepPoint->GetGlobalTime()};
     const auto copyNo{touchable->GetCopyNumber()};
-    hit->SetGlobalTime(globalTime);
-    hit->SetCopyNo(copyNo);
+    hit->GlobalTime(globalTime);
+    hit->CopyNo(copyNo);
     hc->insert(hit);
 
     return true;

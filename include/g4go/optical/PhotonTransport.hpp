@@ -17,6 +17,37 @@ enum class OpticalEmissionType : std::uint8_t {
     Scintillation,
 };
 
+enum class PhotonTransportStatisticField : std::uint8_t {
+    Generated = 0,
+    Captured,
+    Detected,
+    Absorbed,
+    Escaped,
+    Truncated,
+    MaxBounce,
+    InvalidState,
+    ZeroStep,
+    TransportTime,
+};
+
+constexpr auto StatisticFieldBit(PhotonTransportStatisticField field)
+    -> std::uint32_t {
+    return std::uint32_t{1} << static_cast<std::uint32_t>(field);
+}
+
+constexpr auto AllStatisticFieldBits() -> std::uint32_t {
+    return StatisticFieldBit(PhotonTransportStatisticField::Generated) |
+           StatisticFieldBit(PhotonTransportStatisticField::Captured) |
+           StatisticFieldBit(PhotonTransportStatisticField::Detected) |
+           StatisticFieldBit(PhotonTransportStatisticField::Absorbed) |
+           StatisticFieldBit(PhotonTransportStatisticField::Escaped) |
+           StatisticFieldBit(PhotonTransportStatisticField::Truncated) |
+           StatisticFieldBit(PhotonTransportStatisticField::MaxBounce) |
+           StatisticFieldBit(PhotonTransportStatisticField::InvalidState) |
+           StatisticFieldBit(PhotonTransportStatisticField::ZeroStep) |
+           StatisticFieldBit(PhotonTransportStatisticField::TransportTime);
+}
+
 // Compact metadata produced by Geant4.  The GPU expands one record into its
 // photons in the ray-generation program; the CPU never materialises those
 // photons for the offload path.
@@ -69,6 +100,7 @@ struct alignas(16) PhotonDetection {
 };
 
 struct PhotonTransportStatistics {
+    std::uint32_t fValidFields{};
     std::uint64_t fGeneratedCount{};
     std::uint64_t fCapturedCount{};
     std::uint64_t fDetectedCount{};
@@ -79,6 +111,11 @@ struct PhotonTransportStatistics {
     std::uint64_t fInvalidStateCount{};
     std::uint64_t fZeroStepCount{};
     double fTransportTimeMs{};
+};
+
+struct PhotonTransportEventStatistics {
+    std::uint32_t fEventID{};
+    PhotonTransportStatistics fStatistics{};
 };
 
 struct PhotonTransportPerformance {
@@ -126,6 +163,13 @@ struct PhotonTransportOutput {
     std::vector<PhotonDetection> fDetections{};
     PhotonTransportStatistics fStatistics{};
     PhotonTransportPerformance fPerformance{};
+    std::vector<PhotonTransportEventStatistics> fEventStatistics{};
+};
+
+struct PhotonTransportBatch {
+    std::span<const OpticalEmission> fEmissions{};
+    std::span<const std::uint32_t> fEventIDs{};
+    std::span<const std::uint32_t> fEmissionEventIndices{};
 };
 
 struct OpticalSubmission {
@@ -152,7 +196,7 @@ public:
     auto operator=(const PhotonTransport&) -> PhotonTransport& = delete;
 
     virtual auto PropagateEmissions(
-        const Scene& scene, std::span<const OpticalEmission> emissions)
+        const Scene& scene, const PhotonTransportBatch& batch)
         -> PhotonTransportOutput = 0;
 };
 

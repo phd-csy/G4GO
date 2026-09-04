@@ -69,6 +69,7 @@ struct PropertyTable {
 struct Material {
     std::string fName{};
     PropertyTable fRindex{};
+    float fRindexMax{1.0F};
     PropertyTable fGroupVelocityMmPerNs{};
     PropertyTable fAbsLengthMm{};
     std::array<PropertyTable, 3> fScintillationSpectrum{};
@@ -84,16 +85,10 @@ struct Surface {
     PropertyTable fEfficiency{};
     PropertyTable fTransmittance{};
     PropertyTable fRindex{};
-    PropertyTable fRealRindex{};
-    PropertyTable fImaginaryRindex{};
-    PropertyTable fCoatedRindex{};
     PropertyTable fSpecularLobe{};
     PropertyTable fSpecularSpike{};
     PropertyTable fBackscatter{};
     PropertyTable fSurfaceRoughness{};
-    PropertyTable fDichroic{};
-    float fCoatedThicknessMm{};
-    bool fCoatedFrustratedTransmission{true};
 };
 
 struct MeshGeometry {
@@ -132,7 +127,7 @@ struct SurfaceBinding {
 
 class Scene final {
 public:
-    Scene() = default;
+    Scene();
     ~Scene() = default;
 
     auto AddMaterial(Material material) -> std::uint32_t;
@@ -165,19 +160,20 @@ public:
         return fSurfaceBindings;
     }
     auto WorldVolumeID() const -> std::uint32_t { return fWorldVolumeID; }
-    auto SetWorldVolumeID(std::uint32_t volumeID) -> void {
+    auto WorldVolumeID(std::uint32_t volumeID) -> void {
         fWorldVolumeID = volumeID;
     }
-    auto SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
-                                            bool value) -> void;
+    auto VolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                         bool value) -> void;
+    auto EnsureUniqueGeometry(std::uint32_t volumeID) -> void;
 
 private:
-    std::vector<Material> fMaterials{};
-    std::vector<Surface> fSurfaces{};
-    std::vector<Geometry> fGeometries{};
-    std::vector<Volume> fVolumes{};
-    std::vector<SurfaceBinding> fSurfaceBindings{};
-    std::uint32_t fWorldVolumeID{InvalidID};
+    std::vector<Material> fMaterials;
+    std::vector<Surface> fSurfaces;
+    std::vector<Geometry> fGeometries;
+    std::vector<Volume> fVolumes;
+    std::vector<SurfaceBinding> fSurfaceBindings;
+    std::uint32_t fWorldVolumeID;
 };
 
 } // namespace G4GO::Optical

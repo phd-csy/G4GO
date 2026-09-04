@@ -12,6 +12,7 @@ struct CrystalHitOutput {
     int fEventID{};
     int fModuleID{};
     double fEnergyDeposit{};
+    int fGeneratedPhotonCount{};
 };
 
 struct SensorHitOutput {

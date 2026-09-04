@@ -30,15 +30,14 @@ struct PhotonBatchStatistics {
     PhotonTransportPerformance fPerformance{};
 };
 
-class Geant4BatchScheduler final {
+class G4GOBatchScheduler final {
 public:
-    explicit Geant4BatchScheduler(
+    explicit G4GOBatchScheduler(
         PhotonTransportConfig configuration);
-    ~Geant4BatchScheduler();
+    ~G4GOBatchScheduler();
 
-    Geant4BatchScheduler(const Geant4BatchScheduler&) = delete;
-    auto operator=(const Geant4BatchScheduler&) -> Geant4BatchScheduler& =
-                                                       delete;
+    G4GOBatchScheduler(const G4GOBatchScheduler&) = delete;
+    auto operator=(const G4GOBatchScheduler&) -> G4GOBatchScheduler& = delete;
 
     auto BeginRun() -> void;
     auto EndRun() -> void;
@@ -69,28 +68,28 @@ private:
         -> void;
     auto FailPendingRequests(std::exception_ptr error) -> void;
 
-    PhotonTransportConfig fConfiguration{};
-    PhotonTransportBackend fBackend{PhotonTransportBackend::Auto};
-    Scene fScene{};
+    PhotonTransportConfig fConfiguration;
+    PhotonTransportBackend fBackend;
+    Scene fScene;
 #ifdef G4GO_ENABLE_OPTIX
-    std::unique_ptr<class OptiXTransportHost> fPhotonTransport{};
+    std::unique_ptr<class OptiXTransportHost> fPhotonTransport;
 #endif
 
-    mutable std::mutex fMutex{};
-    std::condition_variable fCondition{};
-    std::deque<TransportRequest> fPendingRequests{};
-    std::size_t fQueuedPhotonCount{};
-    std::size_t fQueuedSubmissionCount{};
-    std::thread fGpuThread{};
-    std::exception_ptr fFailure{};
-    bool fStarted{};
-    bool fReady{};
-    bool fStopRequested{};
+    mutable std::mutex fMutex;
+    std::condition_variable fCondition;
+    std::deque<TransportRequest> fPendingRequests;
+    std::size_t fQueuedPhotonCount;
+    std::size_t fQueuedSubmissionCount;
+    std::thread fGpuThread;
+    std::exception_ptr fFailure;
+    bool fStarted;
+    bool fReady;
+    bool fStopRequested;
 
-    PhotonTransportStatistics fRunStatistics{};
-    PhotonBatchStatistics fBatchStatistics{};
-    PhotonTransportPerformance fPerformance{};
-    std::vector<OpticalEmission> fBatchBuffer{};
+    PhotonTransportStatistics fRunStatistics;
+    PhotonBatchStatistics fBatchStatistics;
+    PhotonTransportPerformance fPerformance;
+    std::vector<OpticalEmission> fBatchBuffer;
 };
 
 } // namespace G4GO::Optical

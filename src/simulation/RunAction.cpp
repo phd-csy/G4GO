@@ -2,8 +2,8 @@
 
 #include "G4AnalysisManager.hh"
 #include "G4ios.hh"
-#include "g4go/optical/geant4/Geant4BatchScheduler.hpp"
-#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
+#include "g4go/optical/geant4/G4GOBatchScheduler.hpp"
+#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
 #include <chrono>
@@ -12,8 +12,8 @@
 namespace G4GO::Simulation {
 
 RunAction::RunAction(
-    std::shared_ptr<G4GO::Optical::Geant4BatchScheduler> batchScheduler,
-    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+    std::shared_ptr<G4GO::Optical::G4GOBatchScheduler> batchScheduler,
+    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter,
     std::shared_ptr<Analysis> analysis,
     bool isMaster) :
     G4UserRunAction{},
@@ -33,6 +33,7 @@ RunAction::RunAction(
     analysisManager->CreateNtupleIColumn("moduleID");
     analysisManager->CreateNtupleDColumn("Edep");
     analysisManager->CreateNtupleIColumn("nOptPho");
+    analysisManager->CreateNtupleIColumn("nGenOptPho");
     analysisManager->FinishNtuple();
 
     analysisManager->CreateNtuple("SensorHit", "sensor hit output");
@@ -40,6 +41,7 @@ RunAction::RunAction(
     analysisManager->CreateNtupleIColumn("sensorID");
     analysisManager->CreateNtupleDColumn("timeOfFlight");
     analysisManager->FinishNtuple();
+
 }
 
 auto RunAction::BeginOfRunAction(const G4Run*) -> void {
@@ -59,6 +61,12 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
     }
     if (fAdapter) {
         fAdapter->EndRun();
+        if (fAdapter->Configuration().fBackend ==
+            G4GO::Optical::PhotonTransportBackend::Geant4 &&
+            fAdapter->Configuration().fEnablePerformanceDiagnostics) {
+            G4cout << "[g4go] cpu generated="
+                   << fAdapter->RunStatistics().fGeneratedCount << G4endl;
+        }
         if (fAdapter->Configuration().fEnablePerformanceDiagnostics) {
             const auto& performance{fAdapter->RunPerformance()};
             G4cout << "[g4go] source performance: cerenkov_photon_count="

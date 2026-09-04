@@ -1,5 +1,4 @@
-#ifndef SENSOR_SD_HPP
-#define SENSOR_SD_HPP
+#pragma once
 
 #include "G4VSensitiveDetector.hh"
 #include "g4go/detector/SensorHit.hpp"
@@ -17,10 +16,8 @@ public:
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
 
 private:
-    SensorHC* hc{nullptr};
-    G4int hcID{-1};
+    SensorHC* hc;
+    G4int hcID;
 };
 
 } // namespace G4GO::Detector
-
-#endif

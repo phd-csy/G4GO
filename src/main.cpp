@@ -1,9 +1,5 @@
 #include "CLI/CLI.hpp"
-#include "FTFP_BERT.hh"
-#include "G4EmStandardPhysics_option3.hh"
 #include "G4OpticalParameters.hh"
-#include "G4OpticalPhysics.hh"
-#include "G4RadioactiveDecayPhysics.hh"
 #include "G4RunManagerFactory.hh"
 #include "G4SteppingVerbose.hh"
 #include "G4Threading.hh"
@@ -16,7 +12,6 @@
 #    include "G4UIExecutive.hh"
 #endif
 #include "G4UImanager.hh"
-#include "G4VModularPhysicsList.hh"
 #ifdef G4GO_USE_UIVIS
 #    include "G4VisExecutive.hh"
 #endif
@@ -174,7 +169,7 @@ auto main(int argc, char** argv) -> int {
 
 #ifdef G4MULTITHREADED
     {
-        G4int nThreads = 0;
+        G4int nThreads{};
         nThreads = G4Threading::G4GetNumberOfCores();
         if (options.threads > 0) {
             nThreads = static_cast<G4int>(options.threads);
@@ -192,15 +187,13 @@ auto main(int argc, char** argv) -> int {
         opticalParameters->SetProcessActivation("Scintillation", false);
         opticalParameters->SetCerenkovOffloadPhotons(true);
         opticalParameters->SetScintOffloadPhotons(true);
+    } else {
+        opticalParameters->SetCerenkovTrackSecondariesFirst(false);
+        opticalParameters->SetScintTrackSecondariesFirst(false);
     }
-    G4VModularPhysicsList* physicsList{new FTFP_BERT(0)};
-    physicsList->RegisterPhysics(new G4OpticalPhysics(0));
-    if (useOpticalOffload) {
-        G4GO::Simulation::RegisterOpticalOffloadProcesses(*physicsList);
-    }
+    auto* physicsList{
+        new G4GO::Simulation::PhysicsList{useOpticalOffload}};
     opticalParameters->SetBoundaryInvokeSD(true);
-    physicsList->RegisterPhysics(new G4RadioactiveDecayPhysics(0));
-    physicsList->ReplacePhysics(new G4EmStandardPhysics_option3(0));
     runManager->SetUserInitialization(physicsList);
 
     runManager->SetUserInitialization(
