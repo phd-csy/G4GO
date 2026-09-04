@@ -34,7 +34,8 @@ struct PhotonTransportConfig {
     std::uint32_t fMaxQueuedPhotons{2'000'000};
     std::uint32_t fMaxQueuedSubmissions{1'024};
     std::uint32_t fMaxPendingEvents{64};
-    std::uint32_t fBatchCollectionTimeoutMs{10};
+    std::uint32_t fBatchCollectionTimeoutMs{15};
+    std::uint32_t fMaxInFlightBatches{2};
     std::uint32_t fMeshRotationSteps{360};
     bool fEnablePerformanceDiagnostics{};
 };

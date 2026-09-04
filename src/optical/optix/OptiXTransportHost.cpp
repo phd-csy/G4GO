@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <future>
 #include <iterator>
 #include <limits>
@@ -199,7 +200,12 @@ struct TransportSlot final {
         fDeviceMemsetTimer{},
         fOptiXKernelTimer{},
         fDeviceHitCompactionTimer{},
-        fDeviceToHostTimer{} {
+        fDeviceToHostTimer{},
+        fHostLaunchParams{},
+        fOutput{},
+        fPhotonCount{},
+        fStartedAt{},
+        fBusy{} {
         CudaError(cudaStreamCreateWithFlags(&fStream, cudaStreamNonBlocking),
                   "cudaStreamCreateWithFlags transport slot");
         try {
@@ -315,6 +321,11 @@ struct TransportSlot final {
     CudaTimerPair fOptiXKernelTimer;
     CudaTimerPair fDeviceHitCompactionTimer;
     CudaTimerPair fDeviceToHostTimer;
+    OptixLaunchParams fHostLaunchParams;
+    PhotonTransportOutput fOutput;
+    std::size_t fPhotonCount;
+    std::chrono::steady_clock::time_point fStartedAt;
+    bool fBusy;
 };
 
 template<typename Type>
@@ -456,7 +467,8 @@ public:
         hitgroupProgram{},
         pipeline{},
         fSceneBuildStream{},
-        fSlot{},
+        fSlots{},
+        fPendingSlots{},
         sbt{},
         sbtAllocations{},
         sceneAllocations{},
@@ -466,6 +478,11 @@ public:
         fSceneMutex{},
         sceneAddress{},
         traversableHandle{} {
+        if (fConfiguration.fMaxInFlightBatches < 1U ||
+            fConfiguration.fMaxInFlightBatches > 2U) {
+            throw std::invalid_argument(
+                "OptiX in-flight batch count must be 1 or 2");
+        }
         CudaError(cudaFree(nullptr), "CUDA initialization");
         OptiXError(optixInit(), "optixInit");
 
@@ -479,8 +496,12 @@ public:
             cudaStreamCreateWithFlags(&fSceneBuildStream, cudaStreamNonBlocking),
             "cudaStreamCreateWithFlags scene build");
         try {
-            fSlot = std::make_unique<TransportSlot>(
-                fConfiguration.fEnablePerformanceDiagnostics);
+            fSlots.reserve(fConfiguration.fMaxInFlightBatches);
+            for (auto index{std::uint32_t{}};
+                 index < fConfiguration.fMaxInFlightBatches; ++index) {
+                fSlots.emplace_back(std::make_unique<TransportSlot>(
+                    fConfiguration.fEnablePerformanceDiagnostics));
+            }
         } catch (...) {
             cudaStreamDestroy(fSceneBuildStream);
             fSceneBuildStream = nullptr;
@@ -495,7 +516,8 @@ public:
         if (fSceneBuildStream != nullptr) {
             cudaStreamSynchronize(fSceneBuildStream);
         }
-        fSlot.reset();
+        fPendingSlots.clear();
+        fSlots.clear();
         if (pipeline != nullptr) {
             optixPipelineDestroy(pipeline);
         }
@@ -525,18 +547,27 @@ public:
     auto PrepareScene(const Scene& scene) -> void {
         std::lock_guard lock{fSceneMutex};
         if (sceneAddress != &scene) {
+            if (!fPendingSlots.empty()) {
+                throw std::logic_error(
+                    "OptiX scene cannot be rebuilt with pending batches");
+            }
             BuildScene(scene);
         }
     }
 
-    auto PropagateEmissions(const Scene& scene,
-                            const PhotonTransportBatch& batch)
-        -> PhotonTransportOutput {
+    auto EnqueueEmissions(const Scene& scene,
+                          const PhotonTransportBatch& batch) -> void {
         PrepareScene(scene);
-        if (fSlot == nullptr) {
-            throw std::runtime_error("OptiX transport slot is unavailable");
+        const auto slotIterator{std::find_if(
+            fSlots.begin(), fSlots.end(), [](const auto& candidate) {
+                return candidate != nullptr && !candidate->fBusy;
+            })};
+        if (slotIterator == fSlots.end()) {
+            throw std::logic_error("OptiX transport queue is full");
         }
-        auto& slot{*fSlot};
+        const auto slotIndex{static_cast<std::size_t>(
+            std::distance(fSlots.begin(), slotIterator))};
+        auto& slot{**slotIterator};
         auto& stream{slot.fStream};
         auto& fEmissionAllocation{slot.fEmissionAllocation};
         auto& fEmissionOffsetAllocation{slot.fEmissionOffsetAllocation};
@@ -623,7 +654,12 @@ public:
                 PhotonTransportStatisticField::Captured);
         }
         if (emissions.empty()) {
-            return output;
+            slot.fOutput = std::move(output);
+            slot.fPhotonCount = 0;
+            slot.fStartedAt = std::chrono::steady_clock::now();
+            slot.fBusy = true;
+            fPendingSlots.emplace_back(slotIndex);
+            return;
         }
         if (emissions.size() > std::numeric_limits<std::uint32_t>::max()) {
             throw std::overflow_error(
@@ -646,7 +682,12 @@ public:
                         PhotonTransportStatisticField::InvalidState) |
                     StatisticFieldBit(PhotonTransportStatisticField::ZeroStep);
             }
-            return output;
+            slot.fOutput = std::move(output);
+            slot.fPhotonCount = 0;
+            slot.fStartedAt = std::chrono::steady_clock::now();
+            slot.fBusy = true;
+            fPendingSlots.emplace_back(slotIndex);
+            return;
         }
         if (photonCount > std::numeric_limits<std::uint32_t>::max()) {
             throw std::overflow_error(
@@ -796,9 +837,10 @@ public:
             fConfiguration.fEnablePerformanceDiagnostics ? 1U : 0U;
         launchParams.fBoundaryEpsilonMm =
             fConfiguration.fBoundaryToleranceMm;
+        slot.fHostLaunchParams = launchParams;
         CudaError(cudaMemcpyAsync(
                       DevicePointer(fLaunchParamsAllocation->Pointer()),
-                      &launchParams, sizeof(launchParams),
+                      &slot.fHostLaunchParams, sizeof(slot.fHostLaunchParams),
                       cudaMemcpyHostToDevice, stream),
                   "cudaMemcpyAsync launch params");
         RecordCudaTimerStop(fHostToDeviceTimer, stream);
@@ -857,25 +899,53 @@ public:
                   "cudaMemcpyAsync hit count");
         CudaError(cudaEventRecord(fCompactionReadyEvent, stream),
                   "cudaEventRecord compaction ready");
-        CudaError(cudaEventSynchronize(fCompactionReadyEvent),
+
+        slot.fOutput = std::move(output);
+        slot.fPhotonCount = static_cast<std::size_t>(photonCount);
+        slot.fStartedAt = start;
+        slot.fBusy = true;
+        fPendingSlots.emplace_back(slotIndex);
+    }
+
+    auto CompleteOldestBatch() -> PhotonTransportOutput {
+        if (fPendingSlots.empty()) {
+            throw std::logic_error("OptiX transport queue is empty");
+        }
+        const auto slotIndex{fPendingSlots.front()};
+        auto& slot{*fSlots.at(slotIndex)};
+        auto& stream{slot.fStream};
+        auto& output{slot.fOutput};
+        const auto photonCount{slot.fPhotonCount};
+
+        if (photonCount == 0) {
+            auto completedOutput{std::move(output)};
+            slot.fOutput = {};
+            slot.fBusy = false;
+            fPendingSlots.pop_front();
+            return completedOutput;
+        }
+
+        CudaError(cudaEventSynchronize(slot.fCompactionReadyEvent),
                   "cudaEventSynchronize compaction ready");
-        const auto compactHitCount{static_cast<std::size_t>(*fHostHitCount)};
-        if (compactHitCount > static_cast<std::size_t>(photonCount)) {
+        const auto compactHitCount{
+            static_cast<std::size_t>(*slot.fHostHitCount)};
+        if (compactHitCount > photonCount) {
             throw std::runtime_error(
                 "OptiX hit compaction returned an invalid hit count");
         }
         if (compactHitCount > 0) {
             CudaError(cudaMemcpyAsync(
-                          fHostCompactHits,
-                          DevicePointer(fCompactedHitAllocation->Pointer()),
+                          slot.fHostCompactHits,
+                          DevicePointer(
+                              slot.fCompactedHitAllocation->Pointer()),
                           compactHitCount * sizeof(DevicePhotonHit),
                           cudaMemcpyDeviceToHost, stream),
                       "cudaMemcpyAsync compact hits");
         }
-        RecordCudaTimerStop(fDeviceToHostTimer, stream);
+        RecordCudaTimerStop(slot.fDeviceToHostTimer, stream);
         CudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
 
-        const auto& deviceStats{*fHostStats};
+        const auto& deviceStats{*slot.fHostStats};
         output.fStatistics.fDetectedCount = deviceStats.fDetectedCount;
         output.fStatistics.fAbsorbedCount = deviceStats.fAbsorbedCount;
         output.fStatistics.fEscapedCount = deviceStats.fEscapedCount;
@@ -886,7 +956,7 @@ public:
         output.fStatistics.fZeroStepCount = deviceStats.fZeroStepCount;
         output.fStatistics.fTransportTimeMs =
             std::chrono::duration<double, std::milli>{
-                std::chrono::steady_clock::now() - start}
+                std::chrono::steady_clock::now() - slot.fStartedAt}
                 .count();
         output.fStatistics.fValidFields |=
             StatisticFieldBit(PhotonTransportStatisticField::Detected) |
@@ -901,7 +971,7 @@ public:
              index < output.fEventStatistics.size(); ++index) {
             auto& eventStatistics{
                 output.fEventStatistics.at(index).fStatistics};
-            const auto& deviceEventStatistics{fHostEventStats[index]};
+            const auto& deviceEventStatistics{slot.fHostEventStats[index]};
             eventStatistics.fDetectedCount =
                 deviceEventStatistics.fDetectedCount;
             eventStatistics.fAbsorbedCount =
@@ -926,15 +996,15 @@ public:
                 StatisticFieldBit(PhotonTransportStatisticField::ZeroStep);
         }
         output.fPerformance.fHostToDeviceMs =
-            ReadCudaTimerMs(fHostToDeviceTimer);
+            ReadCudaTimerMs(slot.fHostToDeviceTimer);
         output.fPerformance.fDeviceMemsetMs =
-            ReadCudaTimerMs(fDeviceMemsetTimer);
+            ReadCudaTimerMs(slot.fDeviceMemsetTimer);
         output.fPerformance.fOptiXKernelMs =
-            ReadCudaTimerMs(fOptiXKernelTimer);
+            ReadCudaTimerMs(slot.fOptiXKernelTimer);
         output.fPerformance.fDeviceHitCompactionMs =
-            ReadCudaTimerMs(fDeviceHitCompactionTimer);
+            ReadCudaTimerMs(slot.fDeviceHitCompactionTimer);
         output.fPerformance.fDeviceToHostMs =
-            ReadCudaTimerMs(fDeviceToHostTimer);
+            ReadCudaTimerMs(slot.fDeviceToHostTimer);
         output.fPerformance.fTotalBounceCount = deviceStats.fTotalBounceCount;
         output.fPerformance.fCoincidentCandidateTraceCount =
             deviceStats.fCoincidentCandidateTraceCount;
@@ -943,7 +1013,7 @@ public:
         const auto hostCompactionStart{std::chrono::steady_clock::now()};
         output.fDetections.reserve(compactHitCount);
         for (auto index{std::size_t{}}; index < compactHitCount; ++index) {
-            const auto& hit{fHostCompactHits[index]};
+            const auto& hit{slot.fHostCompactHits[index]};
             output.fDetections.emplace_back(PhotonDetection{
                 {hit.fPositionMm.at(0), hit.fPositionMm.at(1),
                  hit.fPositionMm.at(2)},
@@ -961,7 +1031,27 @@ public:
             std::chrono::duration<double, std::milli>{
                 std::chrono::steady_clock::now() - hostCompactionStart}
                 .count();
-        return output;
+        auto completedOutput{std::move(output)};
+        slot.fOutput = {};
+        slot.fPhotonCount = 0;
+        slot.fBusy = false;
+        fPendingSlots.pop_front();
+        return completedOutput;
+    }
+
+    auto PendingBatchCount() const -> std::size_t {
+        return fPendingSlots.size();
+    }
+
+    auto PropagateEmissions(const Scene& scene,
+                            const PhotonTransportBatch& batch)
+        -> PhotonTransportOutput {
+        if (!fPendingSlots.empty()) {
+            throw std::logic_error(
+                "synchronous OptiX transport cannot run with pending batches");
+        }
+        EnqueueEmissions(scene, batch);
+        return CompleteOldestBatch();
     }
 
 private:
@@ -1447,7 +1537,8 @@ private:
     OptixProgramGroup hitgroupProgram;
     OptixPipeline pipeline;
     cudaStream_t fSceneBuildStream;
-    std::unique_ptr<TransportSlot> fSlot;
+    std::vector<std::unique_ptr<TransportSlot>> fSlots;
+    std::deque<std::size_t> fPendingSlots;
     OptixShaderBindingTable sbt;
     DeviceAllocations sbtAllocations;
     DeviceAllocations sceneAllocations;
@@ -1467,6 +1558,19 @@ OptiXTransportHost::~OptiXTransportHost() = default;
 
 auto OptiXTransportHost::PrepareScene(const Scene& scene) -> void {
     fImpl->PrepareScene(scene);
+}
+
+auto OptiXTransportHost::EnqueueEmissions(
+    const Scene& scene, const PhotonTransportBatch& batch) -> void {
+    fImpl->EnqueueEmissions(scene, batch);
+}
+
+auto OptiXTransportHost::CompleteOldestBatch() -> PhotonTransportOutput {
+    return fImpl->CompleteOldestBatch();
+}
+
+auto OptiXTransportHost::PendingBatchCount() const -> std::size_t {
+    return fImpl->PendingBatchCount();
 }
 
 auto OptiXTransportHost::PropagateEmissions(

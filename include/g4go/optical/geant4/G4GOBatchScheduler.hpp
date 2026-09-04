@@ -27,6 +27,9 @@ struct PhotonBatchStatistics {
     std::uint64_t fQueueHighWaterMark{};
     std::uint64_t fMinBatchPhotonCount{};
     std::uint64_t fTotalQueueWaitCount{};
+    std::uint64_t fMaxInFlightBatchCount{};
+    double fSchedulerInputWaitMs{};
+    double fSchedulerGpuWaitMs{};
     PhotonTransportPerformance fPerformance{};
 };
 

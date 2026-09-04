@@ -19,6 +19,11 @@ public:
 
     auto PrepareScene(const Scene& scene) -> void;
 
+    auto EnqueueEmissions(const Scene& scene,
+                          const PhotonTransportBatch& batch) -> void;
+    auto CompleteOldestBatch() -> PhotonTransportOutput;
+    auto PendingBatchCount() const -> std::size_t;
+
     auto PropagateEmissions(const Scene& scene,
                             const PhotonTransportBatch& batch)
         -> PhotonTransportOutput override;

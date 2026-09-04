@@ -37,7 +37,8 @@ G4GOBatchScheduler::G4GOBatchScheduler(
     fRunStatistics{},
     fBatchStatistics{},
     fPerformance{},
-    fBatchBuffer{} {}
+    fBatchBuffer{} {
+}
 
 G4GOBatchScheduler::~G4GOBatchScheduler() {
     EndRun();
@@ -593,9 +594,13 @@ auto G4GOBatchScheduler::CompleteBatch(
 
 auto G4GOBatchScheduler::ProcessBatches() -> void {
 #ifdef G4GO_ENABLE_OPTIX
+    struct InFlightBatch {
+        std::vector<TransportRequest> fRequests{};
+        std::size_t fPhotonCount{};
+    };
+
     std::vector<TransportRequest> requests{};
-    std::vector<std::shared_ptr<std::promise<PhotonTransportOutput>>>
-        activePromises{};
+    std::deque<InFlightBatch> inFlightBatches{};
     try {
         fPhotonTransport = std::make_unique<OptiXTransportHost>(fConfiguration);
         fPhotonTransport->PrepareScene(fScene);
@@ -606,14 +611,55 @@ auto G4GOBatchScheduler::ProcessBatches() -> void {
         fCondition.notify_all();
 
         for (;;) {
+            const auto maximumInFlight{static_cast<std::size_t>(
+                fConfiguration.fMaxInFlightBatches)};
+            bool stopRequested{};
+            bool hasPendingRequests{};
+            {
+                std::lock_guard lock{fMutex};
+                stopRequested = fStopRequested;
+                hasPendingRequests = !fPendingRequests.empty();
+            }
+            if (!inFlightBatches.empty() &&
+                (inFlightBatches.size() >= maximumInFlight ||
+                 !hasPendingRequests || stopRequested)) {
+                const auto waitStart{
+                    fConfiguration.fEnablePerformanceDiagnostics ?
+                        std::chrono::steady_clock::now() :
+                        std::chrono::steady_clock::time_point{}};
+                auto output{fPhotonTransport->CompleteOldestBatch()};
+                if (fConfiguration.fEnablePerformanceDiagnostics) {
+                    std::lock_guard lock{fMutex};
+                    fBatchStatistics.fSchedulerGpuWaitMs +=
+                        std::chrono::duration<double, std::milli>{
+                            std::chrono::steady_clock::now() - waitStart}
+                            .count();
+                }
+                auto completed{std::move(inFlightBatches.front())};
+                inFlightBatches.pop_front();
+                CompleteBatch(std::move(completed.fRequests),
+                              completed.fPhotonCount, std::move(output));
+                continue;
+            }
+
             requests.clear();
             std::size_t photonCount{};
             {
                 std::unique_lock lock{fMutex};
                 if (fPendingRequests.empty() && !fStopRequested) {
+                    const auto waitStart{
+                        fConfiguration.fEnablePerformanceDiagnostics ?
+                            std::chrono::steady_clock::now() :
+                            std::chrono::steady_clock::time_point{}};
                     fCondition.wait(lock, [this] {
                         return fStopRequested || !fPendingRequests.empty();
                     });
+                    if (fConfiguration.fEnablePerformanceDiagnostics) {
+                        fBatchStatistics.fSchedulerInputWaitMs +=
+                            std::chrono::duration<double, std::milli>{
+                                std::chrono::steady_clock::now() - waitStart}
+                                .count();
+                    }
                 }
                 if (fPendingRequests.empty() && fStopRequested) {
                     break;
@@ -627,11 +673,28 @@ auto G4GOBatchScheduler::ProcessBatches() -> void {
                        requests.size() < fConfiguration.fMaxEventsPerBatch) {
                     if (fPendingRequests.empty()) {
                         if (fStopRequested || photonCount == 0 ||
-                            !fCondition.wait_until(
-                                lock, deadline, [this] {
-                                    return fStopRequested ||
-                                           !fPendingRequests.empty();
-                                })) {
+                            [&] {
+                                const auto waitStart{
+                                    fConfiguration
+                                            .fEnablePerformanceDiagnostics ?
+                                        std::chrono::steady_clock::now() :
+                                        std::chrono::steady_clock::time_point{}};
+                                const auto ready{fCondition.wait_until(
+                                    lock, deadline, [this] {
+                                        return fStopRequested ||
+                                               !fPendingRequests.empty();
+                                    })};
+                                if (fConfiguration
+                                        .fEnablePerformanceDiagnostics) {
+                                    fBatchStatistics.fSchedulerInputWaitMs +=
+                                        std::chrono::duration<double,
+                                                              std::milli>{
+                                            std::chrono::steady_clock::now() -
+                                            waitStart}
+                                            .count();
+                                }
+                                return !ready;
+                            }()) {
                             break;
                         }
                     }
@@ -704,26 +767,15 @@ auto G4GOBatchScheduler::ProcessBatches() -> void {
             }
             const PhotonTransportBatch batch{
                 fBatchBuffer, batchEventIDs, emissionEventIndices};
-            activePromises.clear();
-            activePromises.reserve(requests.size());
-            for (const auto& request : requests) {
-                activePromises.emplace_back(request.fPromise);
-            }
-            try {
-                auto output{
-                    fPhotonTransport->PropagateEmissions(fScene, batch)};
-                CompleteBatch(std::move(requests), photonCount,
-                              std::move(output));
-                activePromises.clear();
-            } catch (...) {
-                const auto error{std::current_exception()};
-                for (const auto& promise : activePromises) {
-                    try {
-                        promise->set_exception(error);
-                    } catch (const std::future_error&) {
-                    }
-                }
-                throw;
+            fPhotonTransport->EnqueueEmissions(fScene, batch);
+            inFlightBatches.emplace_back(
+                InFlightBatch{std::move(requests), photonCount});
+            if (fConfiguration.fEnablePerformanceDiagnostics) {
+                std::lock_guard lock{fMutex};
+                fBatchStatistics.fMaxInFlightBatchCount =
+                    std::max<std::uint64_t>(
+                        fBatchStatistics.fMaxInFlightBatchCount,
+                        inFlightBatches.size());
             }
         }
         fPhotonTransport.reset();
@@ -733,6 +785,14 @@ auto G4GOBatchScheduler::ProcessBatches() -> void {
             try {
                 request.fPromise->set_exception(error);
             } catch (const std::future_error&) {
+            }
+        }
+        for (auto& batch : inFlightBatches) {
+            for (auto& request : batch.fRequests) {
+                try {
+                    request.fPromise->set_exception(error);
+                } catch (const std::future_error&) {
+                }
             }
         }
         {

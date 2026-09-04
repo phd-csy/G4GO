@@ -41,7 +41,6 @@ RunAction::RunAction(
     analysisManager->CreateNtupleIColumn("sensorID");
     analysisManager->CreateNtupleDColumn("timeOfFlight");
     analysisManager->FinishNtuple();
-
 }
 
 auto RunAction::BeginOfRunAction(const G4Run*) -> void {
@@ -62,7 +61,7 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
     if (fAdapter) {
         fAdapter->EndRun();
         if (fAdapter->Configuration().fBackend ==
-            G4GO::Optical::PhotonTransportBackend::Geant4 &&
+                G4GO::Optical::PhotonTransportBackend::Geant4 &&
             fAdapter->Configuration().fEnablePerformanceDiagnostics) {
             G4cout << "[g4go] cpu generated="
                    << fAdapter->RunStatistics().fGeneratedCount << G4endl;
@@ -142,6 +141,12 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                    << ", invalid_state_count="
                    << statistics.fInvalidStateCount
                    << ", queue_wait_count=" << batches.fTotalQueueWaitCount
+                   << ", max_in_flight_batches="
+                   << batches.fMaxInFlightBatchCount
+                   << ", scheduler_input_wait_ms="
+                   << batches.fSchedulerInputWaitMs
+                   << ", scheduler_gpu_wait_ms="
+                   << batches.fSchedulerGpuWaitMs
                    << ", average_batch_photons=" << averageBatchPhotons
                    << ", min_batch_photons=" << batches.fMinBatchPhotonCount
                    << G4endl;
