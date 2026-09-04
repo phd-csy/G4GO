@@ -35,8 +35,6 @@ G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光�
 | `cpu` | Geant4 原生 optical tracking | 基准输出、无 NVIDIA GPU 环境 | Geant4 错误直接上报 |
 | `gpu` | 捕获 Geant4 生成的光学光子并交给 OptiX | GPU 验证、性能测试、回归测试 | OptiX 不可用时直接失败 |
 
-GPU backend 使用事件聚合流水线。Geant4 worker 将事件提交到有界共享队列，独立 GPU executor 聚合多个事件后执行 OptiX launch。每个 batch 使用异步 CUDA copy 和 non-blocking stream；GPU executor 复用 transport slot 完成设备执行和输出数据回收。输出按 event ID 返回原 worker，并由 Geant4 analysis manager 写入 ROOT 文件。
-
 ## 依赖
 
 ### 基础构建
@@ -72,17 +70,7 @@ cmake -S . -B build \
 cmake --build build -j
 ```
 
-配置阶段会检查 CUDA compiler、CUDA Toolkit、`bin2c` 和 OptiX headers。完整 OptiX SDK 不属于必需依赖，因为 CMake 会自动获取 development headers。依赖完整时会构建 OptiX backend；依赖不完整时仍会生成支持 Geant4 backend 的 `g4go`。
-
-`G4GO_CUDA_ARCHITECTURE` 使用 CUDA 的 `compute_XX` 数值，默认值为 `120`。例如目标架构为 `compute_89` 时使用：
-
-```bash
-cmake -S . -B build \
-  -DG4GO_BUILD_UIVIS=OFF \
-  -DG4GO_ENABLE_OPTIX=ON \
-  -DG4GO_CUDA_ARCHITECTURE=89
-cmake --build build -j
-```
+`G4GO_CUDA_ARCHITECTURE` 使用目标 GPU 的 compute capability 数值，例如 `compute_89` 对应 `89`。
 
 ### 仅使用 Geant4 backend
 
@@ -121,19 +109,7 @@ cd build
 ./g4go --backend auto scripts/run_optical_test.mac
 ```
 
-显式运行 CPU 或 GPU backend：
-
-```bash
-cd build
-./g4go --backend cpu --threads 1 scripts/run_optical_test.mac
-./g4go --backend gpu scripts/run_optical_test.mac
-```
-
-成功启用 GPU backend 时，运行日志包含：
-
-```text
-[g4go] optical backend: gpu, ...
-```
+使用 `--backend cpu` 或 `--backend gpu` 可显式选择 backend。
 
 启用 `G4GO_BUILD_UIVIS=ON` 后，可从包含 `vis.mac` 的目录启动交互式 visualization：
 
@@ -167,32 +143,21 @@ g4go [OPTIONS] [macro]
 | 文件 | 用途 | Analysis 文件名 |
 | --- | --- | --- |
 | `scripts/run_optical_test.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_test.root` |
-| `scripts/run_beam_eminus.mac` | 从晶体前方发射 0.511 MeV 电子束，共 10000 个 event | `run_beam_eminus.root` |
+| `scripts/run_cpu_benchmark.mac` | 5 MeV 电子束单核 CPU 基准，共 1000 个 event | `run_cpu_benchmark.root` |
+| `scripts/run_eminus_regression.mac` | 5 MeV 电子束 CPU/GPU 回归，共 100000 个 event | `run_eminus_regression.root` |
 | `scripts/vis.mac` | 交互式几何与轨迹可视化 | `vis.root` |
 
-ROOT 文件写入当前工作目录。仓库自带 macro 的文件名由各自的 `/analysis/setFileName` 命令确定；event 没有产生可写 ntuple 记录时，Geant4 analysis manager 可能不会保留空文件。可在束流运行后检查输出：
-
-```bash
-cd build
-./g4go --backend cpu scripts/run_beam_eminus.mac
-rootls -t run_beam_eminus.root
-```
+ROOT 文件写入当前工作目录，文件名由 macro 中的 `/analysis/setFileName` 确定。
 
 ## 性能基准
 
-`test/regression_test.sh` 使用 `--threads 1`，并将 CPU 与 GPU 运行绑定到同一个 Linux CPU affinity。默认 affinity 为 CPU `2`，默认 batch collection timeout 为 `10 ms`；该值来自已测 timeout 扫描中的端到端 wall time 测量。脚本会将每次运行的日志与 ROOT 文件保存在 `build/test/regression/noptpho_<timestamp>/` 下。
-
-执行三次并取中位数，同时启用分段诊断：
+运行 benchmark 和 CPU/GPU 回归：
 
 ```bash
-G4GO_CPU_AFFINITY=2 \
-G4GO_BATCH_TIMEOUT_MS=10 \
-G4GO_BENCHMARK_RUNS=3 \
-G4GO_PERF_DIAGNOSTICS=1 \
 test/regression_test.sh --build-dir build
 ```
 
-生成的 `benchmark_summary.txt` 记录 CPU/GPU wall time 中位数，以及 GPU 相对单核 CPU 的加速比。启用诊断后，`performance_summary.txt` 汇总 `capture_total_ms`、`capture_locate_volume_ms`、`capture_volume_mapping_ms`、`scheduler_queue_wait_ms`、`scheduler_batch_flatten_ms`、`scheduler_batch_flatten_bytes`、`host_to_device_ms`、`device_memset_ms`、`optix_kernel_ms`、`device_hit_compaction_ms`、`device_to_host_ms`、`host_hit_compaction_ms`、bounce count 和共面边界计数。ROOT 比较仍由 `test/TestOpticalTransport.cxx` 完成，图片与报告保存在同一个回归目录。
+脚本会缓存 CPU timing 和 reference，测量 GPU 耗时，并将汇总与比较图写入 `build/test/regression/`。设置 `G4GO_PERF_DIAGNOSTICS=1` 可输出 GPU 分阶段计时。
 
 ## 探测器模型
 
@@ -238,9 +203,7 @@ G4GO/
 └── test/                   # 单元、smoke 与回归测试
 ```
 
-CMake 将实现编译为 `g4go_optical_core`、可选的 `g4go_optical_optix`、`g4go_optical_geant4`、`g4go_detector` 和 `g4go_simulation` 静态库，最终由 `g4go` 可执行文件组合。
-
-Geant4 是 geometry truth source。scene exporter 通过 `CreatePolyhedron()` 将 solid 转为 triangle mesh，并保留 placement、material、surface、copy number 和 parent topology。相同 `G4VSolid` 的 mesh 可复用，每个 physical volume 仍对应独立的 OptiX instance。
+Geant4 是几何真值来源；scene exporter 将 solid 转换为 OptiX mesh，并保留 placement、material、surface、copy number 和 parent 信息。
 
 ## GPU 光学范围与限制
 
@@ -254,8 +217,6 @@ Geant4 是 geometry truth source。scene exporter 通过 `CreatePolyhedron()` �
 
 scene export 会显式拒绝当前未实现的 Rayleigh、Mie、WLS、LUT、DAVIS、dichroic、coated surface type/model 及 painted finish。达到 `--max-bounces` 的 photon 计入 `truncated`；无效状态计入 `invalid`，两者都会出现在 GPU backend 运行统计中。
 
-`--mesh-rotation-steps 360` 采用 correctness-first 默认值。复杂几何 profiling 应同时评估 mesh 误差、triangle 数量、GAS build time、显存与 transport time。
-
 ## 测试
 
 构建完成后运行快速测试：
@@ -268,79 +229,40 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
 | `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;cpu;gpu;slow` | 单核 CPU 与单核 GPU 的 `nOptPho`、TOF 和传感器占用率比较 |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | GPU 与缓存或按需生成的全核 CPU reference 的 `Edep`、`nOptPho`、TOF 和传感器占用率比较 |
 
-运行全部测试：
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-### 单核 CPU 与 GPU `nOptPho` 回归
+### CPU/GPU 回归
 
 ```bash
-(
-  cd build
-  ctest --no-label-summary --output-on-failure \
-    -R '^g4go_noptpho_regression$'
-)
+ctest --test-dir build --output-on-failure \
+  -R '^g4go_noptpho_regression$'
 ```
 
-回归编排器使用 `scripts/run_beam_eminus.mac`，让 CPU 和 GPU backend 都以 1 个 Geant4 worker 运行。ROOT 比较检查 `nOptPho` 和光子飞行时间分布、`SensorHit` 探测数以及 64 个传感器占用分箱，并报告 GPU 相对于单核 CPU 基线的加速比。普通模式只打印阶段摘要，同时将子进程完整输出保存到阶段日志；直接运行编排器时增加 `--verbose` 可以实时显示子进程输出。GPU 运行显式使用 `--backend gpu`，因此 GPU、OptiX runtime、驱动或 ROOT 不可用时测试会失败并保留诊断文件。
-
-命令特意不使用 CTest 的 `-V` 选项。`--no-label-summary` 隐藏重复的标签耗时表，`--output-on-failure` 仅在测试失败时显示测试输出。需要查看完整回归输出时，直接运行：
+回归比较 CPU/GPU 的 `Edep`、`nOptPho`、TOF 和传感器占用率。查看完整运行输出：
 
 ```bash
 bash build/test/regression_test.sh --build-dir build --verbose
 ```
 
-ROOT 比较宏 `test/TestOpticalTransport.cxx` 使用未加权 `Chi2TestX(..., "UU P OF")` 比较 `nOptPho`、光子飞行时间和 64 个传感器占用分布。`nOptPho` 和 TOF 的卡方字段继续完整记录，用于诊断；CPU 原生 optical tracking 与 GPU emission offload 使用独立随机流，因此 `nOptPho` 回归门槛使用总量、均值和 RMS 容差。TOF 回归门槛使用固定 40 分箱的形状检验以及均值、RMS 容差，避免独立 CPU/GPU Monte Carlo 样本在总体量较大时将微小效应放大为误报。`nOptPho` 图使用 200 个未归一化分箱，光子飞行时间图使用 100 个未归一化分箱，时间范围覆盖观测到的有限非负值且上限至少为 1000 ns。宏同时检查 CPU/GPU 总光子数与探测数，并拒绝非法值、直方图下溢或上溢。必需比较无效、形状或计数容差超限，或对应计数相对差异超过 10% 时测试失败；卡方 `3 < Z <= 5` 标记为 `SUSPICIOUS`，更高 Z 保留为诊断状态，其余有效输出通过。
-
-每次运行的产物位于 `build/test/regression/noptpho_<timestamp>/`：
-
-- `noptpho_cpu_single.root`、`noptpho_gpu_single.root`：单核 CPU 和单核 GPU 输入数据。
-- `noptpho_comparison.png`、`tof_comparison.png`：`nOptPho` 和光子飞行时间的分布与 pull 图。
-- `noptpho_regression_report.root`：ROOT 分布、pull 和统计输出。
-- `regression_output.txt`：结论、两组墙钟时间和 GPU 相对于单核 CPU 运行的加速比。
-- `cpu_single.log`、`gpu.log` 和 `comparison.log`：各阶段完整日志；`regression.log` 保存编排输出，verbose 模式下也包含透传的子进程输出。
+每次运行的汇总和 ROOT 报告保存在 `build/test/regression/` 下的时间戳目录中，图片保存在 `figures/`，日志保存在 `logs/`。
 
 ## WSL2 OptiX runtime 排障
 
-WSL2 的 CUDA 与 OptiX runtime 依赖 Windows 主机 NVIDIA 驱动映射。环境准备请参考 [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。WSL 内安装 CUDA Toolkit 即可；NVIDIA display driver 由 Windows 主机提供。
-
-部分 WSL2 环境中的 `/usr/lib/wsl/lib/libnvoptix.so.1` 仅提供 loader shim，缺少 `optixQueryFunctionTable` 时会出现：
+WSL2 使用 Windows 主机 NVIDIA 驱动和 WSL 内的 CUDA Toolkit。环境准备参考 [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。缺少 `optixQueryFunctionTable` symbol 时会出现：
 
 ```text
 optixInit failed: OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND
 ```
 
-检查当前环境：
+检查驱动、Toolkit 和 OptiX loader：
 
 ```bash
 nvidia-smi
 nvcc --version
-ls -lh /usr/lib/wsl/lib/libnvoptix.so.1
 nm -D /usr/lib/wsl/lib/libnvoptix.so.1 | rg optixQueryFunctionTable
 ```
 
-可从与主机驱动兼容的 NVIDIA Linux display driver 安装包中仅提取 OptiX 用户态库，将 `libnvoptix.so.*`、`libnvidia-rtcore.so.*`、`libnvidia-ptxjitcompiler.so.*`、`libnvidia-gpucomp.so.*` 和 `nvoptix.bin` 放入用户目录，并让该目录在 `LD_LIBRARY_PATH` 中排在 `/usr/lib/wsl/lib` 前面。该流程用于提取库文件，避免在 WSL 内安装 Linux display driver。
-
-验证自定义 runtime：
-
-```bash
-export G4GO_OPTIX_RUNTIME=/path/to/extracted/optix-runtime
-
-nm -D "$G4GO_OPTIX_RUNTIME/libnvoptix.so.1" \
-  | rg optixQueryFunctionTable
-
-LD_LIBRARY_PATH="$G4GO_OPTIX_RUNTIME:/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  ldd "$G4GO_OPTIX_RUNTIME/libnvoptix.so.1" \
-  | rg 'nvoptix|rtcore|ptxjit|gpucomp|not found'
-
-./build/g4go --backend gpu build/scripts/run_optical_test.mac
-```
-
-更新 Windows NVIDIA 驱动或 WSL 映射后，在 PowerShell 执行 `wsl --shutdown`，重新打开 WSL 并再次验证动态库加载顺序。
+缺少该 symbol 时更新 Windows NVIDIA 驱动，在 PowerShell 执行 `wsl --shutdown`，重新打开 WSL 后再次运行 GPU smoke test。
 
 ## 贡献
 
