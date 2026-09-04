@@ -62,18 +62,18 @@ if(G4GO_ENABLE_OPTIX)
                 message(STATUS "G4GO OptiX build: enabled")
             else()
                 message(STATUS
-                    "G4GO OptiX build dependencies are incomplete; using Geant4 fallback")
+                    "G4GO OptiX build dependencies are incomplete; building Geant4 backend")
             endif()
         else()
             message(STATUS
-                "G4GO OptiX build dependencies are incomplete; using Geant4 fallback")
+                "G4GO OptiX build dependencies are incomplete; building Geant4 backend")
         endif()
     else()
         message(STATUS
-            "CUDA compiler was not detected; using Geant4 fallback")
+            "CUDA compiler was not detected; building Geant4 backend")
     endif()
 else()
-    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; using Geant4 fallback")
+    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; building Geant4 backend")
 endif()
 
 if(G4GO_BUILD_UIVIS)
@@ -84,6 +84,10 @@ endif()
 
 include(${Geant4_USE_FILE})
 
+if(G4GO_ENABLE_CLANG_TIDY)
+    find_program(G4GO_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
+endif()
+
 function(g4go_configure_cpp_target target)
     target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}
@@ -92,21 +96,17 @@ function(g4go_configure_cpp_target target)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+
+    if(G4GO_ENABLE_CLANG_TIDY)
+        set_target_properties(${target} PROPERTIES
+            CXX_CLANG_TIDY "${G4GO_CLANG_TIDY_EXECUTABLE}")
+    endif()
 endfunction()
 
 file(GLOB G4GO_OPTICAL_CORE_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/optical/*.cpp"
     "${PROJECT_SOURCE_DIR}/include/g4go/optical/*.hpp"
 )
-
-add_library(g4go_optical_core STATIC
-    ${G4GO_OPTICAL_CORE_FILES}
-)
-g4go_configure_cpp_target(g4go_optical_core)
-target_include_directories(g4go_optical_core
-    PUBLIC ${Geant4_INCLUDE_DIRS})
-target_link_libraries(g4go_optical_core
-    PUBLIC ${Geant4_LIBRARIES})
 
 if(G4GO_OPTIX_AVAILABLE)
     set(G4GO_OPTIX_GENERATED_DIR ${PROJECT_BINARY_DIR}/generated)
@@ -121,6 +121,8 @@ if(G4GO_OPTIX_AVAILABLE)
         "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cuh"
         "${PROJECT_SOURCE_DIR}/include/g4go/optical/optix/*.hpp"
     )
+    set(G4GO_OPTIX_COMPACTION_SOURCE
+        "${PROJECT_SOURCE_DIR}/src/optical/optix/OptiXHitCompaction.cu")
 
     add_custom_command(
         OUTPUT ${G4GO_OPTIX_IR}
@@ -155,20 +157,6 @@ if(G4GO_OPTIX_AVAILABLE)
     )
 
     add_custom_target(g4go_optix_module DEPENDS ${G4GO_OPTIX_IR_HEADER})
-
-    add_library(g4go_optical_optix STATIC
-        ${G4GO_OPTIX_HOST_FILES}
-        ${G4GO_OPTIX_IR_HEADER}
-    )
-    g4go_configure_cpp_target(g4go_optical_optix)
-    add_dependencies(g4go_optical_optix g4go_optix_module)
-    target_include_directories(g4go_optical_optix PRIVATE
-        ${optix_dev_SOURCE_DIR}/include
-        ${G4GO_OPTIX_GENERATED_DIR})
-    target_compile_definitions(g4go_optical_optix PRIVATE G4GO_ENABLE_OPTIX)
-    target_link_libraries(g4go_optical_optix
-        PUBLIC g4go_optical_core
-        PRIVATE CUDA::cudart CUDA::cuda_driver)
 endif()
 
 file(GLOB G4GO_OPTICAL_GEANT4_FILES CONFIGURE_DEPENDS
@@ -177,62 +165,56 @@ file(GLOB G4GO_OPTICAL_GEANT4_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/g4go/optical/geant4/*.hpp"
 )
 
-add_library(g4go_optical_geant4 STATIC
-    ${G4GO_OPTICAL_GEANT4_FILES}
-)
-g4go_configure_cpp_target(g4go_optical_geant4)
-target_link_libraries(g4go_optical_geant4
-    PUBLIC g4go_optical_core
-    PRIVATE ${Geant4_LIBRARIES})
-
-if(G4GO_OPTIX_AVAILABLE)
-    target_compile_definitions(g4go_optical_geant4 PRIVATE G4GO_ENABLE_OPTIX)
-    target_include_directories(g4go_optical_geant4 PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/optical/optix)
-    target_link_libraries(g4go_optical_geant4 PRIVATE
-        g4go_optical_optix CUDA::cudart)
-endif()
-
 file(GLOB G4GO_DETECTOR_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/detector/*.cpp"
     "${PROJECT_SOURCE_DIR}/include/g4go/detector/*.hpp"
 )
-
-add_library(g4go_detector STATIC
-    ${G4GO_DETECTOR_FILES}
-)
-g4go_configure_cpp_target(g4go_detector)
-target_link_libraries(g4go_detector PRIVATE ${Geant4_LIBRARIES})
 
 file(GLOB G4GO_SIMULATION_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/simulation/*.cpp"
     "${PROJECT_SOURCE_DIR}/include/g4go/simulation/*.hpp"
 )
 
-add_library(g4go_simulation STATIC
-    ${G4GO_SIMULATION_FILES}
-)
-g4go_configure_cpp_target(g4go_simulation)
-target_link_libraries(g4go_simulation
-    PUBLIC g4go_detector g4go_optical_geant4
-    PRIVATE ${Geant4_LIBRARIES})
-
 file(GLOB G4GO_APPLICATION_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/*.cpp"
 )
 
-add_executable(g4go ${G4GO_APPLICATION_FILES})
+add_executable(g4go
+    ${G4GO_APPLICATION_FILES}
+    ${G4GO_OPTICAL_CORE_FILES}
+    ${G4GO_OPTICAL_GEANT4_FILES}
+    ${G4GO_DETECTOR_FILES}
+    ${G4GO_SIMULATION_FILES}
+)
 g4go_configure_cpp_target(g4go)
-target_link_libraries(g4go PRIVATE CLI11::CLI11 g4go_simulation ${Geant4_LIBRARIES})
+target_include_directories(g4go PRIVATE
+    ${Geant4_INCLUDE_DIRS})
+target_link_libraries(g4go PRIVATE
+    CLI11::CLI11
+    ${Geant4_LIBRARIES})
+
+if(G4GO_OPTIX_AVAILABLE)
+    target_sources(g4go PRIVATE
+        ${G4GO_OPTIX_HOST_FILES}
+        ${G4GO_OPTIX_COMPACTION_SOURCE}
+        ${G4GO_OPTIX_IR_HEADER})
+    add_dependencies(g4go g4go_optix_module)
+    set_target_properties(g4go PROPERTIES
+        CUDA_STANDARD 20
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_ARCHITECTURES ${G4GO_CUDA_ARCHITECTURE})
+    target_include_directories(g4go PRIVATE
+        ${optix_dev_SOURCE_DIR}/include
+        ${G4GO_OPTIX_GENERATED_DIR}
+        ${PROJECT_SOURCE_DIR}/src/optical/optix)
+    target_compile_definitions(g4go PRIVATE G4GO_ENABLE_OPTIX)
+    target_link_libraries(g4go PRIVATE
+        CUDA::cudart
+        CUDA::cuda_driver)
+endif()
 
 if(G4GO_BUILD_UIVIS)
     target_compile_definitions(g4go PRIVATE G4GO_USE_UIVIS)
-endif()
-
-if(G4GO_ENABLE_CLANG_TIDY)
-    find_program(G4GO_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
-    set_target_properties(g4go PROPERTIES
-        CXX_CLANG_TIDY "${G4GO_CLANG_TIDY_EXECUTABLE}")
 endif()
 
 set(G4GO_SCRIPT_DIR "${PROJECT_SOURCE_DIR}/scripts")
@@ -289,10 +271,14 @@ install(TARGETS g4go RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
     add_executable(g4go_optical_boundary_tests
-        test/TestOpticalBoundaryPhysics.cxx)
+        test/TestOpticalBoundaryPhysics.cxx
+        ${G4GO_OPTICAL_CORE_FILES})
     g4go_configure_cpp_target(g4go_optical_boundary_tests)
     target_include_directories(g4go_optical_boundary_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/optical/optix)
+        ${PROJECT_SOURCE_DIR}/src/optical/optix
+        ${Geant4_INCLUDE_DIRS})
+    target_link_libraries(g4go_optical_boundary_tests PRIVATE
+        ${Geant4_LIBRARIES})
     add_test(NAME g4go_optical_boundary
              COMMAND $<TARGET_FILE:g4go_optical_boundary_tests>)
     set_tests_properties(g4go_optical_boundary PROPERTIES
@@ -328,8 +314,8 @@ if(BUILD_TESTING)
                      ${PROJECT_BINARY_DIR}/test/regression_test.sh
                      --build-dir ${PROJECT_BINARY_DIR})
     set_tests_properties(g4go_noptpho_regression PROPERTIES
-        LABELS "regression;cpu;gpu;slow"
+        LABELS "regression;gpu;slow"
         RUN_SERIAL TRUE
-        TIMEOUT 600
+        TIMEOUT 1800
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 endif()

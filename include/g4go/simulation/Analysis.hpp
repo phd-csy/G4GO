@@ -12,13 +12,21 @@ struct CrystalHitOutput {
     int fEventID{};
     int fModuleID{};
     double fEnergyDeposit{};
+    int fGeneratedPhotonCount{};
+};
+
+struct SensorHitOutput {
+    int fEventID{};
+    int fSensorID{};
+    double fTimeOfFlight{};
 };
 
 class Analysis final {
 public:
     auto Enqueue(
         std::vector<CrystalHitOutput> crystalHits,
-        G4GO::Optical::PhotonTransportFuture transportResult) -> void;
+        std::vector<SensorHitOutput> sensorHits,
+        G4GO::Optical::PhotonTransportFuture transportFuture) -> void;
     auto WriteReadyEvents() -> void;
     auto WaitAndWriteNextEvent() -> void;
     auto Flush() -> void;
@@ -27,7 +35,8 @@ public:
 private:
     struct PendingEvent {
         std::vector<CrystalHitOutput> fCrystalHits{};
-        G4GO::Optical::PhotonTransportFuture fTransportResult{};
+        std::vector<SensorHitOutput> fSensorHits{};
+        G4GO::Optical::PhotonTransportFuture fTransportFuture{};
     };
 
     auto ProcessReadyEvents(bool waitForFrontEvent) -> void;

@@ -1,10 +1,11 @@
-#ifndef SENSOR_SD_HPP
-#define SENSOR_SD_HPP
+#pragma once
 
 #include "G4VSensitiveDetector.hh"
 #include "g4go/detector/SensorHit.hpp"
 
 namespace G4GO::Detector {
+
+inline constexpr char SensorSensitiveDetectorName[] = "SensorSD";
 
 class SensorSD : public G4VSensitiveDetector {
 public:
@@ -13,13 +14,10 @@ public:
 
     auto Initialize(G4HCofThisEvent*) -> void override;
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
-    auto EndOfEvent(G4HCofThisEvent*) -> void override;
 
 private:
-    SensorHC* hc{nullptr};
-    G4int hcID{-1};
+    SensorHC* hc;
+    G4int hcID;
 };
 
 } // namespace G4GO::Detector
-
-#endif

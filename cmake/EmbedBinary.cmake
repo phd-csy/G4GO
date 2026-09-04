@@ -6,10 +6,10 @@ execute_process(
     COMMAND "${BIN2C}" --const --length --stdint --name g4go_optix_ir
             "${INPUT}"
     OUTPUT_FILE "${OUTPUT}"
-    RESULT_VARIABLE result
+    RESULT_VARIABLE exit_code
     ERROR_VARIABLE error_output
 )
 
-if(NOT result EQUAL 0)
+if(NOT exit_code EQUAL 0)
     message(FATAL_ERROR "bin2c failed: ${error_output}")
 endif()

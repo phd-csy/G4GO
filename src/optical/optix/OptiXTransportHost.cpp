@@ -3,19 +3,27 @@
 #include "G4ThreeVector.hh"
 #include "OptiXDeviceData.cuh"
 #include "cuda_runtime_api.h"
+#include "g4go/optical/optix/OptiXHitCompaction.hpp"
 #include "g4go_optix_ir.h"
 #include "optix_function_table_definition.h"
 #include "optix_stubs.h"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <future>
+#include <iterator>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -42,18 +50,90 @@ auto CudaError(cudaError_t error, const char* operation) -> void {
                              cudaGetErrorString(error));
 }
 
-auto OptiXError(OptixResult result, const char* operation) -> void {
-    if (result == OPTIX_SUCCESS) {
+struct CudaTimerPair {
+    cudaEvent_t fStart{};
+    cudaEvent_t fStop{};
+};
+
+auto CreateCudaTimer(CudaTimerPair& timer) -> void {
+    CudaError(cudaEventCreate(&timer.fStart), "cudaEventCreate start");
+    try {
+        CudaError(cudaEventCreate(&timer.fStop), "cudaEventCreate stop");
+    } catch (...) {
+        cudaEventDestroy(timer.fStart);
+        timer.fStart = nullptr;
+        throw;
+    }
+}
+
+auto DestroyCudaTimer(CudaTimerPair& timer) -> void {
+    if (timer.fStart != nullptr) {
+        cudaEventDestroy(timer.fStart);
+        timer.fStart = nullptr;
+    }
+    if (timer.fStop != nullptr) {
+        cudaEventDestroy(timer.fStop);
+        timer.fStop = nullptr;
+    }
+}
+
+auto RecordCudaTimerStart(const CudaTimerPair& timer,
+                          cudaStream_t stream) -> void {
+    if (timer.fStart != nullptr) {
+        CudaError(cudaEventRecord(timer.fStart, stream),
+                  "cudaEventRecord timer start");
+    }
+}
+
+auto RecordCudaTimerStop(const CudaTimerPair& timer,
+                         cudaStream_t stream) -> void {
+    if (timer.fStop != nullptr) {
+        CudaError(cudaEventRecord(timer.fStop, stream),
+                  "cudaEventRecord timer stop");
+    }
+}
+
+auto ReadCudaTimerMs(const CudaTimerPair& timer) -> double {
+    if (timer.fStart == nullptr || timer.fStop == nullptr) {
+        return 0.0;
+    }
+    float milliseconds{};
+    CudaError(cudaEventElapsedTime(&milliseconds, timer.fStart, timer.fStop),
+              "cudaEventElapsedTime");
+    return static_cast<double>(milliseconds);
+}
+
+template<typename Type>
+auto EnsurePinnedAllocation(Type*& allocation,
+                            std::size_t& capacity,
+                            std::size_t count,
+                            const char* operation) -> void {
+    if (capacity >= count) {
+        return;
+    }
+    void* rawPointer{nullptr};
+    CudaError(cudaMallocHost(&rawPointer, count * sizeof(Type)), operation);
+    auto* replacement{static_cast<Type*>(rawPointer)};
+    if (allocation != nullptr) {
+        CudaError(cudaFreeHost(allocation), "cudaFreeHost");
+    }
+    allocation = replacement;
+    capacity = count;
+}
+
+auto OptiXError(OptixResult status, const char* operation) -> void {
+    if (status == OPTIX_SUCCESS) {
         return;
     }
     throw std::runtime_error(
-        std::string(operation) + " failed: " + optixGetErrorName(result) +
-        " (" + optixGetErrorString(result) + ")");
+        std::string(operation) + " failed: " + optixGetErrorName(status) +
+        " (" + optixGetErrorString(status) + ")");
 }
 
 class DeviceAllocation final {
 public:
-    explicit DeviceAllocation(std::size_t size) {
+    explicit DeviceAllocation(std::size_t size) :
+        pointer{} {
         void* rawPointer{nullptr};
         CudaError(cudaMalloc(&rawPointer, size), "cudaMalloc");
         pointer = reinterpret_cast<CUdeviceptr>(rawPointer);
@@ -71,7 +151,170 @@ public:
     auto Pointer() const -> CUdeviceptr { return pointer; }
 
 private:
-    CUdeviceptr pointer{};
+    CUdeviceptr pointer;
+};
+
+struct TransportSlot final {
+    explicit TransportSlot(bool enableDiagnostics) :
+        fStream{},
+        fEmissionAllocation{},
+        fEmissionOffsetAllocation{},
+        fEmissionEventIndexAllocation{},
+        fHitAllocation{},
+        fHitFlagAllocation{},
+        fCompactedHitAllocation{},
+        fHitCountAllocation{},
+        fCompactionTemporaryAllocation{},
+        fStatsAllocation{},
+        fEventStatsAllocation{},
+        fLaunchParamsAllocation{},
+        fEmissionCapacity{},
+        fEmissionOffsetCapacity{},
+        fEmissionEventIndexCapacity{},
+        fHitCapacity{},
+        fHitFlagCapacity{},
+        fCompactedHitCapacity{},
+        fHitCountCapacity{},
+        fCompactionTemporaryCapacity{},
+        fCompactionInputCapacity{},
+        fStatsCapacity{},
+        fEventStatsCapacity{},
+        fLaunchParamsCapacity{},
+        fHostEmissions{},
+        fHostEmissionOffsets{},
+        fHostEmissionEventIndices{},
+        fHostCompactHits{},
+        fHostHitCount{},
+        fHostStats{},
+        fHostEventStats{},
+        fHostEmissionCapacity{},
+        fHostEmissionOffsetCapacity{},
+        fHostEmissionEventIndexCapacity{},
+        fHostCompactHitCapacity{},
+        fHostHitCountCapacity{},
+        fHostStatsCapacity{},
+        fHostEventStatsCapacity{},
+        fCompactionReadyEvent{},
+        fHostToDeviceTimer{},
+        fDeviceMemsetTimer{},
+        fOptiXKernelTimer{},
+        fDeviceHitCompactionTimer{},
+        fDeviceToHostTimer{} {
+        CudaError(cudaStreamCreateWithFlags(&fStream, cudaStreamNonBlocking),
+                  "cudaStreamCreateWithFlags transport slot");
+        try {
+            CudaError(cudaEventCreateWithFlags(&fCompactionReadyEvent,
+                                               cudaEventDisableTiming),
+                      "cudaEventCreateWithFlags compaction ready");
+            if (enableDiagnostics) {
+                CreateCudaTimer(fHostToDeviceTimer);
+                CreateCudaTimer(fDeviceMemsetTimer);
+                CreateCudaTimer(fOptiXKernelTimer);
+                CreateCudaTimer(fDeviceHitCompactionTimer);
+                CreateCudaTimer(fDeviceToHostTimer);
+            }
+        } catch (...) {
+            Release();
+            throw;
+        }
+    }
+
+    ~TransportSlot() { Release(); }
+
+    TransportSlot(const TransportSlot&) = delete;
+    auto operator=(const TransportSlot&) -> TransportSlot& = delete;
+
+    auto Release() -> void {
+        if (fStream != nullptr) {
+            cudaStreamSynchronize(fStream);
+        }
+        DestroyCudaTimer(fHostToDeviceTimer);
+        DestroyCudaTimer(fDeviceMemsetTimer);
+        DestroyCudaTimer(fOptiXKernelTimer);
+        DestroyCudaTimer(fDeviceHitCompactionTimer);
+        DestroyCudaTimer(fDeviceToHostTimer);
+        if (fCompactionReadyEvent != nullptr) {
+            cudaEventDestroy(fCompactionReadyEvent);
+            fCompactionReadyEvent = nullptr;
+        }
+        if (fHostEmissions != nullptr) {
+            cudaFreeHost(fHostEmissions);
+            fHostEmissions = nullptr;
+        }
+        if (fHostEmissionOffsets != nullptr) {
+            cudaFreeHost(fHostEmissionOffsets);
+            fHostEmissionOffsets = nullptr;
+        }
+        if (fHostEmissionEventIndices != nullptr) {
+            cudaFreeHost(fHostEmissionEventIndices);
+            fHostEmissionEventIndices = nullptr;
+        }
+        if (fHostCompactHits != nullptr) {
+            cudaFreeHost(fHostCompactHits);
+            fHostCompactHits = nullptr;
+        }
+        if (fHostHitCount != nullptr) {
+            cudaFreeHost(fHostHitCount);
+            fHostHitCount = nullptr;
+        }
+        if (fHostStats != nullptr) {
+            cudaFreeHost(fHostStats);
+            fHostStats = nullptr;
+        }
+        if (fHostEventStats != nullptr) {
+            cudaFreeHost(fHostEventStats);
+            fHostEventStats = nullptr;
+        }
+        if (fStream != nullptr) {
+            cudaStreamDestroy(fStream);
+            fStream = nullptr;
+        }
+    }
+
+    cudaStream_t fStream;
+    std::unique_ptr<DeviceAllocation> fEmissionAllocation;
+    std::unique_ptr<DeviceAllocation> fEmissionOffsetAllocation;
+    std::unique_ptr<DeviceAllocation> fEmissionEventIndexAllocation;
+    std::unique_ptr<DeviceAllocation> fHitAllocation;
+    std::unique_ptr<DeviceAllocation> fHitFlagAllocation;
+    std::unique_ptr<DeviceAllocation> fCompactedHitAllocation;
+    std::unique_ptr<DeviceAllocation> fHitCountAllocation;
+    std::unique_ptr<DeviceAllocation> fCompactionTemporaryAllocation;
+    std::unique_ptr<DeviceAllocation> fStatsAllocation;
+    std::unique_ptr<DeviceAllocation> fEventStatsAllocation;
+    std::unique_ptr<DeviceAllocation> fLaunchParamsAllocation;
+    std::size_t fEmissionCapacity;
+    std::size_t fEmissionOffsetCapacity;
+    std::size_t fEmissionEventIndexCapacity;
+    std::size_t fHitCapacity;
+    std::size_t fHitFlagCapacity;
+    std::size_t fCompactedHitCapacity;
+    std::size_t fHitCountCapacity;
+    std::size_t fCompactionTemporaryCapacity;
+    std::size_t fCompactionInputCapacity;
+    std::size_t fStatsCapacity;
+    std::size_t fEventStatsCapacity;
+    std::size_t fLaunchParamsCapacity;
+    DeviceOpticalEmission* fHostEmissions;
+    std::uint32_t* fHostEmissionOffsets;
+    std::uint32_t* fHostEmissionEventIndices;
+    DevicePhotonHit* fHostCompactHits;
+    std::uint32_t* fHostHitCount;
+    DeviceTransportStats* fHostStats;
+    DeviceEventTransportStats* fHostEventStats;
+    std::size_t fHostEmissionCapacity;
+    std::size_t fHostEmissionOffsetCapacity;
+    std::size_t fHostEmissionEventIndexCapacity;
+    std::size_t fHostCompactHitCapacity;
+    std::size_t fHostHitCountCapacity;
+    std::size_t fHostStatsCapacity;
+    std::size_t fHostEventStatsCapacity;
+    cudaEvent_t fCompactionReadyEvent;
+    CudaTimerPair fHostToDeviceTimer;
+    CudaTimerPair fDeviceMemsetTimer;
+    CudaTimerPair fOptiXKernelTimer;
+    CudaTimerPair fDeviceHitCompactionTimer;
+    CudaTimerPair fDeviceToHostTimer;
 };
 
 template<typename Type>
@@ -86,7 +329,7 @@ auto Upload(std::span<const Type> data, DeviceAllocations& allocations)
     CudaError(cudaMemcpy(DevicePointer(pointer), data.data(), data.size_bytes(),
                          cudaMemcpyHostToDevice),
               "cudaMemcpy host to device");
-    allocations.push_back(std::move(allocation));
+    allocations.emplace_back(std::move(allocation));
     return pointer;
 }
 
@@ -120,11 +363,56 @@ auto UploadProperty(const PropertyTable& property,
         DevicePointerAs<const float>(energyPointer),
         DevicePointerAs<const float>(valuePointer),
         static_cast<std::uint32_t>(property.fEnergyEv.size()),
+        property.Constant() ? 1U : 0U,
     };
 }
 
-auto ToDevice(const std::array<float, 3>& vector) -> DeviceVector3 {
-    return {vector[0], vector[1], vector[2]};
+auto UploadSpectrumProperty(const PropertyTable& property,
+                            DeviceAllocations& allocations) -> DeviceProperty {
+    if (property.fEnergyEv.empty() ||
+        property.fEnergyEv.size() != property.fValues.size()) {
+        return {};
+    }
+    if (property.fEnergyEv.size() == 1U) {
+        const std::vector<float> cdf{1.0F};
+        return {
+            DevicePointerAs<const float>(
+                Upload<float>(property.fEnergyEv, allocations)),
+            DevicePointerAs<const float>(Upload<float>(cdf, allocations)),
+            1U,
+            0U,
+        };
+    }
+
+    std::vector<float> cdf(property.fValues.size());
+    for (auto index{std::size_t{1}}; index < property.fValues.size();
+         ++index) {
+        const auto energyDelta{property.fEnergyEv.at(index) -
+                               property.fEnergyEv.at(index - 1U)};
+        const auto value0{std::max(property.fValues.at(index - 1U), 0.0F)};
+        const auto value1{std::max(property.fValues.at(index), 0.0F)};
+        if (!(energyDelta >= 0.0F) || !std::isfinite(energyDelta) ||
+            !std::isfinite(value0) || !std::isfinite(value1)) {
+            return {};
+        }
+        cdf[index] = cdf.at(index - 1U) +
+                     0.5F * energyDelta * (value0 + value1);
+    }
+    const auto integral{cdf.at(cdf.size() - 1U)};
+    if (!(integral > 0.0F) || !std::isfinite(integral)) {
+        return {};
+    }
+    for (auto& value : cdf) {
+        value /= integral;
+    }
+    cdf[cdf.size() - 1U] = 1.0F;
+    return {
+        DevicePointerAs<const float>(
+            Upload<float>(property.fEnergyEv, allocations)),
+        DevicePointerAs<const float>(Upload<float>(cdf, allocations)),
+        static_cast<std::uint32_t>(cdf.size()),
+        0U,
+    };
 }
 
 auto ToDevice(const G4ThreeVector& vector) -> DeviceVector3 {
@@ -132,22 +420,7 @@ auto ToDevice(const G4ThreeVector& vector) -> DeviceVector3 {
             static_cast<float>(vector.z())};
 }
 
-auto ToDevice(const Photon& photon) -> DevicePhoton {
-    return {
-        ToDevice(photon.fPositionMm),
-        photon.fTimeNs,
-        ToDevice(photon.fDirection),
-        photon.fEnergyEv,
-        ToDevice(photon.fPolarization),
-        photon.fWeight,
-        photon.fEventID,
-        photon.fPhotonID,
-        photon.fVolumeID,
-        static_cast<std::uint8_t>(photon.fSource),
-        photon.fFlags,
-        photon.fReserved,
-    };
-}
+static_assert(sizeof(OpticalEmission) == sizeof(DeviceOpticalEmission));
 
 template<typename Record>
 struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) SbtRecord {
@@ -175,7 +448,24 @@ auto LogCallback(unsigned int level,
 class OptiXTransportHost::Impl final {
 public:
     explicit Impl(PhotonTransportConfig configuration) :
-        fConfiguration{configuration} {
+        fConfiguration{configuration},
+        context{},
+        module{},
+        raygenProgram{},
+        missProgram{},
+        hitgroupProgram{},
+        pipeline{},
+        fSceneBuildStream{},
+        fSlot{},
+        sbt{},
+        sbtAllocations{},
+        sceneAllocations{},
+        deviceScene{},
+        fVolumeIndices{},
+        fVolumeIndicesByID{},
+        fSceneMutex{},
+        sceneAddress{},
+        traversableHandle{} {
         CudaError(cudaFree(nullptr), "CUDA initialization");
         OptiXError(optixInit(), "optixInit");
 
@@ -185,17 +475,27 @@ public:
         OptiXError(optixDeviceContextCreate(nullptr, &contextOptions,
                                             &context),
                    "optixDeviceContextCreate");
-        CudaError(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking),
-                  "cudaStreamCreateWithFlags");
+        CudaError(
+            cudaStreamCreateWithFlags(&fSceneBuildStream, cudaStreamNonBlocking),
+            "cudaStreamCreateWithFlags scene build");
+        try {
+            fSlot = std::make_unique<TransportSlot>(
+                fConfiguration.fEnablePerformanceDiagnostics);
+        } catch (...) {
+            cudaStreamDestroy(fSceneBuildStream);
+            fSceneBuildStream = nullptr;
+            throw;
+        }
 
         CreatePipeline();
         CreateSbt();
     }
 
     ~Impl() {
-        if (stream != nullptr) {
-            cudaStreamSynchronize(stream);
+        if (fSceneBuildStream != nullptr) {
+            cudaStreamSynchronize(fSceneBuildStream);
         }
+        fSlot.reset();
         if (pipeline != nullptr) {
             optixPipelineDestroy(pipeline);
         }
@@ -213,74 +513,287 @@ public:
         }
         sbtAllocations.clear();
         sceneAllocations.clear();
-        if (stream != nullptr) {
-            cudaStreamDestroy(stream);
+        if (fSceneBuildStream != nullptr) {
+            cudaStreamDestroy(fSceneBuildStream);
+            fSceneBuildStream = nullptr;
         }
         if (context != nullptr) {
             optixDeviceContextDestroy(context);
         }
     }
 
-    auto Propagate(const Scene& scene, std::span<const Photon> photons)
-        -> PhotonTransportOutput {
+    auto PrepareScene(const Scene& scene) -> void {
+        std::lock_guard lock{fSceneMutex};
         if (sceneAddress != &scene) {
             BuildScene(scene);
         }
+    }
 
-        PhotonTransportOutput result{};
-        result.fStatistics.fCapturedCount = photons.size();
-        if (photons.empty()) {
-            return result;
+    auto PropagateEmissions(const Scene& scene,
+                            const PhotonTransportBatch& batch)
+        -> PhotonTransportOutput {
+        PrepareScene(scene);
+        if (fSlot == nullptr) {
+            throw std::runtime_error("OptiX transport slot is unavailable");
         }
+        auto& slot{*fSlot};
+        auto& stream{slot.fStream};
+        auto& fEmissionAllocation{slot.fEmissionAllocation};
+        auto& fEmissionOffsetAllocation{slot.fEmissionOffsetAllocation};
+        auto& fEmissionEventIndexAllocation{
+            slot.fEmissionEventIndexAllocation};
+        auto& fHitAllocation{slot.fHitAllocation};
+        auto& fHitFlagAllocation{slot.fHitFlagAllocation};
+        auto& fCompactedHitAllocation{slot.fCompactedHitAllocation};
+        auto& fHitCountAllocation{slot.fHitCountAllocation};
+        auto& fCompactionTemporaryAllocation{
+            slot.fCompactionTemporaryAllocation};
+        auto& fStatsAllocation{slot.fStatsAllocation};
+        auto& fEventStatsAllocation{slot.fEventStatsAllocation};
+        auto& fLaunchParamsAllocation{slot.fLaunchParamsAllocation};
+        auto& fEmissionCapacity{slot.fEmissionCapacity};
+        auto& fEmissionOffsetCapacity{slot.fEmissionOffsetCapacity};
+        auto& fEmissionEventIndexCapacity{slot.fEmissionEventIndexCapacity};
+        auto& fHitCapacity{slot.fHitCapacity};
+        auto& fHitFlagCapacity{slot.fHitFlagCapacity};
+        auto& fCompactedHitCapacity{slot.fCompactedHitCapacity};
+        auto& fHitCountCapacity{slot.fHitCountCapacity};
+        auto& fCompactionTemporaryCapacity{slot.fCompactionTemporaryCapacity};
+        auto& fCompactionInputCapacity{slot.fCompactionInputCapacity};
+        auto& fStatsCapacity{slot.fStatsCapacity};
+        auto& fEventStatsCapacity{slot.fEventStatsCapacity};
+        auto& fLaunchParamsCapacity{slot.fLaunchParamsCapacity};
+        auto& fHostEmissions{slot.fHostEmissions};
+        auto& fHostEmissionOffsets{slot.fHostEmissionOffsets};
+        auto& fHostEmissionEventIndices{slot.fHostEmissionEventIndices};
+        auto& fHostCompactHits{slot.fHostCompactHits};
+        auto& fHostHitCount{slot.fHostHitCount};
+        auto& fHostStats{slot.fHostStats};
+        auto& fHostEventStats{slot.fHostEventStats};
+        auto& fHostEmissionCapacity{slot.fHostEmissionCapacity};
+        auto& fHostEmissionOffsetCapacity{slot.fHostEmissionOffsetCapacity};
+        auto& fHostEmissionEventIndexCapacity{
+            slot.fHostEmissionEventIndexCapacity};
+        auto& fHostCompactHitCapacity{slot.fHostCompactHitCapacity};
+        auto& fHostHitCountCapacity{slot.fHostHitCountCapacity};
+        auto& fHostStatsCapacity{slot.fHostStatsCapacity};
+        auto& fHostEventStatsCapacity{slot.fHostEventStatsCapacity};
+        auto& fCompactionReadyEvent{slot.fCompactionReadyEvent};
+        auto& fHostToDeviceTimer{slot.fHostToDeviceTimer};
+        auto& fDeviceMemsetTimer{slot.fDeviceMemsetTimer};
+        auto& fOptiXKernelTimer{slot.fOptiXKernelTimer};
+        auto& fDeviceHitCompactionTimer{slot.fDeviceHitCompactionTimer};
+        auto& fDeviceToHostTimer{slot.fDeviceToHostTimer};
+
+        PhotonTransportOutput output{};
+        const auto emissions{batch.fEmissions};
+        if (batch.fEventIDs.size() >
+            std::numeric_limits<std::uint32_t>::max()) {
+            throw std::overflow_error(
+                "OptiX event batch exceeds the supported event count");
+        }
+        if (batch.fEmissionEventIndices.size() != emissions.size()) {
+            throw std::invalid_argument(
+                "OptiX emission event-index count does not match emissions");
+        }
+        std::unordered_map<std::uint32_t, std::uint32_t> eventIndices{};
+        eventIndices.reserve(batch.fEventIDs.size());
+        for (auto index{std::size_t{}}; index < batch.fEventIDs.size();
+             ++index) {
+            if (!eventIndices.emplace(batch.fEventIDs[index],
+                                      static_cast<std::uint32_t>(index))
+                     .second) {
+                throw std::invalid_argument(
+                    "OptiX event batch contains duplicate event IDs");
+            }
+            output.fEventStatistics.emplace_back(
+                PhotonTransportEventStatistics{batch.fEventIDs[index], {}});
+        }
+        for (auto index{std::size_t{}}; index < emissions.size(); ++index) {
+            const auto eventIndex{batch.fEmissionEventIndices[index]};
+            if (eventIndex >= batch.fEventIDs.size() ||
+                emissions[index].fEventID != batch.fEventIDs[eventIndex]) {
+                throw std::invalid_argument(
+                    "OptiX emission event index does not match event ID");
+            }
+            auto& eventStatistics{
+                output.fEventStatistics.at(eventIndex).fStatistics};
+            eventStatistics.fCapturedCount += emissions[index].fPhotonCount;
+            eventStatistics.fValidFields |= StatisticFieldBit(
+                PhotonTransportStatisticField::Captured);
+        }
+        if (emissions.empty()) {
+            return output;
+        }
+        if (emissions.size() > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::overflow_error(
+                "OptiX emission batch exceeds the supported launch size");
+        }
+
+        std::uint64_t photonCount{};
+        for (const auto& emission : emissions) {
+            photonCount += emission.fPhotonCount;
+        }
+        if (photonCount == 0) {
+            for (auto& eventOutput : output.fEventStatistics) {
+                eventOutput.fStatistics.fValidFields |=
+                    StatisticFieldBit(PhotonTransportStatisticField::Detected) |
+                    StatisticFieldBit(PhotonTransportStatisticField::Absorbed) |
+                    StatisticFieldBit(PhotonTransportStatisticField::Escaped) |
+                    StatisticFieldBit(PhotonTransportStatisticField::Truncated) |
+                    StatisticFieldBit(PhotonTransportStatisticField::MaxBounce) |
+                    StatisticFieldBit(
+                        PhotonTransportStatisticField::InvalidState) |
+                    StatisticFieldBit(PhotonTransportStatisticField::ZeroStep);
+            }
+            return output;
+        }
+        if (photonCount > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::overflow_error(
+                "OptiX emission batch exceeds the supported photon count");
+        }
+        output.fStatistics.fCapturedCount = photonCount;
+        output.fStatistics.fValidFields =
+            StatisticFieldBit(PhotonTransportStatisticField::Captured);
 
         const auto start{std::chrono::steady_clock::now()};
-        fDevicePhotons.clear();
-        fDevicePhotons.reserve(photons.size());
-        for (const auto& photon : photons) {
-            fDevicePhotons.push_back(ToDevice(photon));
+        EnsurePinnedAllocation(fHostEmissions, fHostEmissionCapacity,
+                               emissions.size(), "cudaMallocHost emissions");
+        EnsurePinnedAllocation(fHostEmissionOffsets,
+                               fHostEmissionOffsetCapacity,
+                               emissions.size() + 1U,
+                               "cudaMallocHost emission offsets");
+        EnsurePinnedAllocation(fHostEmissionEventIndices,
+                               fHostEmissionEventIndexCapacity,
+                               emissions.size(),
+                               "cudaMallocHost emission event indices");
+        fHostEmissionOffsets[0] = 0;
+        std::uint64_t offset{};
+        for (auto index{std::size_t{}}; index < emissions.size(); ++index) {
+            const auto& emission{emissions[index]};
+            auto deviceEmission{
+                std::bit_cast<DeviceOpticalEmission>(emission)};
+            auto deviceVolumeID{InvalidID};
+            if (emission.fVolumeID < fVolumeIndicesByID.size()) {
+                deviceVolumeID =
+                    fVolumeIndicesByID.at(emission.fVolumeID);
+            } else if (const auto volumeIndex{
+                           fVolumeIndices.find(emission.fVolumeID)};
+                       volumeIndex != fVolumeIndices.end()) {
+                deviceVolumeID = volumeIndex->second;
+            }
+            if (deviceVolumeID == InvalidID) {
+                throw std::invalid_argument(
+                    "emission references an unknown scene volume ID");
+            }
+            if (emission.fMaterialID >= scene.Materials().size()) {
+                throw std::invalid_argument(
+                    "emission references an unknown scene material ID");
+            }
+            deviceEmission.fVolumeID = deviceVolumeID;
+            fHostEmissions[index] = deviceEmission;
+            fHostEmissionEventIndices[index] =
+                batch.fEmissionEventIndices[index];
+            offset += emission.fPhotonCount;
+            fHostEmissionOffsets[index + 1U] =
+                static_cast<std::uint32_t>(offset);
         }
 
-        EnsureAllocation(fPhotonAllocation, fPhotonCapacity,
-                         fDevicePhotons.size(), sizeof(DevicePhoton));
-        EnsureAllocation(fHitAllocation, fHitCapacity, photons.size(),
+        EnsureAllocation(fEmissionAllocation, fEmissionCapacity,
+                         emissions.size(), sizeof(DeviceOpticalEmission));
+        EnsureAllocation(fEmissionOffsetAllocation, fEmissionOffsetCapacity,
+                         emissions.size() + 1U, sizeof(std::uint32_t));
+        EnsureAllocation(fEmissionEventIndexAllocation,
+                         fEmissionEventIndexCapacity, emissions.size(),
+                         sizeof(std::uint32_t));
+        EnsureAllocation(fHitAllocation, fHitCapacity,
+                         static_cast<std::size_t>(photonCount),
                          sizeof(DevicePhotonHit));
         EnsureAllocation(fHitFlagAllocation, fHitFlagCapacity,
-                         photons.size(), sizeof(std::uint32_t));
+                         static_cast<std::size_t>(photonCount),
+                         sizeof(std::uint32_t));
+        EnsureAllocation(fCompactedHitAllocation, fCompactedHitCapacity,
+                         static_cast<std::size_t>(photonCount),
+                         sizeof(DevicePhotonHit));
+        EnsureAllocation(fHitCountAllocation, fHitCountCapacity, 1,
+                         sizeof(std::uint32_t));
         EnsureAllocation(fStatsAllocation, fStatsCapacity, 1,
                          sizeof(DeviceTransportStats));
+        EnsureAllocation(fEventStatsAllocation, fEventStatsCapacity,
+                         batch.fEventIDs.size(),
+                         sizeof(DeviceEventTransportStats));
         EnsureAllocation(fLaunchParamsAllocation, fLaunchParamsCapacity, 1,
                          sizeof(OptixLaunchParams));
-        fDeviceHits.resize(photons.size());
-        fDeviceHitFlags.resize(photons.size());
+        EnsurePinnedAllocation(fHostCompactHits, fHostCompactHitCapacity,
+                               static_cast<std::size_t>(photonCount),
+                               "cudaMallocHost compact hits");
+        EnsurePinnedAllocation(fHostHitCount, fHostHitCountCapacity, 1,
+                               "cudaMallocHost hit count");
+        EnsurePinnedAllocation(fHostStats, fHostStatsCapacity, 1,
+                               "cudaMallocHost transport stats");
+        EnsurePinnedAllocation(fHostEventStats, fHostEventStatsCapacity,
+                               batch.fEventIDs.size(),
+                               "cudaMallocHost event transport stats");
 
-        CudaError(cudaMemcpyAsync(DevicePointer(fPhotonAllocation->Pointer()),
-                                  fDevicePhotons.data(),
-                                  fDevicePhotons.size() * sizeof(DevicePhoton),
-                                  cudaMemcpyHostToDevice, stream),
-                  "cudaMemcpyAsync photons");
-        CudaError(cudaMemsetAsync(DevicePointer(fStatsAllocation->Pointer()),
-                                  0, sizeof(DeviceTransportStats), stream),
-                  "cudaMemsetAsync transport stats");
-        CudaError(cudaMemsetAsync(DevicePointer(fHitFlagAllocation->Pointer()),
-                                  0, photons.size() * sizeof(std::uint32_t),
-                                  stream),
-                  "cudaMemsetAsync hit flags");
+        if (fCompactionInputCapacity < static_cast<std::size_t>(photonCount)) {
+            const auto compactionBytes{QueryOptiXHitCompactionBytes(
+                static_cast<std::size_t>(photonCount))};
+            if (compactionBytes == 0) {
+                throw std::runtime_error(
+                    "unable to determine OptiX hit compaction temporary "
+                    "storage");
+            }
+            EnsureAllocation(fCompactionTemporaryAllocation,
+                             fCompactionTemporaryCapacity, compactionBytes, 1);
+            fCompactionInputCapacity = static_cast<std::size_t>(photonCount);
+        }
+
+        RecordCudaTimerStart(fHostToDeviceTimer, stream);
+        CudaError(cudaMemcpyAsync(
+                      DevicePointer(fEmissionAllocation->Pointer()),
+                      fHostEmissions,
+                      emissions.size() * sizeof(DeviceOpticalEmission),
+                      cudaMemcpyHostToDevice, stream),
+                  "cudaMemcpyAsync emissions");
+        CudaError(cudaMemcpyAsync(
+                      DevicePointer(fEmissionOffsetAllocation->Pointer()),
+                      fHostEmissionOffsets,
+                      (emissions.size() + 1U) * sizeof(std::uint32_t),
+                      cudaMemcpyHostToDevice, stream),
+                  "cudaMemcpyAsync emission offsets");
+        CudaError(cudaMemcpyAsync(
+                      DevicePointer(fEmissionEventIndexAllocation->Pointer()),
+                      fHostEmissionEventIndices,
+                      emissions.size() * sizeof(std::uint32_t),
+                      cudaMemcpyHostToDevice, stream),
+                  "cudaMemcpyAsync emission event indices");
 
         OptixLaunchParams launchParams{};
-        launchParams.fPhotons = DevicePointerAs<DevicePhoton>(
-            fPhotonAllocation->Pointer());
+        launchParams.fEmissions = DevicePointerAs<DeviceOpticalEmission>(
+            fEmissionAllocation->Pointer());
+        launchParams.fEmissionEventIndices =
+            DevicePointerAs<const std::uint32_t>(
+                fEmissionEventIndexAllocation->Pointer());
+        launchParams.fEmissionOffsets = DevicePointerAs<const std::uint32_t>(
+            fEmissionOffsetAllocation->Pointer());
         launchParams.fHits = DevicePointerAs<DevicePhotonHit>(
             fHitAllocation->Pointer());
         launchParams.fHitFlags = DevicePointerAs<std::uint32_t>(
             fHitFlagAllocation->Pointer());
         launchParams.fStats =
             DevicePointerAs<DeviceTransportStats>(fStatsAllocation->Pointer());
+        launchParams.fEventStats = DevicePointerAs<DeviceEventTransportStats>(
+            fEventStatsAllocation->Pointer());
         launchParams.fScene = deviceScene;
         launchParams.fTraversable = traversableHandle;
         launchParams.fSeed = fConfiguration.fSeed;
-        launchParams.fMaxBounceCount =
-            fConfiguration.fMaxBouncesPerPhoton;
-        launchParams.fPhotonCount = static_cast<std::uint32_t>(photons.size());
+        launchParams.fMaxBounceCount = fConfiguration.fMaxBouncesPerPhoton;
+        launchParams.fEmissionCount = static_cast<std::uint32_t>(emissions.size());
+        launchParams.fEventCount =
+            static_cast<std::uint32_t>(batch.fEventIDs.size());
+        launchParams.fPhotonCount = static_cast<std::uint32_t>(photonCount);
+        launchParams.fEnablePerformanceDiagnostics =
+            fConfiguration.fEnablePerformanceDiagnostics ? 1U : 0U;
         launchParams.fBoundaryEpsilonMm =
             fConfiguration.fBoundaryToleranceMm;
         CudaError(cudaMemcpyAsync(
@@ -288,54 +801,155 @@ public:
                       &launchParams, sizeof(launchParams),
                       cudaMemcpyHostToDevice, stream),
                   "cudaMemcpyAsync launch params");
+        RecordCudaTimerStop(fHostToDeviceTimer, stream);
 
-        OptiXError(optixLaunch(pipeline, stream,
-                               fLaunchParamsAllocation->Pointer(),
-                               sizeof(launchParams), &sbt,
-                               static_cast<unsigned int>(photons.size()), 1,
-                               1),
+        RecordCudaTimerStart(fDeviceMemsetTimer, stream);
+        CudaError(cudaMemsetAsync(DevicePointer(fStatsAllocation->Pointer()),
+                                  0, sizeof(DeviceTransportStats), stream),
+                  "cudaMemsetAsync transport stats");
+        CudaError(cudaMemsetAsync(
+                      DevicePointer(fEventStatsAllocation->Pointer()), 0,
+                      batch.fEventIDs.size() * sizeof(DeviceEventTransportStats),
+                      stream),
+                  "cudaMemsetAsync event transport stats");
+        CudaError(cudaMemsetAsync(DevicePointer(fHitFlagAllocation->Pointer()),
+                                  0,
+                                  static_cast<std::size_t>(photonCount) *
+                                      sizeof(std::uint32_t),
+                                  stream),
+                  "cudaMemsetAsync hit flags");
+        RecordCudaTimerStop(fDeviceMemsetTimer, stream);
+
+        RecordCudaTimerStart(fOptiXKernelTimer, stream);
+        OptiXError(optixLaunch(
+                       pipeline, stream, fLaunchParamsAllocation->Pointer(),
+                       sizeof(launchParams), &sbt,
+                       static_cast<unsigned int>(photonCount), 1, 1),
                    "optixLaunch");
+        RecordCudaTimerStop(fOptiXKernelTimer, stream);
+        RecordCudaTimerStart(fDeviceHitCompactionTimer, stream);
+        CudaError(CompactOptiXHits(
+                      fHitAllocation->Pointer(), fHitFlagAllocation->Pointer(),
+                      fCompactedHitAllocation->Pointer(),
+                      fHitCountAllocation->Pointer(),
+                      fCompactionTemporaryAllocation->Pointer(),
+                      fCompactionTemporaryCapacity,
+                      static_cast<std::size_t>(photonCount), stream),
+                  "OptiX hit compaction");
+        RecordCudaTimerStop(fDeviceHitCompactionTimer, stream);
+
+        RecordCudaTimerStart(fDeviceToHostTimer, stream);
+        CudaError(cudaMemcpyAsync(
+                      fHostStats, DevicePointer(fStatsAllocation->Pointer()),
+                      sizeof(DeviceTransportStats), cudaMemcpyDeviceToHost,
+                      stream),
+                  "cudaMemcpyAsync transport stats");
+        CudaError(cudaMemcpyAsync(
+                      fHostEventStats,
+                      DevicePointer(fEventStatsAllocation->Pointer()),
+                      batch.fEventIDs.size() * sizeof(DeviceEventTransportStats),
+                      cudaMemcpyDeviceToHost, stream),
+                  "cudaMemcpyAsync event transport stats");
+        CudaError(cudaMemcpyAsync(
+                      fHostHitCount,
+                      DevicePointer(fHitCountAllocation->Pointer()),
+                      sizeof(std::uint32_t), cudaMemcpyDeviceToHost, stream),
+                  "cudaMemcpyAsync hit count");
+        CudaError(cudaEventRecord(fCompactionReadyEvent, stream),
+                  "cudaEventRecord compaction ready");
+        CudaError(cudaEventSynchronize(fCompactionReadyEvent),
+                  "cudaEventSynchronize compaction ready");
+        const auto compactHitCount{static_cast<std::size_t>(*fHostHitCount)};
+        if (compactHitCount > static_cast<std::size_t>(photonCount)) {
+            throw std::runtime_error(
+                "OptiX hit compaction returned an invalid hit count");
+        }
+        if (compactHitCount > 0) {
+            CudaError(cudaMemcpyAsync(
+                          fHostCompactHits,
+                          DevicePointer(fCompactedHitAllocation->Pointer()),
+                          compactHitCount * sizeof(DevicePhotonHit),
+                          cudaMemcpyDeviceToHost, stream),
+                      "cudaMemcpyAsync compact hits");
+        }
+        RecordCudaTimerStop(fDeviceToHostTimer, stream);
         CudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
 
-        CudaError(cudaMemcpy(&fDeviceStats,
-                             DevicePointer(fStatsAllocation->Pointer()),
-                             sizeof(fDeviceStats), cudaMemcpyDeviceToHost),
-                  "cudaMemcpy transport stats");
-        const auto detectedCount{std::min<std::size_t>(
-            fDeviceStats.fDetectedCount, photons.size())};
-        CudaError(cudaMemcpy(fDeviceHits.data(),
-                             DevicePointer(fHitAllocation->Pointer()),
-                             photons.size() * sizeof(DevicePhotonHit),
-                             cudaMemcpyDeviceToHost),
-                  "cudaMemcpy hit data");
-        CudaError(cudaMemcpy(fDeviceHitFlags.data(),
-                             DevicePointer(fHitFlagAllocation->Pointer()),
-                             photons.size() * sizeof(std::uint32_t),
-                             cudaMemcpyDeviceToHost),
-                  "cudaMemcpy hit flags");
-
-        result.fStatistics.fDetectedCount = fDeviceStats.fDetectedCount;
-        result.fStatistics.fAbsorbedCount = fDeviceStats.fAbsorbedCount;
-        result.fStatistics.fEscapedCount = fDeviceStats.fEscapedCount;
-        result.fStatistics.fTruncatedCount = fDeviceStats.fTruncatedCount;
-        result.fStatistics.fMaxBounceCount = fDeviceStats.fMaxBounceCount;
-        result.fStatistics.fInvalidStateCount =
-            fDeviceStats.fInvalidStateCount;
-        result.fStatistics.fZeroStepCount = fDeviceStats.fZeroStepCount;
-        result.fStatistics.fTransportTimeMs =
+        const auto& deviceStats{*fHostStats};
+        output.fStatistics.fDetectedCount = deviceStats.fDetectedCount;
+        output.fStatistics.fAbsorbedCount = deviceStats.fAbsorbedCount;
+        output.fStatistics.fEscapedCount = deviceStats.fEscapedCount;
+        output.fStatistics.fTruncatedCount = deviceStats.fTruncatedCount;
+        output.fStatistics.fMaxBounceCount = deviceStats.fMaxBounceCount;
+        output.fStatistics.fInvalidStateCount =
+            deviceStats.fInvalidStateCount;
+        output.fStatistics.fZeroStepCount = deviceStats.fZeroStepCount;
+        output.fStatistics.fTransportTimeMs =
             std::chrono::duration<double, std::milli>{
                 std::chrono::steady_clock::now() - start}
                 .count();
-        result.fDetections.reserve(detectedCount);
-        for (auto index{std::size_t{}}; index < photons.size(); ++index) {
-            if (fDeviceHitFlags[index] == 0) {
-                continue;
-            }
-            const auto& hit{fDeviceHits[index]};
-            result.fDetections.push_back({
-                {hit.fPositionMm[0], hit.fPositionMm[1], hit.fPositionMm[2]},
+        output.fStatistics.fValidFields |=
+            StatisticFieldBit(PhotonTransportStatisticField::Detected) |
+            StatisticFieldBit(PhotonTransportStatisticField::Absorbed) |
+            StatisticFieldBit(PhotonTransportStatisticField::Escaped) |
+            StatisticFieldBit(PhotonTransportStatisticField::Truncated) |
+            StatisticFieldBit(PhotonTransportStatisticField::MaxBounce) |
+            StatisticFieldBit(PhotonTransportStatisticField::InvalidState) |
+            StatisticFieldBit(PhotonTransportStatisticField::ZeroStep) |
+            StatisticFieldBit(PhotonTransportStatisticField::TransportTime);
+        for (auto index{std::size_t{}};
+             index < output.fEventStatistics.size(); ++index) {
+            auto& eventStatistics{
+                output.fEventStatistics.at(index).fStatistics};
+            const auto& deviceEventStatistics{fHostEventStats[index]};
+            eventStatistics.fDetectedCount =
+                deviceEventStatistics.fDetectedCount;
+            eventStatistics.fAbsorbedCount =
+                deviceEventStatistics.fAbsorbedCount;
+            eventStatistics.fEscapedCount = deviceEventStatistics.fEscapedCount;
+            eventStatistics.fTruncatedCount =
+                deviceEventStatistics.fTruncatedCount;
+            eventStatistics.fMaxBounceCount =
+                deviceEventStatistics.fMaxBounceCount;
+            eventStatistics.fInvalidStateCount =
+                deviceEventStatistics.fInvalidStateCount;
+            eventStatistics.fZeroStepCount =
+                deviceEventStatistics.fZeroStepCount;
+            eventStatistics.fValidFields |=
+                StatisticFieldBit(PhotonTransportStatisticField::Detected) |
+                StatisticFieldBit(PhotonTransportStatisticField::Absorbed) |
+                StatisticFieldBit(PhotonTransportStatisticField::Escaped) |
+                StatisticFieldBit(PhotonTransportStatisticField::Truncated) |
+                StatisticFieldBit(PhotonTransportStatisticField::MaxBounce) |
+                StatisticFieldBit(
+                    PhotonTransportStatisticField::InvalidState) |
+                StatisticFieldBit(PhotonTransportStatisticField::ZeroStep);
+        }
+        output.fPerformance.fHostToDeviceMs =
+            ReadCudaTimerMs(fHostToDeviceTimer);
+        output.fPerformance.fDeviceMemsetMs =
+            ReadCudaTimerMs(fDeviceMemsetTimer);
+        output.fPerformance.fOptiXKernelMs =
+            ReadCudaTimerMs(fOptiXKernelTimer);
+        output.fPerformance.fDeviceHitCompactionMs =
+            ReadCudaTimerMs(fDeviceHitCompactionTimer);
+        output.fPerformance.fDeviceToHostMs =
+            ReadCudaTimerMs(fDeviceToHostTimer);
+        output.fPerformance.fTotalBounceCount = deviceStats.fTotalBounceCount;
+        output.fPerformance.fCoincidentCandidateTraceCount =
+            deviceStats.fCoincidentCandidateTraceCount;
+        output.fPerformance.fCoincidentCandidateHitCount =
+            deviceStats.fCoincidentCandidateHitCount;
+        const auto hostCompactionStart{std::chrono::steady_clock::now()};
+        output.fDetections.reserve(compactHitCount);
+        for (auto index{std::size_t{}}; index < compactHitCount; ++index) {
+            const auto& hit{fHostCompactHits[index]};
+            output.fDetections.emplace_back(PhotonDetection{
+                {hit.fPositionMm.at(0), hit.fPositionMm.at(1),
+                 hit.fPositionMm.at(2)},
                 hit.fTimeNs,
-                {hit.fDirection[0],  hit.fDirection[1],  hit.fDirection[2] },
+                {hit.fDirection.at(0),  hit.fDirection.at(1),
+                 hit.fDirection.at(2) },
                 hit.fEnergyEv,
                 hit.fEventID,
                 hit.fPhotonID,
@@ -343,7 +957,11 @@ public:
                 hit.fFlags,
             });
         }
-        return result;
+        output.fPerformance.fHostHitCompactionMs =
+            std::chrono::duration<double, std::milli>{
+                std::chrono::steady_clock::now() - hostCompactionStart}
+                .count();
+        return output;
     }
 
 private:
@@ -357,7 +975,7 @@ private:
         OptixPipelineCompileOptions pipelineOptions{};
         pipelineOptions.traversableGraphFlags =
             OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-        pipelineOptions.numPayloadValues = 5;
+        pipelineOptions.numPayloadValues = 6;
         pipelineOptions.numAttributeValues = 2;
         pipelineOptions.pipelineLaunchParamsVariableName = "gLaunchParams";
         pipelineOptions.pipelineLaunchParamsSizeInBytes =
@@ -367,16 +985,16 @@ private:
 
         std::array<char, 8192> log{};
         auto logSize{log.size()};
-        const auto moduleResult{optixModuleCreate(
+        const auto moduleStatus{optixModuleCreate(
             context, &moduleOptions, &pipelineOptions,
             reinterpret_cast<const char*>(g4go_optix_ir),
             static_cast<std::size_t>(g4go_optix_irLength), log.data(), &logSize,
             &module)};
-        if (moduleResult != OPTIX_SUCCESS) {
+        if (moduleStatus != OPTIX_SUCCESS) {
             throw std::runtime_error(
                 std::string("optixModuleCreate failed: ") +
-                optixGetErrorName(moduleResult) + " (" +
-                optixGetErrorString(moduleResult) + ") " +
+                optixGetErrorName(moduleStatus) + " (" +
+                optixGetErrorString(moduleStatus) + ") " +
                 std::string(log.data(), logSize));
         }
 
@@ -414,15 +1032,15 @@ private:
         linkOptions.maxTraversableGraphDepth = 2;
         log.fill(0);
         logSize = log.size();
-        const auto pipelineResult{optixPipelineCreate(
+        const auto pipelineStatus{optixPipelineCreate(
             context, &pipelineOptions, &linkOptions, programGroups.data(),
             static_cast<unsigned int>(programGroups.size()), log.data(),
             &logSize, &pipeline)};
-        if (pipelineResult != OPTIX_SUCCESS) {
+        if (pipelineStatus != OPTIX_SUCCESS) {
             throw std::runtime_error(
                 std::string("optixPipelineCreate failed: ") +
-                optixGetErrorName(pipelineResult) + " (" +
-                optixGetErrorString(pipelineResult) + ") " +
+                optixGetErrorName(pipelineStatus) + " (" +
+                optixGetErrorString(pipelineStatus) + ") " +
                 std::string(log.data(), logSize));
         }
         OptiXError(optixPipelineSetStackSizeFromCallDepths(
@@ -436,13 +1054,13 @@ private:
         OptixProgramGroup programGroup{};
         std::array<char, 4096> log{};
         auto logSize{log.size()};
-        const auto result{optixProgramGroupCreate(
+        const auto status{optixProgramGroupCreate(
             context, &description, 1, &options, log.data(), &logSize,
             &programGroup)};
-        if (result != OPTIX_SUCCESS) {
+        if (status != OPTIX_SUCCESS) {
             throw std::runtime_error(
                 std::string(operation) + " failed: " +
-                optixGetErrorName(result) + " (" + optixGetErrorString(result) +
+                optixGetErrorName(status) + " (" + optixGetErrorString(status) +
                 ") " + std::string(log.data(), logSize));
         }
         return programGroup;
@@ -474,23 +1092,69 @@ private:
         if (scene.Geometries().empty() || scene.Volumes().empty()) {
             throw std::invalid_argument("OptiX scene cannot be empty");
         }
+        if (scene.Volumes().size() >= InvalidID) {
+            throw std::overflow_error("OptiX scene contains too many volumes");
+        }
+
+        std::unordered_map<std::uint32_t, std::uint32_t> volumeIndices{};
+        volumeIndices.reserve(scene.Volumes().size());
+        for (auto index{std::size_t{}}; index < scene.Volumes().size(); ++index) {
+            const auto volumeID{scene.Volumes().at(index).fVolumeID};
+            if (volumeID == InvalidID ||
+                !volumeIndices.emplace(volumeID, static_cast<std::uint32_t>(index))
+                     .second) {
+                throw std::invalid_argument(
+                    "OptiX scene volume IDs must be unique and valid");
+            }
+        }
+        const auto mapVolumeID{
+            [&](std::uint32_t volumeID, const char* relationship) {
+                if (volumeID == InvalidID) {
+                    return InvalidID;
+                }
+                const auto volumeIndex{volumeIndices.find(volumeID)};
+                if (volumeIndex == volumeIndices.end()) {
+                    throw std::invalid_argument(
+                        std::string("OptiX scene references an unknown ") +
+                        relationship + " volume ID");
+                }
+                return volumeIndex->second;
+            }};
+        const auto mapRequiredVolumeID{
+            [&](std::uint32_t volumeID, const char* relationship) {
+                if (volumeID == InvalidID) {
+                    throw std::invalid_argument(
+                        std::string("OptiX scene has no ") + relationship +
+                        " volume ID");
+                }
+                return mapVolumeID(volumeID, relationship);
+            }};
         sceneAllocations.clear();
 
         std::vector<DeviceMaterial> materials{};
         materials.reserve(scene.Materials().size());
         for (const auto& material : scene.Materials()) {
-            materials.push_back({
+            materials.emplace_back(DeviceMaterial{
                 UploadProperty(material.fRindex, sceneAllocations),
+                material.fRindexMax,
                 UploadProperty(material.fGroupVelocityMmPerNs,
                                sceneAllocations),
                 UploadProperty(material.fAbsLengthMm, sceneAllocations),
+                {
+                                                           UploadSpectrumProperty(material.fScintillationSpectrum.at(0),
+                                                           sceneAllocations),
+                                                           UploadSpectrumProperty(material.fScintillationSpectrum.at(1),
+                                                           sceneAllocations),
+                                                           UploadSpectrumProperty(material.fScintillationSpectrum.at(2),
+                                                           sceneAllocations),
+                                                           },
             });
         }
 
         std::vector<DeviceSurface> surfaces{};
         surfaces.reserve(scene.Surfaces().size());
         for (const auto& surface : scene.Surfaces()) {
-            surfaces.push_back({
+            surfaces.emplace_back(DeviceSurface{
                 static_cast<std::uint8_t>(surface.fType),
                 static_cast<std::uint8_t>(surface.fModel),
                 static_cast<std::uint8_t>(surface.fFinish),
@@ -500,18 +1164,10 @@ private:
                 UploadProperty(surface.fEfficiency, sceneAllocations),
                 UploadProperty(surface.fTransmittance, sceneAllocations),
                 UploadProperty(surface.fRindex, sceneAllocations),
-                UploadProperty(surface.fRealRindex, sceneAllocations),
-                UploadProperty(surface.fImaginaryRindex, sceneAllocations),
-                UploadProperty(surface.fCoatedRindex, sceneAllocations),
                 UploadProperty(surface.fSpecularLobe, sceneAllocations),
                 UploadProperty(surface.fSpecularSpike, sceneAllocations),
                 UploadProperty(surface.fBackscatter, sceneAllocations),
                 UploadProperty(surface.fSurfaceRoughness, sceneAllocations),
-                UploadProperty(surface.fDichroic, sceneAllocations),
-                surface.fCoatedThicknessMm,
-                static_cast<std::uint8_t>(
-                    surface.fCoatedFrustratedTransmission),
-                {},
             });
         }
 
@@ -540,24 +1196,69 @@ private:
                     "OptiX scene triangle flag count mismatch: " +
                     geometry.fName);
             }
+            const auto triangleCount{mesh.fIndices.size() / 3};
+            std::vector<G4ThreeVector> triangleNormals{};
+            if (mesh.fTriangleNormals.empty()) {
+                triangleNormals.reserve(triangleCount);
+                for (auto triangle{std::size_t{}}; triangle < triangleCount;
+                     ++triangle) {
+                    const auto base{3 * triangle};
+                    const auto& first{
+                        mesh.fVerticesMm.at(mesh.fIndices.at(base))};
+                    const auto& second{
+                        mesh.fVerticesMm.at(mesh.fIndices.at(base + 1))};
+                    const auto& third{
+                        mesh.fVerticesMm.at(mesh.fIndices.at(base + 2))};
+                    const auto normal{(second - first).cross(third - first)};
+                    if (!(normal.mag2() > 0.0)) {
+                        throw std::invalid_argument(
+                            "OptiX scene contains a degenerate triangle: " +
+                            geometry.fName);
+                    }
+                    triangleNormals.emplace_back(normal.unit());
+                }
+            } else {
+                if (mesh.fTriangleNormals.size() != triangleCount) {
+                    throw std::invalid_argument(
+                        "OptiX scene triangle normal count mismatch: " +
+                        geometry.fName);
+                }
+                triangleNormals.reserve(triangleCount);
+                for (const auto& normal : mesh.fTriangleNormals) {
+                    if (!(normal.mag2() > 0.0)) {
+                        throw std::invalid_argument(
+                            "OptiX scene contains an invalid triangle normal: " +
+                            geometry.fName);
+                    }
+                    triangleNormals.emplace_back(normal.unit());
+                }
+            }
             std::vector<DeviceVector3> vertices{};
             vertices.reserve(mesh.fVerticesMm.size());
             for (const auto& vertex : mesh.fVerticesMm) {
-                vertices.push_back(ToDevice(vertex));
+                vertices.emplace_back(ToDevice(vertex));
             }
             const auto vertexPointer{
                 Upload<DeviceVector3>(vertices, sceneAllocations)};
             const auto indexPointer{
                 Upload<std::uint32_t>(mesh.fIndices, sceneAllocations)};
+            std::vector<DeviceVector3> deviceNormals{};
+            deviceNormals.reserve(triangleNormals.size());
+            for (const auto& normal : triangleNormals) {
+                deviceNormals.emplace_back(ToDevice(normal));
+            }
+            const auto normalPointer{
+                Upload<DeviceVector3>(deviceNormals, sceneAllocations)};
             const auto flagPointer{
                 Upload<std::uint8_t>(mesh.fTriangleFlags, sceneAllocations)};
-            geometries.push_back({
+            geometries.emplace_back(DeviceGeometry{
                 {
                  DevicePointerAs<const DeviceVector3>(vertexPointer),
                  DevicePointerAs<const std::uint32_t>(indexPointer),
+                 DevicePointerAs<const DeviceVector3>(normalPointer),
                  DevicePointerAs<const std::uint8_t>(flagPointer),
                  static_cast<std::uint32_t>(mesh.fVerticesMm.size()),
-                 static_cast<std::uint32_t>(mesh.fIndices.size() / 3),
+                 static_cast<std::uint32_t>(triangleCount),
                  },
             });
 
@@ -592,16 +1293,17 @@ private:
                 std::make_unique<DeviceAllocation>(bufferSizes.outputSizeInBytes)};
             OptixTraversableHandle geometryHandle{};
             OptiXError(optixAccelBuild(
-                           context, stream, &buildOptions, &buildInput, 1,
+                           context, fSceneBuildStream, &buildOptions,
+                           &buildInput, 1,
                            temporary->Pointer(), bufferSizes.tempSizeInBytes,
                            output->Pointer(), bufferSizes.outputSizeInBytes,
                            &geometryHandle, nullptr, 0),
                        "optixAccelBuild geometry");
-            CudaError(cudaStreamSynchronize(stream),
+            CudaError(cudaStreamSynchronize(fSceneBuildStream),
                       "cudaStreamSynchronize geometry GAS");
-            sceneAllocations.push_back(std::move(temporary));
-            sceneAllocations.push_back(std::move(output));
-            geometryHandles.push_back(geometryHandle);
+            sceneAllocations.emplace_back(std::move(temporary));
+            sceneAllocations.emplace_back(std::move(output));
+            geometryHandles.emplace_back(geometryHandle);
         }
 
         std::vector<DeviceVolume> volumes{};
@@ -609,17 +1311,17 @@ private:
         std::vector<OptixInstance> instances{};
         instances.reserve(scene.Volumes().size());
         for (auto index{std::size_t{}}; index < scene.Volumes().size(); ++index) {
-            const auto& volume{scene.Volumes()[index]};
+            const auto& volume{scene.Volumes().at(index)};
             if (volume.fGeometryID >= geometryHandles.size()) {
                 throw std::invalid_argument("volume references invalid geometry");
             }
-            volumes.push_back({
-                volume.fVolumeID,
+            volumes.emplace_back(DeviceVolume{
+                static_cast<std::uint32_t>(index),
                 volume.fPhysicalVolumeID,
                 volume.fCopyNo,
                 volume.fGeometryID,
                 volume.fMaterialID,
-                volume.fParentVolumeID,
+                mapVolumeID(volume.fParentVolumeID, "parent"),
                 volume.fSkinSurfaceID,
                 volume.fSensorID,
                 volume.fDepth,
@@ -644,19 +1346,26 @@ private:
             instance.instanceId = static_cast<unsigned int>(index);
             instance.visibilityMask = 255;
             instance.flags = OPTIX_INSTANCE_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
-            instance.traversableHandle = geometryHandles[volume.fGeometryID];
-            instances.push_back(instance);
+            instance.traversableHandle = geometryHandles.at(volume.fGeometryID);
+            instances.emplace_back(instance);
         }
 
         std::vector<DeviceSurfaceBinding> deviceBindings{};
         deviceBindings.reserve(scene.SurfaceBindings().size());
         for (const auto& binding : scene.SurfaceBindings()) {
-            deviceBindings.push_back({
-                binding.fFromVolumeID,
-                binding.fToVolumeID,
+            deviceBindings.emplace_back(DeviceSurfaceBinding{
+                mapRequiredVolumeID(binding.fFromVolumeID, "boundary source"),
+                mapRequiredVolumeID(binding.fToVolumeID, "boundary target"),
                 binding.fSurfaceID,
             });
         }
+        std::sort(deviceBindings.begin(), deviceBindings.end(),
+                  [](const auto& left, const auto& right) {
+                      if (left.fFromVolumeID != right.fFromVolumeID) {
+                          return left.fFromVolumeID < right.fFromVolumeID;
+                      }
+                      return left.fToVolumeID < right.fToVolumeID;
+                  });
 
         const auto materialPointer{Upload<DeviceMaterial>(
             materials, sceneAllocations)};
@@ -681,7 +1390,7 @@ private:
             static_cast<std::uint32_t>(volumes.size()),
             DevicePointerAs<const DeviceSurfaceBinding>(bindingPointer),
             static_cast<std::uint32_t>(deviceBindings.size()),
-            scene.WorldVolumeID(),
+            mapRequiredVolumeID(scene.WorldVolumeID(), "world"),
         };
 
         OptixBuildInput instanceInput{};
@@ -702,48 +1411,52 @@ private:
         auto instanceOutput{std::make_unique<DeviceAllocation>(
             instanceBufferSizes.outputSizeInBytes)};
         OptiXError(optixAccelBuild(
-                       context, stream, &instanceOptions, &instanceInput, 1,
+                       context, fSceneBuildStream, &instanceOptions,
+                       &instanceInput, 1,
                        instanceTemporary->Pointer(),
                        instanceBufferSizes.tempSizeInBytes,
                        instanceOutput->Pointer(),
                        instanceBufferSizes.outputSizeInBytes,
                        &traversableHandle, nullptr, 0),
                    "optixAccelBuild IAS");
-        CudaError(cudaStreamSynchronize(stream),
+        CudaError(cudaStreamSynchronize(fSceneBuildStream),
                   "cudaStreamSynchronize scene IAS");
-        sceneAllocations.push_back(std::move(instanceTemporary));
-        sceneAllocations.push_back(std::move(instanceOutput));
+        sceneAllocations.emplace_back(std::move(instanceTemporary));
+        sceneAllocations.emplace_back(std::move(instanceOutput));
+        if (std::all_of(
+                volumeIndices.begin(), volumeIndices.end(),
+                [&](const auto& entry) {
+                    return entry.first < scene.Volumes().size();
+                })) {
+            fVolumeIndicesByID.assign(scene.Volumes().size(), InvalidID);
+            for (const auto& [volumeID, volumeIndex] : volumeIndices) {
+                fVolumeIndicesByID[volumeID] = volumeIndex;
+            }
+        } else {
+            fVolumeIndicesByID.clear();
+        }
+        fVolumeIndices = std::move(volumeIndices);
         sceneAddress = &scene;
     }
 
-    PhotonTransportConfig fConfiguration{};
-    OptixDeviceContext context{};
-    OptixModule module{};
-    OptixProgramGroup raygenProgram{};
-    OptixProgramGroup missProgram{};
-    OptixProgramGroup hitgroupProgram{};
-    OptixPipeline pipeline{};
-    cudaStream_t stream{};
-    OptixShaderBindingTable sbt{};
-    DeviceAllocations sbtAllocations{};
-    DeviceAllocations sceneAllocations{};
-    DeviceScene deviceScene{};
-    const Scene* sceneAddress{};
-    OptixTraversableHandle traversableHandle{};
-    std::unique_ptr<DeviceAllocation> fPhotonAllocation{};
-    std::unique_ptr<DeviceAllocation> fHitAllocation{};
-    std::unique_ptr<DeviceAllocation> fHitFlagAllocation{};
-    std::unique_ptr<DeviceAllocation> fStatsAllocation{};
-    std::unique_ptr<DeviceAllocation> fLaunchParamsAllocation{};
-    std::size_t fPhotonCapacity{};
-    std::size_t fHitCapacity{};
-    std::size_t fHitFlagCapacity{};
-    std::size_t fStatsCapacity{};
-    std::size_t fLaunchParamsCapacity{};
-    std::vector<DevicePhoton> fDevicePhotons{};
-    std::vector<DevicePhotonHit> fDeviceHits{};
-    std::vector<std::uint32_t> fDeviceHitFlags{};
-    DeviceTransportStats fDeviceStats{};
+    PhotonTransportConfig fConfiguration;
+    OptixDeviceContext context;
+    OptixModule module;
+    OptixProgramGroup raygenProgram;
+    OptixProgramGroup missProgram;
+    OptixProgramGroup hitgroupProgram;
+    OptixPipeline pipeline;
+    cudaStream_t fSceneBuildStream;
+    std::unique_ptr<TransportSlot> fSlot;
+    OptixShaderBindingTable sbt;
+    DeviceAllocations sbtAllocations;
+    DeviceAllocations sceneAllocations;
+    DeviceScene deviceScene;
+    std::unordered_map<std::uint32_t, std::uint32_t> fVolumeIndices;
+    std::vector<std::uint32_t> fVolumeIndicesByID;
+    std::mutex fSceneMutex;
+    const Scene* sceneAddress;
+    OptixTraversableHandle traversableHandle;
 };
 
 OptiXTransportHost::OptiXTransportHost(
@@ -752,10 +1465,14 @@ OptiXTransportHost::OptiXTransportHost(
 
 OptiXTransportHost::~OptiXTransportHost() = default;
 
-auto OptiXTransportHost::Propagate(const Scene& scene,
-                                   std::span<const Photon> photons)
+auto OptiXTransportHost::PrepareScene(const Scene& scene) -> void {
+    fImpl->PrepareScene(scene);
+}
+
+auto OptiXTransportHost::PropagateEmissions(
+    const Scene& scene, const PhotonTransportBatch& batch)
     -> PhotonTransportOutput {
-    return fImpl->Propagate(scene, photons);
+    return fImpl->PropagateEmissions(scene, batch);
 }
 
 } // namespace G4GO::Optical

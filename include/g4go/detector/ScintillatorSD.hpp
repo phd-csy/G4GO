@@ -1,5 +1,4 @@
-#ifndef SCINTILLATOR_SD_HPP
-#define SCINTILLATOR_SD_HPP
+#pragma once
 
 #include "G4VSensitiveDetector.hh"
 #include "g4go/detector/ScintillatorHit.hpp"
@@ -15,10 +14,8 @@ public:
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
 
 private:
-    ScintillatorHC* hc{nullptr};
-    G4int hcID{-1};
+    ScintillatorHC* hc;
+    G4int hcID;
 };
 
 } // namespace G4GO::Detector
-
-#endif

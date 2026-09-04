@@ -2,6 +2,7 @@
 
 #include "G4ThreeVector.hh"
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -62,14 +63,16 @@ struct PropertyTable {
 
     auto Empty() const -> bool { return fEnergyEv.empty(); }
     auto Constant() const -> bool;
-    auto Sample(float energyEv, float fallback) const -> float;
+    auto Sample(float energyEv, float defaultValue) const -> float;
 };
 
 struct Material {
     std::string fName{};
     PropertyTable fRindex{};
+    float fRindexMax{1.0F};
     PropertyTable fGroupVelocityMmPerNs{};
     PropertyTable fAbsLengthMm{};
+    std::array<PropertyTable, 3> fScintillationSpectrum{};
 };
 
 struct Surface {
@@ -82,22 +85,17 @@ struct Surface {
     PropertyTable fEfficiency{};
     PropertyTable fTransmittance{};
     PropertyTable fRindex{};
-    PropertyTable fRealRindex{};
-    PropertyTable fImaginaryRindex{};
-    PropertyTable fCoatedRindex{};
     PropertyTable fSpecularLobe{};
     PropertyTable fSpecularSpike{};
     PropertyTable fBackscatter{};
     PropertyTable fSurfaceRoughness{};
-    PropertyTable fDichroic{};
-    float fCoatedThicknessMm{};
-    bool fCoatedFrustratedTransmission{true};
 };
 
 struct MeshGeometry {
     std::string fName{};
     std::vector<G4ThreeVector> fVerticesMm{};
     std::vector<std::uint32_t> fIndices{};
+    std::vector<G4ThreeVector> fTriangleNormals{};
     std::vector<std::uint8_t> fTriangleFlags{};
 };
 
@@ -129,7 +127,7 @@ struct SurfaceBinding {
 
 class Scene final {
 public:
-    Scene() = default;
+    Scene();
     ~Scene() = default;
 
     auto AddMaterial(Material material) -> std::uint32_t;
@@ -138,6 +136,7 @@ public:
     auto AddVolume(Volume volume) -> std::uint32_t;
     auto AddSurfaceBinding(SurfaceBinding binding) -> void;
 
+    auto FindGeometry(std::uint32_t geometryID) -> Geometry*;
     auto FindMaterial(std::uint32_t materialID) const -> const Material*;
     auto FindSurface(std::uint32_t surfaceID) const -> const Surface*;
     auto FindGeometry(std::uint32_t geometryID) const -> const Geometry*;
@@ -161,19 +160,20 @@ public:
         return fSurfaceBindings;
     }
     auto WorldVolumeID() const -> std::uint32_t { return fWorldVolumeID; }
-    auto SetWorldVolumeID(std::uint32_t volumeID) -> void {
+    auto WorldVolumeID(std::uint32_t volumeID) -> void {
         fWorldVolumeID = volumeID;
     }
-    auto SetVolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
-                                            bool value) -> void;
+    auto VolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
+                                         bool value) -> void;
+    auto EnsureUniqueGeometry(std::uint32_t volumeID) -> void;
 
 private:
-    std::vector<Material> fMaterials{};
-    std::vector<Surface> fSurfaces{};
-    std::vector<Geometry> fGeometries{};
-    std::vector<Volume> fVolumes{};
-    std::vector<SurfaceBinding> fSurfaceBindings{};
-    std::uint32_t fWorldVolumeID{InvalidID};
+    std::vector<Material> fMaterials;
+    std::vector<Surface> fSurfaces;
+    std::vector<Geometry> fGeometries;
+    std::vector<Volume> fVolumes;
+    std::vector<SurfaceBinding> fSurfaceBindings;
+    std::uint32_t fWorldVolumeID;
 };
 
 } // namespace G4GO::Optical

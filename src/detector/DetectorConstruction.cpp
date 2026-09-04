@@ -20,9 +20,11 @@
 namespace G4GO::Detector {
 
 DetectorConstruction::DetectorConstruction() :
-    fCheckOverlap{false} {}
+    fCheckOverlap{},
+    fModuleID{} {}
 
 auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
+    fModuleID = 0;
     const auto nist{G4NistManager::Instance()};
 
     const auto hydrogenElement{nist->FindOrBuildElement("H")};
@@ -150,8 +152,8 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     const auto windowPositionZ{
         crystalLength / 2 + coupleThickness + windowThickness / 2};
     const auto sipmPositionZ{crystalLength / 2 + coupleThickness + windowThickness + sipmThickness / 2};
-    for (auto i{0}; i < sipmArraySize; ++i) {
-        for (auto j{0}; j < sipmArraySize; ++j) {
+    for (int i{}; i < sipmArraySize; ++i) {
+        for (int j{}; j < sipmArraySize; ++j) {
             const auto sipmPositionX{sipmArrayOffset - i * sipmPitch};
             const auto sipmPositionY{sipmArrayOffset - j * sipmPitch};
             new G4PVPlacement(
@@ -199,7 +201,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     cathodeSurface->SetMaterialPropertiesTable(cathodeSurfacePropertiesTable);
     new G4LogicalSkinSurface("cathodeSkinSurface", logicalSiPM, cathodeSurface);
 
-    ++moduleID;
+    ++fModuleID;
 
     return physicalWorld;
 }
@@ -211,7 +213,7 @@ auto DetectorConstruction::ConstructSDandField() -> void {
     SetSensitiveDetector("Crystal", scintillatorSD, true);
 
     auto sensorSD{
-        new SensorSD("SensorSD", "SensorHitsCollection")};
+        new SensorSD(SensorSensitiveDetectorName, "SensorHitsCollection")};
     G4SDManager::GetSDMpointer()->AddNewDetector(sensorSD);
     SetSensitiveDetector("SiPM", sensorSD, true);
 }

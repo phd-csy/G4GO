@@ -1,0 +1,15 @@
+/control/verbose 0
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+/run/initialize
+
+/gps/particle e-
+/gps/ene/mono 5 MeV
+/gps/pos/centre 0 0 -10 cm
+/gps/direction 0 0 1
+
+/analysis/setFileName run_eminus_regression
+
+/run/printProgress 1000
+/run/beamOn 100000
