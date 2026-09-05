@@ -611,18 +611,7 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
         fCondition.notify_all();
 
         for (;;) {
-            const auto maximumInFlight{static_cast<std::size_t>(
-                fConfiguration.fMaxInFlightBatches)};
-            bool stopRequested{};
-            bool hasPendingRequests{};
-            {
-                std::lock_guard lock{fMutex};
-                stopRequested = fStopRequested;
-                hasPendingRequests = !fPendingRequests.empty();
-            }
-            if (!inFlightBatches.empty() &&
-                (inFlightBatches.size() >= maximumInFlight ||
-                 !hasPendingRequests || stopRequested)) {
+            if (!inFlightBatches.empty()) {
                 const auto waitStart{
                     fConfiguration.fEnablePerformanceDiagnostics ?
                         std::chrono::steady_clock::now() :
@@ -770,13 +759,6 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
             fPhotonTransport->EnqueueEmissions(fScene, batch);
             inFlightBatches.emplace_back(
                 InFlightBatch{std::move(requests), photonCount});
-            if (fConfiguration.fEnablePerformanceDiagnostics) {
-                std::lock_guard lock{fMutex};
-                fBatchStatistics.fMaxInFlightBatchCount =
-                    std::max<std::uint64_t>(
-                        fBatchStatistics.fMaxInFlightBatchCount,
-                        inFlightBatches.size());
-            }
         }
         fPhotonTransport.reset();
     } catch (...) {

@@ -151,8 +151,6 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                    << ", invalid_state_count="
                    << statistics.fInvalidStateCount
                    << ", queue_wait_count=" << batches.fTotalQueueWaitCount
-                   << ", max_in_flight_batches="
-                   << batches.fMaxInFlightBatchCount
                    << ", scheduler_input_wait_ms="
                    << batches.fSchedulerInputWaitMs
                    << ", scheduler_gpu_wait_ms="

@@ -484,11 +484,6 @@ public:
         fSceneMutex{},
         sceneAddress{},
         traversableHandle{} {
-        if (fConfiguration.fMaxInFlightBatches < 1U ||
-            fConfiguration.fMaxInFlightBatches > 2U) {
-            throw std::invalid_argument(
-                "OptiX in-flight batch count must be 1 or 2");
-        }
         CudaError(cudaFree(nullptr), "CUDA initialization");
         OptiXError(optixInit(), "optixInit");
 
@@ -502,12 +497,8 @@ public:
             cudaStreamCreateWithFlags(&fSceneBuildStream, cudaStreamNonBlocking),
             "cudaStreamCreateWithFlags scene build");
         try {
-            fSlots.reserve(fConfiguration.fMaxInFlightBatches);
-            for (auto index{std::uint32_t{}};
-                 index < fConfiguration.fMaxInFlightBatches; ++index) {
-                fSlots.emplace_back(std::make_unique<TransportSlot>(
-                    fConfiguration.fEnablePerformanceDiagnostics));
-            }
+            fSlots.emplace_back(std::make_unique<TransportSlot>(
+                fConfiguration.fEnablePerformanceDiagnostics));
         } catch (...) {
             cudaStreamDestroy(fSceneBuildStream);
             fSceneBuildStream = nullptr;

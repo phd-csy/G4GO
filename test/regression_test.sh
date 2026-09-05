@@ -6,8 +6,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd -- "${script_dir}/.." && pwd)"
 build_dir="${project_dir}/build"
 cpu_affinity="${G4GO_CPU_AFFINITY:-2}"
-batch_timeout_ms="${G4GO_BATCH_TIMEOUT_MS:-15}"
-max_in_flight_batches="${G4GO_MAX_IN_FLIGHT_BATCHES:-2}"
+batch_timeout_ms="${G4GO_BATCH_TIMEOUT_MS:-10}"
 perf_diagnostics="${G4GO_PERF_DIAGNOSTICS:-0}"
 verbose=0
 
@@ -28,7 +27,7 @@ while (($# > 0)); do
     -h|--help)
         echo "Usage: $0 [--build-dir BUILD_DIR] [--verbose]"
         echo "Environment: G4GO_CPU_AFFINITY, G4GO_BATCH_TIMEOUT_MS,"
-        echo "             G4GO_MAX_IN_FLIGHT_BATCHES, G4GO_PERF_DIAGNOSTICS"
+        echo "             G4GO_PERF_DIAGNOSTICS"
         exit 0
         ;;
     *)
@@ -61,10 +60,6 @@ fi
 if [[ ! "$batch_timeout_ms" =~ ^[0-9]+$ ]] ||
    ((batch_timeout_ms > 10000)); then
     echo "G4GO_BATCH_TIMEOUT_MS must be an integer from 0 to 10000: $batch_timeout_ms" >&2
-    exit 1
-fi
-if [[ ! "$max_in_flight_batches" =~ ^[12]$ ]]; then
-    echo "G4GO_MAX_IN_FLIGHT_BATCHES must be 1 or 2: $max_in_flight_batches" >&2
     exit 1
 fi
 if [[ "$perf_diagnostics" != 0 && "$perf_diagnostics" != 1 ]]; then
@@ -413,7 +408,6 @@ gpu_arguments=(
     --backend gpu
     --seed 42
     --batch-timeout-ms "$batch_timeout_ms"
-    --in-flight-batches "$max_in_flight_batches"
 )
 if ((perf_diagnostics)); then
     gpu_arguments+=(--perf-diagnostics)
@@ -463,7 +457,6 @@ fi
     echo "gpu_1t_geant4_threads=1"
     echo "gpu_14t_geant4_threads=14"
     echo "batch_timeout_ms=${batch_timeout_ms}"
-    echo "max_in_flight_batches=${max_in_flight_batches}"
     echo "cpu_single_reference_events=${cpu_single_reference_events}"
     echo "cpu_single_benchmark_time_for_estimate_s=${cpu_single_measured}"
     echo "cpu_single_benchmark_measured_real_time_s=${cpu_single_measured}"
@@ -489,7 +482,6 @@ if ((perf_diagnostics)); then
         echo "gpu_1t_geant4_threads=1"
         echo "gpu_14t_geant4_threads=14"
         echo "batch_timeout_ms=${batch_timeout_ms}"
-        echo "max_in_flight_batches=${max_in_flight_batches}"
         echo "[gpu-1t]"
         rg '^\[g4go\] performance(_output)?:' \
             "$gpu_1t_log" || true

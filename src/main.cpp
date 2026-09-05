@@ -89,12 +89,6 @@ auto main(int argc, char** argv) -> int {
            "Maximum GPU batch collection wait in milliseconds")
         ->check(CLI::Range(0U, 10'000U))
         ->capture_default_str();
-    app.add_option(
-           "--in-flight-batches",
-           options.photonTransportConfig.fMaxInFlightBatches,
-           "Maximum number of in-flight GPU batches")
-        ->check(CLI::Range(1U, 2U))
-        ->capture_default_str();
     app.add_flag(
         "--perf-diagnostics",
         options.photonTransportConfig.fEnablePerformanceDiagnostics,
