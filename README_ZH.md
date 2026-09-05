@@ -221,28 +221,30 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
 | `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` 和 `GPU-14T` 分别与缓存或按需生成的 `CPU-14T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率 |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` 和 `GPU-6T` 分别与缓存或按需生成的 `CPU-6T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率 |
 
 ### 性能基准
 
 `test/regression_test.sh` 同时负责性能测量和 CPU/GPU 回归检验。为便于说明，本文统一使用以下配置名称：
 
-- `CPU-14T`：14 个 Geant4 worker 的 CPU 运行，生成回归 reference。
+- `CPU-6T`：6 个 Geant4 worker 的 CPU 运行，生成回归 reference；性能时间由 1T CPU benchmark 估算。
 - `GPU-1T`：1 个 Geant4 worker 的 GPU/OptiX 运行。
-- `GPU-14T`：14 个 Geant4 worker 的 GPU/OptiX 运行。
+- `GPU-6T`：6 个 Geant4 worker 的 GPU/OptiX 运行。
 
 脚本按以下顺序执行：
 
-1. 运行或读取缓存的 `CPU-14T` reference。
-2. 测量 `GPU-1T` 和 `GPU-14T` 的墙钟时间并保存 ROOT 输出。
-3. 将两组 GPU 输出分别与同一个 `CPU-14T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率。
-4. 输出两组 GPU 相对于 `CPU-14T` 的加速比，计算公式为：
+1. 运行或读取缓存的 `CPU-6T` reference。
+2. 测量 `GPU-1T` 和 `GPU-6T` 的墙钟时间并保存 ROOT 输出。
+3. 将两组 GPU 输出分别与同一个 `CPU-6T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率。
+4. 按相同 worker 数比较性能：`GPU-1T` 对照估算的 `CPU-1T`，`GPU-6T` 对照估算的 `CPU-6T`：
 
    ```text
-   GPU 加速比 = CPU-14T 墙钟时间 / 对应 GPU 运行的墙钟时间
+   GPU-1T 加速比 = 估算的 CPU-1T 时间 / GPU-1T 墙钟时间
+   估算的 CPU-6T 时间 = 估算的 CPU-1T 时间 / 6
+   GPU-6T 加速比 = 估算的 CPU-6T 时间 / GPU-6T 墙钟时间
    ```
 
-脚本另外运行 `run_cpu_benchmark.mac` 的单 worker CPU benchmark，用于估算单核 CPU 时间；该 benchmark 不参与 GPU 回归比较。直接运行完整流程：
+脚本另外运行 `run_cpu_benchmark.mac` 的单 worker CPU benchmark，并按线性扩展估算 CPU-6T 性能时间。直接运行完整流程：
 
 ```bash
 test/regression_test.sh --build-dir build
@@ -252,7 +254,7 @@ test/regression_test.sh --build-dir build
 
 ### CPU/GPU 回归
 
-CTest 测试 `g4go_noptpho_regression` 是上述脚本的项目测试入口，使用相同的 `CPU-14T` reference、`GPU-1T` 和 `GPU-14T` 流程：
+CTest 测试 `g4go_noptpho_regression` 是上述脚本的项目测试入口，使用相同的 `CPU-6T` reference、`GPU-1T` 和 `GPU-6T` 流程：
 
 ```bash
 ctest --test-dir build --output-on-failure \
@@ -265,7 +267,7 @@ ctest --test-dir build --output-on-failure \
 bash build/test/regression_test.sh --build-dir build --verbose
 ```
 
-每次运行的汇总和 ROOT 报告保存在 `build/test/regression/` 下的时间戳目录中；`comparisons/gpu_1t/` 和 `comparisons/gpu_14t/` 分别保存两组回归报告，图片保存在对应的 `figures/`，日志保存在 `logs/`。
+每次运行的汇总和 ROOT 报告保存在 `build/test/regression/` 下的时间戳目录中；`comparisons/gpu_1t/` 和 `comparisons/gpu_6t/` 分别保存两组回归报告，图片保存在对应的 `figures/`，日志保存在 `logs/`。
 
 ## WSL2 OptiX runtime 排障
 

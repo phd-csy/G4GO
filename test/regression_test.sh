@@ -135,30 +135,31 @@ if ((benchmark_events != cpu_single_reference_events)); then
 fi
 
 cpu_single_reference="${regression_dir}/cpu_single_benchmark.root"
-cpu_full_reference="${regression_dir}/cpu_full.root"
+cpu_6t_reference="${regression_dir}/cpu_6t.root"
 gpu_1t_reference="${regression_dir}/gpu_1t.root"
-gpu_14t_reference="${regression_dir}/gpu_14t.root"
+gpu_6t_reference="${regression_dir}/gpu_6t.root"
 cpu_timing_file="${regression_dir}/cpu_timing.txt"
+cpu_regression_threads=6
 logs_dir="${run_dir}/logs"
 cpu_single_log="${logs_dir}/cpu_single_benchmark.log"
-cpu_full_log="${logs_dir}/cpu_full.log"
+cpu_6t_log="${logs_dir}/cpu_6t.log"
 gpu_1t_log="${logs_dir}/gpu_1t.log"
-gpu_14t_log="${logs_dir}/gpu_14t.log"
+gpu_6t_log="${logs_dir}/gpu_6t.log"
 comparison_1t_log="${logs_dir}/comparison_gpu_1t.log"
-comparison_14t_log="${logs_dir}/comparison_gpu_14t.log"
+comparison_6t_log="${logs_dir}/comparison_gpu_6t.log"
 regression_log="${logs_dir}/regression.log"
 comparison_1t_dir="${run_dir}/comparisons/gpu_1t"
-comparison_14t_dir="${run_dir}/comparisons/gpu_14t"
+comparison_6t_dir="${run_dir}/comparisons/gpu_6t"
 
 mkdir -p "$regression_dir" "$logs_dir"
 cd "$regression_dir" || exit 1
-# The full-core calibration only contributes its elapsed time. Remove the
-# transient benchmark ROOT output before each run so it cannot be mistaken for
-# a persisted reference artifact.
+# The 1T benchmark provides the timing used to estimate the 6T CPU baseline.
+# Remove the transient benchmark ROOT output before each run so it cannot be
+# mistaken for a persisted reference artifact.
 rm -f -- run_cpu_benchmark.root
 # Remove stale GPU output names before writing the current run results.
 rm -f -- "${regression_dir}/gpu_run_1.root" \
-    "$gpu_1t_reference" "$gpu_14t_reference" \
+    "$gpu_1t_reference" "$gpu_6t_reference" \
     "${regression_dir}/gpu_single.root"
 : > "$regression_log"
 
@@ -202,10 +203,11 @@ run_comparison() {
     local output_directory="$3"
     local gpu_file_name="$4"
     local gpu_elapsed="$5"
+    local cpu_elapsed="$6"
     local compare_call command_status output_file
 
     mkdir -p "$output_directory"
-    compare_call="${compare_macro}(\"${cpu_full_reference}\",\"${gpu_file_name}\",${cpu_full_regression_elapsed},${gpu_elapsed},\"${output_directory}\")"
+    compare_call="${compare_macro}(\"${cpu_6t_reference}\",\"${gpu_file_name}\",${cpu_elapsed},${gpu_elapsed},\"${output_directory}\")"
     run_logged "$log_file" "$root_executable" -l -b -q "$compare_call"
     command_status="$?"
     if ((command_status != 0)); then
@@ -320,8 +322,9 @@ write_cpu_timing() {
         echo "cpu_single_benchmark_events=${benchmark_events}"
         echo "cpu_single_benchmark_measured_real_time_s=${single_measured}"
         echo "cpu_target_events=${target_events}"
-        echo "cpu_full_regression_events=${target_events}"
-        echo "cpu_full_regression_real_time_s=${full_regression_elapsed}"
+        echo "cpu_regression_threads=${cpu_regression_threads}"
+        echo "cpu_6t_regression_events=${target_events}"
+        echo "cpu_6t_regression_real_time_s=${full_regression_elapsed}"
     } > "$cpu_timing_file"
 }
 
@@ -342,9 +345,10 @@ if ! is_positive_number "$cpu_single_measured" &&
         cpu_single_benchmark_events_cached="$benchmark_events"
     fi
 fi
-cpu_full_regression_elapsed="$(read_timing_value cpu_full_regression_real_time_s)"
+cpu_6t_regression_elapsed="$(read_timing_value cpu_6t_regression_real_time_s)"
 cpu_single_source=cached
-cpu_full_regression_source=cached
+cpu_6t_regression_source=cached
+cached_cpu_regression_threads="$(read_timing_value cpu_regression_threads)"
 
 if [[ ! -s "$cpu_single_reference" ]] ||
    [[ "$cached_cpu_affinity" != "$cpu_affinity" ]] ||
@@ -364,32 +368,34 @@ else
     echo "[cpu-single-benchmark] CACHED events=${benchmark_events} time=${cpu_single_measured}s"
 fi
 
-if [[ ! -s "$cpu_full_reference" ]] ||
+if [[ ! -s "$cpu_6t_reference" ]] ||
    [[ "$cached_g4go_sha256" != "$g4go_sha256" ]] ||
    [[ "$cached_regression_macro_sha256" != "$regression_macro_sha256" ]] ||
-   [[ "$(read_timing_value cpu_full_regression_events)" != "$target_events" ]] ||
-   ! is_positive_number "$cpu_full_regression_elapsed"; then
+   [[ "$cached_cpu_regression_threads" != "$cpu_regression_threads" ]] ||
+   [[ "$(read_timing_value cpu_6t_regression_events)" != "$target_events" ]] ||
+   ! is_positive_number "$cpu_6t_regression_elapsed"; then
     run_timed_cpu_phase \
-        cpu-full-regression "$cpu_full_log" run_eminus_regression.root \
-        cpu_full_regression_elapsed full \
+        cpu-6t-regression "$cpu_6t_log" run_eminus_regression.root \
+        cpu_6t_regression_elapsed full \
         "$target_events" \
-        "$g4go" --backend cpu --threads 14 --seed 42 "$regression_macro"
-    cp -- run_eminus_regression.root "$cpu_full_reference" || fail_test 1
-    cpu_full_regression_source=generated
+        "$g4go" --backend cpu --threads "$cpu_regression_threads" \
+        --seed 42 "$regression_macro"
+    cp -- run_eminus_regression.root "$cpu_6t_reference" || fail_test 1
+    cpu_6t_regression_source=generated
 else
-    echo "[cpu-full-regression] CACHED events=${target_events} time=${cpu_full_regression_elapsed}s"
+    echo "[cpu-6t-regression] CACHED events=${target_events} time=${cpu_6t_regression_elapsed}s"
 fi
 
 write_cpu_timing \
     "$cpu_single_measured" \
-    "$cpu_full_regression_elapsed"
+    "$cpu_6t_regression_elapsed"
 
-if ! is_positive_number "$cpu_full_regression_elapsed"; then
+if ! is_positive_number "$cpu_6t_regression_elapsed"; then
     echo "CPU timing cache contains invalid values"
     fail_test 1
 fi
 
-cpu_estimated_real_time_s="$(awk \
+cpu_single_estimated_real_time_s="$(awk \
     -v target_events="$target_events" \
     -v benchmark_events="$benchmark_events" \
     -v single_benchmark="$cpu_single_measured" \
@@ -399,8 +405,21 @@ cpu_estimated_real_time_s="$(awk \
             printf "%.6f", target_events * single_benchmark / benchmark_events;
         }
     }')"
-if ! is_positive_number "$cpu_estimated_real_time_s"; then
+if ! is_positive_number "$cpu_single_estimated_real_time_s"; then
     echo "Unable to estimate single-core CPU time"
+    fail_test 1
+fi
+
+cpu_6t_estimated_real_time_s="$(awk \
+    -v single_core_time="$cpu_single_estimated_real_time_s" \
+    -v cpu_threads="$cpu_regression_threads" \
+    'BEGIN {
+        if (single_core_time > 0.0 && cpu_threads > 0.0) {
+            printf "%.6f", single_core_time / cpu_threads;
+        }
+    }')"
+if ! is_positive_number "$cpu_6t_estimated_real_time_s"; then
+    echo "Unable to estimate 6T CPU time"
     fail_test 1
 fi
 
@@ -415,7 +434,7 @@ fi
 run_timed_cpu_phase \
     gpu-1t "$gpu_1t_log" run_eminus_regression.root \
     gpu_1t_elapsed_seconds single "$target_events" \
-    run_g4go_single "${gpu_arguments[@]}" --threads 1 "$regression_macro"
+    "${gpu_arguments[@]}" --threads 1 "$regression_macro"
 if ! grep -F "[g4go] optical backend: gpu" "$gpu_1t_log" >/dev/null 2>&1; then
     echo "[gpu-1t] GPU backend marker is missing"
     fail_test 1
@@ -424,27 +443,28 @@ cp -- run_eminus_regression.root "$gpu_1t_reference" || fail_test 1
 echo "[gpu-1t] ROOT reference=$(basename "$gpu_1t_reference")"
 
 run_timed_cpu_phase \
-    gpu-14t "$gpu_14t_log" run_eminus_regression.root \
-    gpu_14t_elapsed_seconds full "$target_events" \
-    "$g4go" "${gpu_arguments[@]}" --threads 14 "$regression_macro"
-if ! grep -F "[g4go] optical backend: gpu" "$gpu_14t_log" >/dev/null 2>&1; then
-    echo "[gpu-14t] GPU backend marker is missing"
+    gpu-6t "$gpu_6t_log" run_eminus_regression.root \
+    gpu_6t_elapsed_seconds full "$target_events" \
+    "$g4go" "${gpu_arguments[@]}" --threads "$cpu_regression_threads" \
+    "$regression_macro"
+if ! grep -F "[g4go] optical backend: gpu" "$gpu_6t_log" >/dev/null 2>&1; then
+    echo "[gpu-6t] GPU backend marker is missing"
     fail_test 1
 fi
-cp -- run_eminus_regression.root "$gpu_14t_reference" || fail_test 1
-echo "[gpu-14t] ROOT reference=$(basename "$gpu_14t_reference")"
+cp -- run_eminus_regression.root "$gpu_6t_reference" || fail_test 1
+echo "[gpu-6t] ROOT reference=$(basename "$gpu_6t_reference")"
 
-gpu_1t_speedup_vs_cpu14="$(awk \
-    -v cpu="$cpu_full_regression_elapsed" \
+gpu_1t_speedup_vs_cpu1="$(awk \
+    -v cpu="$cpu_single_estimated_real_time_s" \
     -v gpu="$gpu_1t_elapsed_seconds" \
     'BEGIN { if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu; }')"
-gpu_14t_speedup_vs_cpu14="$(awk \
-    -v cpu="$cpu_full_regression_elapsed" \
-    -v gpu="$gpu_14t_elapsed_seconds" \
+gpu_6t_speedup_vs_cpu6="$(awk \
+    -v cpu="$cpu_6t_estimated_real_time_s" \
+    -v gpu="$gpu_6t_elapsed_seconds" \
     'BEGIN { if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu; }')"
-if ! is_positive_number "$gpu_1t_speedup_vs_cpu14" ||
-   ! is_positive_number "$gpu_14t_speedup_vs_cpu14"; then
-    echo "Unable to calculate GPU speedups against 14T CPU"
+if ! is_positive_number "$gpu_1t_speedup_vs_cpu1" ||
+   ! is_positive_number "$gpu_6t_speedup_vs_cpu6"; then
+    echo "Unable to calculate thread-matched GPU speedups"
     fail_test 1
 fi
 
@@ -453,55 +473,56 @@ fi
     echo "g4go_sha256=${g4go_sha256}"
     echo "cpu_benchmark_macro_sha256=${cpu_benchmark_macro_sha256}"
     echo "regression_macro_sha256=${regression_macro_sha256}"
-    echo "cpu_geant4_threads=14"
+    echo "cpu_geant4_threads=${cpu_regression_threads}"
     echo "gpu_1t_geant4_threads=1"
-    echo "gpu_14t_geant4_threads=14"
+    echo "gpu_6t_geant4_threads=${cpu_regression_threads}"
     echo "batch_timeout_ms=${batch_timeout_ms}"
     echo "cpu_single_reference_events=${cpu_single_reference_events}"
     echo "cpu_single_benchmark_time_for_estimate_s=${cpu_single_measured}"
     echo "cpu_single_benchmark_measured_real_time_s=${cpu_single_measured}"
     echo "cpu_single_benchmark_source=${cpu_single_source}"
     echo "cpu_target_events=${target_events}"
-    echo "cpu_full_regression_events=${target_events}"
-    echo "cpu_full_regression_real_time_s=${cpu_full_regression_elapsed}"
-    echo "cpu_full_regression_source=${cpu_full_regression_source}"
-    echo "cpu_estimated_real_time_s=${cpu_estimated_real_time_s}"
-    echo "cpu_data_reference=$(basename "$cpu_full_reference")"
+    echo "cpu_6t_regression_events=${target_events}"
+    echo "cpu_6t_regression_real_time_s=${cpu_6t_regression_elapsed}"
+    echo "cpu_6t_regression_source=${cpu_6t_regression_source}"
+    echo "cpu_single_estimated_real_time_s=${cpu_single_estimated_real_time_s}"
+    echo "cpu_6t_estimated_real_time_s=${cpu_6t_estimated_real_time_s}"
+    echo "cpu_6t_data_reference=$(basename "$cpu_6t_reference")"
     echo "gpu_1t_wall_time_s=${gpu_1t_elapsed_seconds}"
-    echo "gpu_14t_wall_time_s=${gpu_14t_elapsed_seconds}"
-    echo "gpu_1t_speedup_vs_14t_cpu=${gpu_1t_speedup_vs_cpu14}x"
-    echo "gpu_14t_speedup_vs_14t_cpu=${gpu_14t_speedup_vs_cpu14}x"
+    echo "gpu_6t_wall_time_s=${gpu_6t_elapsed_seconds}"
+    echo "gpu_1t_speedup_vs_estimated_1t_cpu=${gpu_1t_speedup_vs_cpu1}x"
+    echo "gpu_6t_speedup_vs_estimated_6t_cpu=${gpu_6t_speedup_vs_cpu6}x"
     echo "gpu_1t_data_reference=$(basename "$gpu_1t_reference")"
-    echo "gpu_14t_data_reference=$(basename "$gpu_14t_reference")"
+    echo "gpu_6t_data_reference=$(basename "$gpu_6t_reference")"
 } > "${run_dir}/benchmark_summary.txt"
 
 if ((perf_diagnostics)); then
     {
         echo "cpu_affinity=${cpu_affinity}"
-        echo "cpu_geant4_threads=14"
+        echo "cpu_geant4_threads=${cpu_regression_threads}"
         echo "gpu_1t_geant4_threads=1"
-        echo "gpu_14t_geant4_threads=14"
+        echo "gpu_6t_geant4_threads=${cpu_regression_threads}"
         echo "batch_timeout_ms=${batch_timeout_ms}"
         echo "[gpu-1t]"
         rg '^\[g4go\] performance(_output)?:' \
             "$gpu_1t_log" || true
-        echo "[gpu-14t]"
+        echo "[gpu-6t]"
         rg '^\[g4go\] performance(_output)?:' \
-            "$gpu_14t_log" || true
+            "$gpu_6t_log" || true
     } > "${run_dir}/performance_summary.txt"
 fi
 
 comparison_failed=0
 if ! run_comparison \
-    "comparison-gpu-1t-vs-cpu-14t" "$comparison_1t_log" \
+    "comparison-gpu-1t-vs-estimated-cpu-1t" "$comparison_1t_log" \
     "$comparison_1t_dir" "$gpu_1t_reference" \
-    "$gpu_1t_elapsed_seconds"; then
+    "$gpu_1t_elapsed_seconds" "$cpu_single_estimated_real_time_s"; then
     comparison_failed=1
 fi
 if ! run_comparison \
-    "comparison-gpu-14t-vs-cpu-14t" "$comparison_14t_log" \
-    "$comparison_14t_dir" "$gpu_14t_reference" \
-    "$gpu_14t_elapsed_seconds"; then
+    "comparison-gpu-6t-vs-estimated-cpu-6t" "$comparison_6t_log" \
+    "$comparison_6t_dir" "$gpu_6t_reference" \
+    "$gpu_6t_elapsed_seconds" "$cpu_6t_estimated_real_time_s"; then
     comparison_failed=1
 fi
 if ((comparison_failed)); then
@@ -509,11 +530,11 @@ if ((comparison_failed)); then
 fi
 
 mkdir -p "${run_dir}/figures"
-for comparison_label in gpu_1t gpu_14t; do
+for comparison_label in gpu_1t gpu_6t; do
     if [[ "$comparison_label" == gpu_1t ]]; then
         comparison_directory="$comparison_1t_dir"
     else
-        comparison_directory="$comparison_14t_dir"
+        comparison_directory="$comparison_6t_dir"
     fi
     cp -- "${comparison_directory}/regression_summary.txt" \
         "${run_dir}/regression_summary_${comparison_label}.txt" || fail_test 1
@@ -532,8 +553,8 @@ cp -- "${run_dir}/noptpho_regression_report_gpu_1t.root" \
 cp -- "$gpu_1t_reference" "${regression_dir}/gpu_single.root" || fail_test 1
 cp -- "${run_dir}/noptpho_regression_report.root" \
     "${regression_dir}/noptpho_regression_report.root" || fail_test 1
-cp -- "${run_dir}/noptpho_regression_report_gpu_14t.root" \
-    "${regression_dir}/noptpho_regression_report_gpu_14t.root" || fail_test 1
+cp -- "${run_dir}/noptpho_regression_report_gpu_6t.root" \
+    "${regression_dir}/noptpho_regression_report_gpu_6t.root" || fail_test 1
 for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
     cp -- "${run_dir}/figures/gpu_1t_${figure_name}" \
         "${run_dir}/figures/${figure_name}" || fail_test 1
@@ -541,18 +562,18 @@ done
 
 {
     echo "Status: PASSED"
-    echo "Reference: 14TCPU"
-    echo "Speedup: 1T+GPU vs 14TCPU=${gpu_1t_speedup_vs_cpu14}x"
-    echo "Speedup: 14T+GPU vs 14TCPU=${gpu_14t_speedup_vs_cpu14}x"
+    echo "Reference: 6TCPU ROOT; thread-matched CPU timing from 1T CPU"
+    echo "Speedup: 1T+GPU vs estimated 1TCPU=${gpu_1t_speedup_vs_cpu1}x"
+    echo "Speedup: 6T+GPU vs estimated 6TCPU=${gpu_6t_speedup_vs_cpu6}x"
     echo
-    echo "=== 1T+GPU vs 14TCPU ==="
+    echo "=== 1T+GPU vs estimated 1TCPU ==="
     cat "${run_dir}/regression_summary_gpu_1t.txt"
     echo
-    echo "=== 14T+GPU vs 14TCPU ==="
-    cat "${run_dir}/regression_summary_gpu_14t.txt"
+    echo "=== 6T+GPU vs estimated 6TCPU ==="
+    cat "${run_dir}/regression_summary_gpu_6t.txt"
 } > "${run_dir}/regression_summary.txt"
 
 echo "[regression] OUTPUT: PASSED"
-echo "[regression] 1T+GPU speedup vs 14TCPU=${gpu_1t_speedup_vs_cpu14}x"
-echo "[regression] 14T+GPU speedup vs 14TCPU=${gpu_14t_speedup_vs_cpu14}x"
+echo "[regression] 1T+GPU speedup vs estimated 1TCPU=${gpu_1t_speedup_vs_cpu1}x"
+echo "[regression] 6T+GPU speedup vs estimated 6TCPU=${gpu_6t_speedup_vs_cpu6}x"
 print_summary

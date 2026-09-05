@@ -153,22 +153,24 @@ ROOT files are written to the current working directory using each macro's `/ana
 
 `test/regression_test.sh` is the single driver for performance measurement and CPU/GPU regression checks. For concise reference, it uses these configuration names:
 
-- `CPU-14T`: a CPU run with 14 Geant4 workers that produces the regression reference.
+- `CPU-6T`: a CPU run with 6 Geant4 workers that produces the regression reference; its estimated performance time is derived from the 1T CPU benchmark.
 - `GPU-1T`: a GPU/OptiX run with 1 Geant4 worker.
-- `GPU-14T`: a GPU/OptiX run with 14 Geant4 workers.
+- `GPU-6T`: a GPU/OptiX run with 6 Geant4 workers.
 
 The driver runs them in this order:
 
-1. Generate or load the cached `CPU-14T` reference.
-2. Measure wall time and save ROOT output for `GPU-1T` and `GPU-14T`.
-3. Compare both GPU outputs with the same `CPU-14T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy.
-4. Print both GPU speedups relative to `CPU-14T`:
+1. Generate or load the cached `CPU-6T` reference.
+2. Measure wall time and save ROOT output for `GPU-1T` and `GPU-6T`.
+3. Compare both GPU outputs with the same `CPU-6T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy.
+4. Compare performance with matching worker counts: `GPU-1T` against estimated `CPU-1T`, and `GPU-6T` against estimated `CPU-6T`:
 
    ```text
-   GPU speedup = CPU-14T wall time / corresponding GPU wall time
+   GPU-1T speedup = estimated CPU-1T time / GPU-1T wall time
+   estimated CPU-6T time = estimated CPU-1T time / 6
+   GPU-6T speedup = estimated CPU-6T time / GPU-6T wall time
    ```
 
-The driver also runs the small one-worker CPU benchmark from `run_cpu_benchmark.mac` to estimate single-core CPU time; that calibration is separate from the GPU comparisons. Run the complete workflow directly with:
+The driver also runs the small one-worker CPU benchmark from `run_cpu_benchmark.mac`; the 6T CPU performance time is estimated by assuming linear scaling from 1T. Run the complete workflow directly with:
 
 ~~~bash
 test/regression_test.sh --build-dir build
@@ -246,11 +248,11 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel, Brewster angle, total internal reflection, surface probabilities, and Lambertian directions |
 | `g4go_smoke_auto` | `smoke;integration;auto` | Single-photon end-to-end initialization and transport |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` and `GPU-14T` compared separately against a cached or newly generated `CPU-14T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` and `GPU-6T` compared separately against a cached or newly generated `CPU-6T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy |
 
 ### CPU/GPU regression
 
-The CTest test `g4go_noptpho_regression` is the project test entry point for the same `CPU-14T`, `GPU-1T`, and `GPU-14T` workflow:
+The CTest test `g4go_noptpho_regression` is the project test entry point for the same `CPU-6T`, `GPU-1T`, and `GPU-6T` workflow:
 
 ~~~bash
 ctest --test-dir build --output-on-failure \
@@ -263,7 +265,7 @@ The test requires both GPU comparisons and their ROOT reports, summaries, and pl
 bash build/test/regression_test.sh --build-dir build --verbose
 ~~~
 
-Each run stores its aggregate summary and timestamped artifacts under `build/test/regression/`; individual reports are under `comparisons/gpu_1t/` and `comparisons/gpu_14t/`, with their plots in the corresponding `figures/` directories and logs in `logs/`.
+Each run stores its aggregate summary and timestamped artifacts under `build/test/regression/`; individual reports are under `comparisons/gpu_1t/` and `comparisons/gpu_6t/`, with their plots in the corresponding `figures/` directories and logs in `logs/`.
 
 ## WSL2 OptiX runtime troubleshooting
 

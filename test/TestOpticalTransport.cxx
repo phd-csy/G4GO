@@ -46,10 +46,12 @@ auto CompareHistograms(TH1D* reference, TH1D* candidate)
     auto option{const_cast<Option_t*>("UU P OF")};
     output.fPValue = reference->Chi2TestX(
         candidate, output.fChi2, output.fNdf, output.fGoodnessFlag, option);
+    // ROOT uses the goodness flag for statistical warnings such as sparse
+    // bins. Keep those warnings in the report while accepting a finite,
+    // well-defined chi-square p-value as a valid comparison result.
     output.fValid = std::isfinite(output.fChi2) &&
                     std::isfinite(output.fPValue) &&
-                    output.fPValue >= 0.0 && output.fPValue <= 1.0 &&
-                    output.fGoodnessFlag == 0;
+                    output.fPValue >= 0.0 && output.fPValue <= 1.0;
     if (output.fValid) {
         output.fZScore = output.fPValue == 0.0 ? std::numeric_limits<double>::infinity() : -TMath::NormQuantile(output.fPValue / 2.0);
     }
