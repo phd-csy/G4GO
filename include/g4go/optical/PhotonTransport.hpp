@@ -126,10 +126,15 @@ struct PhotonTransportPerformance {
     double fSchedulerBatchFlattenMs{};
     std::uint64_t fSchedulerBatchFlattenBytes{};
     double fHostToDeviceMs{};
+    std::uint64_t fHostToDeviceBytes{};
     double fDeviceMemsetMs{};
     double fOptiXKernelMs{};
     double fDeviceHitCompactionMs{};
     double fDeviceToHostMs{};
+    double fDeviceMetadataToHostMs{};
+    std::uint64_t fDeviceMetadataToHostBytes{};
+    double fDeviceHitsToHostMs{};
+    std::uint64_t fDeviceHitsToHostBytes{};
     double fHostHitCompactionMs{};
     std::uint64_t fTotalBounceCount{};
     std::uint64_t fCoincidentCandidateTraceCount{};
@@ -145,10 +150,15 @@ struct PhotonTransportPerformance {
         fSchedulerBatchFlattenMs += other.fSchedulerBatchFlattenMs;
         fSchedulerBatchFlattenBytes += other.fSchedulerBatchFlattenBytes;
         fHostToDeviceMs += other.fHostToDeviceMs;
+        fHostToDeviceBytes += other.fHostToDeviceBytes;
         fDeviceMemsetMs += other.fDeviceMemsetMs;
         fOptiXKernelMs += other.fOptiXKernelMs;
         fDeviceHitCompactionMs += other.fDeviceHitCompactionMs;
         fDeviceToHostMs += other.fDeviceToHostMs;
+        fDeviceMetadataToHostMs += other.fDeviceMetadataToHostMs;
+        fDeviceMetadataToHostBytes += other.fDeviceMetadataToHostBytes;
+        fDeviceHitsToHostMs += other.fDeviceHitsToHostMs;
+        fDeviceHitsToHostBytes += other.fDeviceHitsToHostBytes;
         fHostHitCompactionMs += other.fHostHitCompactionMs;
         fTotalBounceCount += other.fTotalBounceCount;
         fCoincidentCandidateTraceCount +=

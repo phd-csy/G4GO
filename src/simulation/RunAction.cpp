@@ -117,11 +117,21 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                    << ", scheduler_batch_flatten_bytes="
                    << performance.fSchedulerBatchFlattenBytes
                    << ", host_to_device_ms=" << performance.fHostToDeviceMs
+                   << ", host_to_device_bytes="
+                   << performance.fHostToDeviceBytes
                    << ", device_memset_ms=" << performance.fDeviceMemsetMs
                    << ", optix_kernel_ms=" << performance.fOptiXKernelMs
                    << ", device_hit_compaction_ms="
                    << performance.fDeviceHitCompactionMs
                    << ", device_to_host_ms=" << performance.fDeviceToHostMs
+                   << ", device_metadata_to_host_ms="
+                   << performance.fDeviceMetadataToHostMs
+                   << ", device_metadata_to_host_bytes="
+                   << performance.fDeviceMetadataToHostBytes
+                   << ", device_hits_to_host_ms="
+                   << performance.fDeviceHitsToHostMs
+                   << ", device_hits_to_host_bytes="
+                   << performance.fDeviceHitsToHostBytes
                    << ", host_hit_compaction_ms="
                    << performance.fHostHitCompactionMs
                    << ", total_bounce_count="

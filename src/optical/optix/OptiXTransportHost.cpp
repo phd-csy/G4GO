@@ -200,10 +200,12 @@ struct TransportSlot final {
         fDeviceMemsetTimer{},
         fOptiXKernelTimer{},
         fDeviceHitCompactionTimer{},
-        fDeviceToHostTimer{},
+        fMetadataToHostTimer{},
+        fHitsToHostTimer{},
         fHostLaunchParams{},
         fOutput{},
         fPhotonCount{},
+        fHostToDeviceBytes{},
         fStartedAt{},
         fBusy{} {
         CudaError(cudaStreamCreateWithFlags(&fStream, cudaStreamNonBlocking),
@@ -217,7 +219,8 @@ struct TransportSlot final {
                 CreateCudaTimer(fDeviceMemsetTimer);
                 CreateCudaTimer(fOptiXKernelTimer);
                 CreateCudaTimer(fDeviceHitCompactionTimer);
-                CreateCudaTimer(fDeviceToHostTimer);
+                CreateCudaTimer(fMetadataToHostTimer);
+                CreateCudaTimer(fHitsToHostTimer);
             }
         } catch (...) {
             Release();
@@ -238,7 +241,8 @@ struct TransportSlot final {
         DestroyCudaTimer(fDeviceMemsetTimer);
         DestroyCudaTimer(fOptiXKernelTimer);
         DestroyCudaTimer(fDeviceHitCompactionTimer);
-        DestroyCudaTimer(fDeviceToHostTimer);
+        DestroyCudaTimer(fMetadataToHostTimer);
+        DestroyCudaTimer(fHitsToHostTimer);
         if (fCompactionReadyEvent != nullptr) {
             cudaEventDestroy(fCompactionReadyEvent);
             fCompactionReadyEvent = nullptr;
@@ -320,10 +324,12 @@ struct TransportSlot final {
     CudaTimerPair fDeviceMemsetTimer;
     CudaTimerPair fOptiXKernelTimer;
     CudaTimerPair fDeviceHitCompactionTimer;
-    CudaTimerPair fDeviceToHostTimer;
+    CudaTimerPair fMetadataToHostTimer;
+    CudaTimerPair fHitsToHostTimer;
     OptixLaunchParams fHostLaunchParams;
     PhotonTransportOutput fOutput;
     std::size_t fPhotonCount;
+    std::uint64_t fHostToDeviceBytes;
     std::chrono::steady_clock::time_point fStartedAt;
     bool fBusy;
 };
@@ -614,7 +620,7 @@ public:
         auto& fDeviceMemsetTimer{slot.fDeviceMemsetTimer};
         auto& fOptiXKernelTimer{slot.fOptiXKernelTimer};
         auto& fDeviceHitCompactionTimer{slot.fDeviceHitCompactionTimer};
-        auto& fDeviceToHostTimer{slot.fDeviceToHostTimer};
+        auto& fMetadataToHostTimer{slot.fMetadataToHostTimer};
 
         PhotonTransportOutput output{};
         const auto emissions{batch.fEmissions};
@@ -696,6 +702,11 @@ public:
         output.fStatistics.fCapturedCount = photonCount;
         output.fStatistics.fValidFields =
             StatisticFieldBit(PhotonTransportStatisticField::Captured);
+        slot.fHostToDeviceBytes =
+            emissions.size() * sizeof(DeviceOpticalEmission) +
+            (emissions.size() + 1U) * sizeof(std::uint32_t) +
+            emissions.size() * sizeof(std::uint32_t) +
+            sizeof(OptixLaunchParams);
 
         const auto start{std::chrono::steady_clock::now()};
         EnsurePinnedAllocation(fHostEmissions, fHostEmissionCapacity,
@@ -880,7 +891,7 @@ public:
                   "OptiX hit compaction");
         RecordCudaTimerStop(fDeviceHitCompactionTimer, stream);
 
-        RecordCudaTimerStart(fDeviceToHostTimer, stream);
+        RecordCudaTimerStart(fMetadataToHostTimer, stream);
         CudaError(cudaMemcpyAsync(
                       fHostStats, DevicePointer(fStatsAllocation->Pointer()),
                       sizeof(DeviceTransportStats), cudaMemcpyDeviceToHost,
@@ -897,6 +908,7 @@ public:
                       DevicePointer(fHitCountAllocation->Pointer()),
                       sizeof(std::uint32_t), cudaMemcpyDeviceToHost, stream),
                   "cudaMemcpyAsync hit count");
+        RecordCudaTimerStop(fMetadataToHostTimer, stream);
         CudaError(cudaEventRecord(fCompactionReadyEvent, stream),
                   "cudaEventRecord compaction ready");
 
@@ -933,6 +945,7 @@ public:
             throw std::runtime_error(
                 "OptiX hit compaction returned an invalid hit count");
         }
+        RecordCudaTimerStart(slot.fHitsToHostTimer, stream);
         if (compactHitCount > 0) {
             CudaError(cudaMemcpyAsync(
                           slot.fHostCompactHits,
@@ -942,7 +955,7 @@ public:
                           cudaMemcpyDeviceToHost, stream),
                       "cudaMemcpyAsync compact hits");
         }
-        RecordCudaTimerStop(slot.fDeviceToHostTimer, stream);
+        RecordCudaTimerStop(slot.fHitsToHostTimer, stream);
         CudaError(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
 
         const auto& deviceStats{*slot.fHostStats};
@@ -997,14 +1010,26 @@ public:
         }
         output.fPerformance.fHostToDeviceMs =
             ReadCudaTimerMs(slot.fHostToDeviceTimer);
+        output.fPerformance.fHostToDeviceBytes = slot.fHostToDeviceBytes;
         output.fPerformance.fDeviceMemsetMs =
             ReadCudaTimerMs(slot.fDeviceMemsetTimer);
         output.fPerformance.fOptiXKernelMs =
             ReadCudaTimerMs(slot.fOptiXKernelTimer);
         output.fPerformance.fDeviceHitCompactionMs =
             ReadCudaTimerMs(slot.fDeviceHitCompactionTimer);
+        output.fPerformance.fDeviceMetadataToHostMs =
+            ReadCudaTimerMs(slot.fMetadataToHostTimer);
+        output.fPerformance.fDeviceMetadataToHostBytes =
+            sizeof(DeviceTransportStats) + sizeof(std::uint32_t) +
+            output.fEventStatistics.size() *
+                sizeof(DeviceEventTransportStats);
+        output.fPerformance.fDeviceHitsToHostMs =
+            ReadCudaTimerMs(slot.fHitsToHostTimer);
+        output.fPerformance.fDeviceHitsToHostBytes =
+            compactHitCount * sizeof(DevicePhotonHit);
         output.fPerformance.fDeviceToHostMs =
-            ReadCudaTimerMs(slot.fDeviceToHostTimer);
+            output.fPerformance.fDeviceMetadataToHostMs +
+            output.fPerformance.fDeviceHitsToHostMs;
         output.fPerformance.fTotalBounceCount = deviceStats.fTotalBounceCount;
         output.fPerformance.fCoincidentCandidateTraceCount =
             deviceStats.fCoincidentCandidateTraceCount;
@@ -1034,6 +1059,7 @@ public:
         auto completedOutput{std::move(output)};
         slot.fOutput = {};
         slot.fPhotonCount = 0;
+        slot.fHostToDeviceBytes = 0;
         slot.fBusy = false;
         fPendingSlots.pop_front();
         return completedOutput;
