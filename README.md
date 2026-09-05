@@ -151,13 +151,30 @@ ROOT files are written to the current working directory using each macro's `/ana
 
 ## Performance benchmark
 
-Run the benchmark and CPU/GPU regression driver with:
+`test/regression_test.sh` is the single driver for performance measurement and CPU/GPU regression checks. For concise reference, it uses these configuration names:
+
+- `CPU-14T`: a CPU run with 14 Geant4 workers that produces the regression reference.
+- `GPU-1T`: a GPU/OptiX run with 1 Geant4 worker.
+- `GPU-14T`: a GPU/OptiX run with 14 Geant4 workers.
+
+The driver runs them in this order:
+
+1. Generate or load the cached `CPU-14T` reference.
+2. Measure wall time and save ROOT output for `GPU-1T` and `GPU-14T`.
+3. Compare both GPU outputs with the same `CPU-14T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy.
+4. Print both GPU speedups relative to `CPU-14T`:
+
+   ```text
+   GPU speedup = CPU-14T wall time / corresponding GPU wall time
+   ```
+
+The driver also runs the small one-worker CPU benchmark from `run_cpu_benchmark.mac` to estimate single-core CPU time; that calibration is separate from the GPU comparisons. Run the complete workflow directly with:
 
 ~~~bash
 test/regression_test.sh --build-dir build
 ~~~
 
-The driver caches the CPU timing and reference data, measures the GPU run, and writes summaries and comparison plots under `build/test/regression/`. Set `G4GO_PERF_DIAGNOSTICS=1` for detailed GPU stage timings.
+Summaries, reports, and comparison plots are written under `build/test/regression/`. Set `G4GO_PERF_DIAGNOSTICS=1` for detailed timings from both GPU runs.
 
 ## Detector model
 
@@ -229,22 +246,24 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel, Brewster angle, total internal reflection, surface probabilities, and Lambertian directions |
 | `g4go_smoke_auto` | `smoke;integration;auto` | Single-photon end-to-end initialization and transport |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | GPU comparison against a cached or newly generated full-core CPU reference for `Edep`, `nOptPho`, TOF, and sensor occupancy |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` and `GPU-14T` compared separately against a cached or newly generated `CPU-14T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy |
 
 ### CPU/GPU regression
+
+The CTest test `g4go_noptpho_regression` is the project test entry point for the same `CPU-14T`, `GPU-1T`, and `GPU-14T` workflow:
 
 ~~~bash
 ctest --test-dir build --output-on-failure \
   -R '^g4go_noptpho_regression$'
 ~~~
 
-The regression compares CPU and GPU `Edep`, `nOptPho`, TOF, and sensor occupancy. To stream the full run:
+The test requires both GPU comparisons and their ROOT reports, summaries, and plots to pass. To stream the complete log:
 
 ~~~bash
 bash build/test/regression_test.sh --build-dir build --verbose
 ~~~
 
-Each run stores summaries and the ROOT report in its timestamped directory under `build/test/regression/`; plots are stored in `figures/` and logs in `logs/`.
+Each run stores its aggregate summary and timestamped artifacts under `build/test/regression/`; individual reports are under `comparisons/gpu_1t/` and `comparisons/gpu_14t/`, with their plots in the corresponding `figures/` directories and logs in `logs/`.
 
 ## WSL2 OptiX runtime troubleshooting
 

@@ -149,15 +149,7 @@ g4go [OPTIONS] [macro]
 
 ROOT 文件写入当前工作目录，文件名由 macro 中的 `/analysis/setFileName` 确定。
 
-## 性能基准
 
-运行 benchmark 和 CPU/GPU 回归：
-
-```bash
-test/regression_test.sh --build-dir build
-```
-
-脚本会缓存 CPU timing 和 reference，测量 GPU 耗时，并将汇总与比较图写入 `build/test/regression/`。设置 `G4GO_PERF_DIAGNOSTICS=1` 可输出 GPU 分阶段计时。
 
 ## 探测器模型
 
@@ -229,22 +221,51 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
 | `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | GPU 与缓存或按需生成的全核 CPU reference 的 `Edep`、`nOptPho`、TOF 和传感器占用率比较 |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` 和 `GPU-14T` 分别与缓存或按需生成的 `CPU-14T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率 |
+
+### 性能基准
+
+`test/regression_test.sh` 同时负责性能测量和 CPU/GPU 回归检验。为便于说明，本文统一使用以下配置名称：
+
+- `CPU-14T`：14 个 Geant4 worker 的 CPU 运行，生成回归 reference。
+- `GPU-1T`：1 个 Geant4 worker 的 GPU/OptiX 运行。
+- `GPU-14T`：14 个 Geant4 worker 的 GPU/OptiX 运行。
+
+脚本按以下顺序执行：
+
+1. 运行或读取缓存的 `CPU-14T` reference。
+2. 测量 `GPU-1T` 和 `GPU-14T` 的墙钟时间并保存 ROOT 输出。
+3. 将两组 GPU 输出分别与同一个 `CPU-14T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率。
+4. 输出两组 GPU 相对于 `CPU-14T` 的加速比，计算公式为：
+
+   ```text
+   GPU 加速比 = CPU-14T 墙钟时间 / 对应 GPU 运行的墙钟时间
+   ```
+
+脚本另外运行 `run_cpu_benchmark.mac` 的单 worker CPU benchmark，用于估算单核 CPU 时间；该 benchmark 不参与 GPU 回归比较。直接运行完整流程：
+
+```bash
+test/regression_test.sh --build-dir build
+```
+
+汇总、比较报告和图片写入 `build/test/regression/`。设置 `G4GO_PERF_DIAGNOSTICS=1` 可输出两组 GPU 分阶段计时。
 
 ### CPU/GPU 回归
+
+CTest 测试 `g4go_noptpho_regression` 是上述脚本的项目测试入口，使用相同的 `CPU-14T` reference、`GPU-1T` 和 `GPU-14T` 流程：
 
 ```bash
 ctest --test-dir build --output-on-failure \
   -R '^g4go_noptpho_regression$'
 ```
 
-回归比较 CPU/GPU 的 `Edep`、`nOptPho`、TOF 和传感器占用率。查看完整运行输出：
+该测试要求两组 GPU 比较均通过，并检查对应的 ROOT 报告、汇总文件和图片。需要查看完整日志时，可直接运行：
 
 ```bash
 bash build/test/regression_test.sh --build-dir build --verbose
 ```
 
-每次运行的汇总和 ROOT 报告保存在 `build/test/regression/` 下的时间戳目录中，图片保存在 `figures/`，日志保存在 `logs/`。
+每次运行的汇总和 ROOT 报告保存在 `build/test/regression/` 下的时间戳目录中；`comparisons/gpu_1t/` 和 `comparisons/gpu_14t/` 分别保存两组回归报告，图片保存在对应的 `figures/`，日志保存在 `logs/`。
 
 ## WSL2 OptiX runtime 排障
 
