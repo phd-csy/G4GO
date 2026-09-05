@@ -11,14 +11,14 @@ namespace G4GO::Simulation {
 struct CrystalHitOutput {
     int fEventID{};
     int fModuleID{};
-    double fEnergyDeposit{};
+    float fEnergyDeposit{};
     int fGeneratedPhotonCount{};
 };
 
 struct SensorHitOutput {
     int fEventID{};
     int fSensorID{};
-    double fTimeOfFlight{};
+    float fTimeOfFlight{};
 };
 
 class Analysis final {

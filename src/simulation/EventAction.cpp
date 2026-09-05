@@ -52,7 +52,7 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
             scintHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
         if (energyDeposit > 0.) {
             crystalHits.emplace_back(
-                CrystalHitOutput{eventID, i, energyDeposit,
+                CrystalHitOutput{eventID, i, static_cast<float>(energyDeposit),
                                  generatedPhotonCount});
         }
     }
@@ -65,7 +65,7 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
             sensorHits.emplace_back(SensorHitOutput{
                 eventID,
                 sensorHit->CopyNo(),
-                static_cast<double>(sensorHit->GlobalTime() / ns),
+                static_cast<float>(sensorHit->GlobalTime() / ns),
             });
         }
     }
