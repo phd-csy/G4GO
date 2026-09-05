@@ -564,7 +564,7 @@ auto TestOpticalTransport(const char* cpuFileName,
                   << " status=" << occupancyStatus << '\n';
         if (hasTiming) {
             std::cout << std::setprecision(6)
-                      << "Timing: cpu_estimated=" << cpuElapsedSeconds
+                      << "Timing: cpu_reference=" << cpuElapsedSeconds
                       << "s gpu=" << gpuElapsedSeconds
                       << "s speedup=" << std::setprecision(4)
                       << gpuSpeedup << "x\n";
@@ -619,7 +619,7 @@ auto TestOpticalTransport(const char* cpuFileName,
         if (hasTiming) {
             gpuLegendText << " (" << std::fixed << std::setprecision(2)
                           << gpuSpeedup
-                          << "x vs estimated single-core CPU)";
+                          << "x vs CPU reference)";
         }
         const auto gpuLegendLabel{gpuLegendText.str()};
         legend.AddEntry(&gpuPlot, gpuLegendLabel.c_str(), "l");
@@ -857,11 +857,11 @@ auto TestOpticalTransport(const char* cpuFileName,
         TParameter<bool> occupancyPassedParameter{
             "occupancyPassed", occupancyPassed};
         TParameter<double> cpuElapsedSecondsParameter{
-            "cpuEstimatedRealSeconds", cpuElapsedSeconds};
+            "cpuReferenceRealSeconds", cpuElapsedSeconds};
         TParameter<double> gpuElapsedSecondsParameter{
             "gpuElapsedSeconds", gpuElapsedSeconds};
         TParameter<double> gpuSpeedupParameter{
-            "gpuSpeedupVsSingleCoreReference", gpuSpeedup};
+            "gpuSpeedupVsCpuReference", gpuSpeedup};
         TParameter<bool> regressionPassedParameter{"regressionPassed",
                                                    regressionPassed};
         chi2Parameter.Write();
@@ -961,7 +961,7 @@ auto TestOpticalTransport(const char* cpuFileName,
                    << " z_score=" << occupancyComparison.fZScore
                    << " status=" << occupancyStatus << '\n';
         if (hasTiming) {
-            outputFile << "Timing: cpu_estimated=" << cpuElapsedSeconds
+            outputFile << "Timing: cpu_reference=" << cpuElapsedSeconds
                        << " s gpu=" << gpuElapsedSeconds
                        << " s speedup=" << gpuSpeedup << "x\n";
         } else {

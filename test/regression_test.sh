@@ -141,12 +141,19 @@ fi
 
 cpu_single_reference="${regression_dir}/cpu_single_benchmark.root"
 cpu_full_reference="${regression_dir}/cpu_full.root"
+gpu_1t_reference="${regression_dir}/gpu_1t.root"
+gpu_14t_reference="${regression_dir}/gpu_14t.root"
 cpu_timing_file="${regression_dir}/cpu_timing.txt"
 logs_dir="${run_dir}/logs"
 cpu_single_log="${logs_dir}/cpu_single_benchmark.log"
 cpu_full_log="${logs_dir}/cpu_full.log"
-comparison_log="${logs_dir}/comparison.log"
+gpu_1t_log="${logs_dir}/gpu_1t.log"
+gpu_14t_log="${logs_dir}/gpu_14t.log"
+comparison_1t_log="${logs_dir}/comparison_gpu_1t.log"
+comparison_14t_log="${logs_dir}/comparison_gpu_14t.log"
 regression_log="${logs_dir}/regression.log"
+comparison_1t_dir="${run_dir}/comparisons/gpu_1t"
+comparison_14t_dir="${run_dir}/comparisons/gpu_14t"
 
 mkdir -p "$regression_dir" "$logs_dir"
 cd "$regression_dir" || exit 1
@@ -154,8 +161,10 @@ cd "$regression_dir" || exit 1
 # transient benchmark ROOT output before each run so it cannot be mistaken for
 # a persisted reference artifact.
 rm -f -- run_cpu_benchmark.root
-# Remove stale GPU output names before writing the current single-run result.
-rm -f -- "${regression_dir}/gpu_run_1.root" "${regression_dir}/gpu_single.root"
+# Remove stale GPU output names before writing the current run results.
+rm -f -- "${regression_dir}/gpu_run_1.root" \
+    "$gpu_1t_reference" "$gpu_14t_reference" \
+    "${regression_dir}/gpu_single.root"
 : > "$regression_log"
 
 start_time="$(date +%s)"
@@ -192,19 +201,34 @@ run_g4go_single() {
     "$taskset_executable" --cpu-list "$cpu_affinity" "$g4go" "$@"
 }
 
-run_phase() {
-    local phase_name="$1"
+run_comparison() {
+    local comparison_name="$1"
     local log_file="$2"
-    local command_status
-    shift 2
+    local output_directory="$3"
+    local gpu_file_name="$4"
+    local gpu_elapsed="$5"
+    local compare_call command_status output_file
 
-    run_logged "$log_file" "$@"
+    mkdir -p "$output_directory"
+    compare_call="${compare_macro}(\"${cpu_full_reference}\",\"${gpu_file_name}\",${cpu_full_regression_elapsed},${gpu_elapsed},\"${output_directory}\")"
+    run_logged "$log_file" "$root_executable" -l -b -q "$compare_call"
     command_status="$?"
-    if ((command_status == 0)); then
-        return 0
+    if ((command_status != 0)); then
+        echo "[${comparison_name}] FAIL exit_code=${command_status}"
+        return 1
     fi
-    echo "[${phase_name}] FAIL exit_code=${command_status}"
-    fail_test "$command_status"
+    for output_file in \
+        regression_summary.txt \
+        figures/noptpho_comparison.png figures/tof_comparison.png \
+        figures/edep_comparison.png \
+        noptpho_regression_report.root; do
+        if [[ ! -s "${output_directory}/${output_file}" ]]; then
+            echo "[${comparison_name}] required output is missing: ${output_file}"
+            return 1
+        fi
+    done
+    echo "[${comparison_name}] PASS"
+    return 0
 }
 
 now_ns() {
@@ -385,13 +409,8 @@ if ! is_positive_number "$cpu_estimated_real_time_s"; then
     fail_test 1
 fi
 
-gpu_run_log="${run_dir}/gpu.log"
-gpu_output_root="${regression_dir}/gpu_single.root"
-rm -f -- run_eminus_regression.root "$gpu_output_root"
-gpu_start_ns="$(now_ns)"
 gpu_arguments=(
     --backend gpu
-    --threads 1
     --seed 42
     --batch-timeout-ms "$batch_timeout_ms"
     --in-flight-batches "$max_in_flight_batches"
@@ -399,30 +418,39 @@ gpu_arguments=(
 if ((perf_diagnostics)); then
     gpu_arguments+=(--perf-diagnostics)
 fi
-run_logged "$gpu_run_log" run_g4go_single \
-    "${gpu_arguments[@]}" "$regression_macro"
-command_status="$?"
-if ((command_status != 0)); then
-    echo "[gpu] FAIL events=${target_events} exit_code=${command_status}"
-    fail_test "$command_status"
-fi
-gpu_elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - gpu_start_ns ))")"
-if ! grep -F "[g4go] optical backend: gpu" "$gpu_run_log" >/dev/null 2>&1; then
-    echo "[gpu] GPU backend marker is missing"
+run_timed_cpu_phase \
+    gpu-1t "$gpu_1t_log" run_eminus_regression.root \
+    gpu_1t_elapsed_seconds single "$target_events" \
+    run_g4go_single "${gpu_arguments[@]}" --threads 1 "$regression_macro"
+if ! grep -F "[g4go] optical backend: gpu" "$gpu_1t_log" >/dev/null 2>&1; then
+    echo "[gpu-1t] GPU backend marker is missing"
     fail_test 1
 fi
-if [[ ! -s run_eminus_regression.root ]]; then
-    echo "[gpu] ROOT output is missing events=${target_events}"
-    fail_test 1
-fi
-cp -- run_eminus_regression.root "$gpu_output_root" || fail_test 1
-echo "[gpu] PASS events=${target_events} wall_time=${gpu_elapsed_seconds}s"
+cp -- run_eminus_regression.root "$gpu_1t_reference" || fail_test 1
+echo "[gpu-1t] ROOT reference=$(basename "$gpu_1t_reference")"
 
-gpu_speedup="$(awk -v cpu="$cpu_estimated_real_time_s" \
-                       -v gpu="$gpu_elapsed_seconds" \
-                       'BEGIN { if (gpu > 0.0) printf "%.6f", cpu / gpu; }')"
-if ! is_positive_number "$gpu_speedup"; then
-    echo "Unable to calculate GPU speedup"
+run_timed_cpu_phase \
+    gpu-14t "$gpu_14t_log" run_eminus_regression.root \
+    gpu_14t_elapsed_seconds full "$target_events" \
+    "$g4go" "${gpu_arguments[@]}" --threads 14 "$regression_macro"
+if ! grep -F "[g4go] optical backend: gpu" "$gpu_14t_log" >/dev/null 2>&1; then
+    echo "[gpu-14t] GPU backend marker is missing"
+    fail_test 1
+fi
+cp -- run_eminus_regression.root "$gpu_14t_reference" || fail_test 1
+echo "[gpu-14t] ROOT reference=$(basename "$gpu_14t_reference")"
+
+gpu_1t_speedup_vs_cpu14="$(awk \
+    -v cpu="$cpu_full_regression_elapsed" \
+    -v gpu="$gpu_1t_elapsed_seconds" \
+    'BEGIN { if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu; }')"
+gpu_14t_speedup_vs_cpu14="$(awk \
+    -v cpu="$cpu_full_regression_elapsed" \
+    -v gpu="$gpu_14t_elapsed_seconds" \
+    'BEGIN { if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu; }')"
+if ! is_positive_number "$gpu_1t_speedup_vs_cpu14" ||
+   ! is_positive_number "$gpu_14t_speedup_vs_cpu14"; then
+    echo "Unable to calculate GPU speedups against 14T CPU"
     fail_test 1
 fi
 
@@ -432,7 +460,8 @@ fi
     echo "cpu_benchmark_macro_sha256=${cpu_benchmark_macro_sha256}"
     echo "regression_macro_sha256=${regression_macro_sha256}"
     echo "cpu_geant4_threads=14"
-    echo "gpu_geant4_threads=1"
+    echo "gpu_1t_geant4_threads=1"
+    echo "gpu_14t_geant4_threads=14"
     echo "batch_timeout_ms=${batch_timeout_ms}"
     echo "max_in_flight_batches=${max_in_flight_batches}"
     echo "cpu_single_reference_events=${cpu_single_reference_events}"
@@ -445,41 +474,93 @@ fi
     echo "cpu_full_regression_source=${cpu_full_regression_source}"
     echo "cpu_estimated_real_time_s=${cpu_estimated_real_time_s}"
     echo "cpu_data_reference=$(basename "$cpu_full_reference")"
-    echo "gpu_wall_time_s=${gpu_elapsed_seconds}"
-    echo "gpu_speedup_vs_single_core_reference=${gpu_speedup}x"
-    echo "gpu_data_reference=$(basename "$gpu_output_root")"
+    echo "gpu_1t_wall_time_s=${gpu_1t_elapsed_seconds}"
+    echo "gpu_14t_wall_time_s=${gpu_14t_elapsed_seconds}"
+    echo "gpu_1t_speedup_vs_14t_cpu=${gpu_1t_speedup_vs_cpu14}x"
+    echo "gpu_14t_speedup_vs_14t_cpu=${gpu_14t_speedup_vs_cpu14}x"
+    echo "gpu_1t_data_reference=$(basename "$gpu_1t_reference")"
+    echo "gpu_14t_data_reference=$(basename "$gpu_14t_reference")"
 } > "${run_dir}/benchmark_summary.txt"
 
 if ((perf_diagnostics)); then
     {
         echo "cpu_affinity=${cpu_affinity}"
         echo "cpu_geant4_threads=14"
-        echo "gpu_geant4_threads=1"
+        echo "gpu_1t_geant4_threads=1"
+        echo "gpu_14t_geant4_threads=14"
         echo "batch_timeout_ms=${batch_timeout_ms}"
         echo "max_in_flight_batches=${max_in_flight_batches}"
-        echo "[gpu]"
+        echo "[gpu-1t]"
         rg '^\[g4go\] performance(_output)?:' \
-            "$gpu_run_log" || true
+            "$gpu_1t_log" || true
+        echo "[gpu-14t]"
+        rg '^\[g4go\] performance(_output)?:' \
+            "$gpu_14t_log" || true
     } > "${run_dir}/performance_summary.txt"
 fi
 
-compare_call="${compare_macro}(\"${cpu_full_reference}\",\"${gpu_output_root}\",${cpu_estimated_real_time_s},${gpu_elapsed_seconds},\"${run_dir}\")"
-run_phase comparison "$comparison_log" "$root_executable" -l -b -q "$compare_call"
-echo "[comparison] PASS"
+comparison_failed=0
+if ! run_comparison \
+    "comparison-gpu-1t-vs-cpu-14t" "$comparison_1t_log" \
+    "$comparison_1t_dir" "$gpu_1t_reference" \
+    "$gpu_1t_elapsed_seconds"; then
+    comparison_failed=1
+fi
+if ! run_comparison \
+    "comparison-gpu-14t-vs-cpu-14t" "$comparison_14t_log" \
+    "$comparison_14t_dir" "$gpu_14t_reference" \
+    "$gpu_14t_elapsed_seconds"; then
+    comparison_failed=1
+fi
+if ((comparison_failed)); then
+    fail_test 1
+fi
 
-for output_file in \
-    regression_summary.txt \
-    figures/noptpho_comparison.png figures/tof_comparison.png \
-    figures/edep_comparison.png \
-    noptpho_regression_report.root; do
-    if [[ ! -s "${run_dir}/${output_file}" ]]; then
-        echo "[comparison] required output is missing: ${output_file}"
-        fail_test 1
+mkdir -p "${run_dir}/figures"
+for comparison_label in gpu_1t gpu_14t; do
+    if [[ "$comparison_label" == gpu_1t ]]; then
+        comparison_directory="$comparison_1t_dir"
+    else
+        comparison_directory="$comparison_14t_dir"
     fi
+    cp -- "${comparison_directory}/regression_summary.txt" \
+        "${run_dir}/regression_summary_${comparison_label}.txt" || fail_test 1
+    cp -- "${comparison_directory}/noptpho_regression_report.root" \
+        "${run_dir}/noptpho_regression_report_${comparison_label}.root" || fail_test 1
+    for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
+        cp -- "${comparison_directory}/figures/${figure_name}" \
+            "${run_dir}/figures/${comparison_label}_${figure_name}" || fail_test 1
+    done
+done
+# Preserve the established single-GPU artifact names as aliases for the 1T run.
+cp -- "${run_dir}/regression_summary_gpu_1t.txt" \
+    "${run_dir}/regression_summary.txt" || fail_test 1
+cp -- "${run_dir}/noptpho_regression_report_gpu_1t.root" \
+    "${run_dir}/noptpho_regression_report.root" || fail_test 1
+cp -- "$gpu_1t_reference" "${regression_dir}/gpu_single.root" || fail_test 1
+cp -- "${run_dir}/noptpho_regression_report.root" \
+    "${regression_dir}/noptpho_regression_report.root" || fail_test 1
+cp -- "${run_dir}/noptpho_regression_report_gpu_14t.root" \
+    "${regression_dir}/noptpho_regression_report_gpu_14t.root" || fail_test 1
+for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
+    cp -- "${run_dir}/figures/gpu_1t_${figure_name}" \
+        "${run_dir}/figures/${figure_name}" || fail_test 1
 done
 
-mv -f -- "${run_dir}/noptpho_regression_report.root" \
-    "${regression_dir}/noptpho_regression_report.root" || fail_test 1
+{
+    echo "Status: PASSED"
+    echo "Reference: 14TCPU"
+    echo "Speedup: 1T+GPU vs 14TCPU=${gpu_1t_speedup_vs_cpu14}x"
+    echo "Speedup: 14T+GPU vs 14TCPU=${gpu_14t_speedup_vs_cpu14}x"
+    echo
+    echo "=== 1T+GPU vs 14TCPU ==="
+    cat "${run_dir}/regression_summary_gpu_1t.txt"
+    echo
+    echo "=== 14T+GPU vs 14TCPU ==="
+    cat "${run_dir}/regression_summary_gpu_14t.txt"
+} > "${run_dir}/regression_summary.txt"
 
 echo "[regression] OUTPUT: PASSED"
+echo "[regression] 1T+GPU speedup vs 14TCPU=${gpu_1t_speedup_vs_cpu14}x"
+echo "[regression] 14T+GPU speedup vs 14TCPU=${gpu_14t_speedup_vs_cpu14}x"
 print_summary
