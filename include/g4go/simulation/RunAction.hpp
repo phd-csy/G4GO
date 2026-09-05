@@ -7,8 +7,8 @@
 class G4Run;
 
 namespace G4GO::Optical {
-class G4GOEventAdapter;
-class G4GOBatchScheduler;
+class Geant4EventAdapter;
+class OpticalBatchScheduler;
 } // namespace G4GO::Optical
 
 namespace G4GO::Simulation {
@@ -18,9 +18,9 @@ class Analysis;
 class RunAction : public G4UserRunAction {
 public:
     explicit RunAction(
-        std::shared_ptr<G4GO::Optical::G4GOBatchScheduler> batchScheduler =
+        std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> batchScheduler =
             {},
-        std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter = {},
+        std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter = {},
         std::shared_ptr<Analysis> analysis = {},
         bool isMaster = false);
     ~RunAction() override = default;
@@ -29,8 +29,8 @@ public:
     auto EndOfRunAction(const G4Run* run) -> void override;
 
 private:
-    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> fAdapter;
-    std::shared_ptr<G4GO::Optical::G4GOBatchScheduler> fBatchScheduler;
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter;
+    std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> fBatchScheduler;
     std::shared_ptr<Analysis> fAnalysis;
     bool fIsMaster;
 };

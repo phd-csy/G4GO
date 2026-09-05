@@ -1,4 +1,4 @@
-#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 
 #include "G4CerenkovQuasiTrackInfo.hh"
 #include "G4Exception.hh"
@@ -13,7 +13,7 @@
 #include "G4TransportationManager.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4VProcess.hh"
-#include "g4go/optical/geant4/G4GOBatchScheduler.hpp"
+#include "g4go/optical/geant4/OpticalBatchScheduler.hpp"
 #include "g4go/optical/geant4/G4GOQuasiScintillationTrackInfo.hpp"
 
 #include <algorithm>
@@ -48,9 +48,9 @@ auto VectorFromMm(const G4ThreeVector& vector) -> std::array<float, 3> {
 
 } // namespace
 
-G4GOEventAdapter::G4GOEventAdapter(
+Geant4EventAdapter::Geant4EventAdapter(
     PhotonTransportConfig configuration,
-    std::shared_ptr<G4GOBatchScheduler> batchScheduler) :
+    std::shared_ptr<OpticalBatchScheduler> batchScheduler) :
     fRequestedBackend{configuration.fBackend},
     fConfiguration{std::move(configuration)},
     fEmissions{},
@@ -69,16 +69,16 @@ G4GOEventAdapter::G4GOEventAdapter(
     fEventPhotonCount{} {
     if (!fBatchScheduler) {
         throw std::invalid_argument(
-            "G4GOEventAdapter requires a batch scheduler");
+            "Geant4EventAdapter requires a batch scheduler");
     }
     fEmissions.reserve(
         std::min<std::size_t>(
             fConfiguration.fMaxPhotonsPerEvent, 1024));
 }
 
-G4GOEventAdapter::~G4GOEventAdapter() = default;
+Geant4EventAdapter::~Geant4EventAdapter() = default;
 
-auto G4GOEventAdapter::BeginRun() -> void {
+auto Geant4EventAdapter::BeginRun() -> void {
     fRunStatistics = {};
     fRunPerformance = {};
     fEventPerformance = {};
@@ -94,11 +94,11 @@ auto G4GOEventAdapter::BeginRun() -> void {
     fConfiguration.fBackend = fBatchScheduler->SelectedBackend();
 }
 
-auto G4GOEventAdapter::EndRun() -> void {
+auto Geant4EventAdapter::EndRun() -> void {
     fVolumeIDCache.clear();
 }
 
-auto G4GOEventAdapter::BeginEvent(G4int eventID) -> void {
+auto Geant4EventAdapter::BeginEvent(G4int eventID) -> void {
     fEventID = eventID;
     fNextPhotonID = 0;
     fNextEmissionID = 0;
@@ -114,7 +114,7 @@ auto G4GOEventAdapter::BeginEvent(G4int eventID) -> void {
     fEventPerformance = {};
 }
 
-auto G4GOEventAdapter::EndEvent() -> PhotonTransportFuture {
+auto Geant4EventAdapter::EndEvent() -> PhotonTransportFuture {
     if (fConfiguration.fBackend == PhotonTransportBackend::OptiX) {
         OpticalSubmission submission{};
         submission.fEventID = static_cast<std::uint32_t>(fEventID);
@@ -130,12 +130,12 @@ auto G4GOEventAdapter::EndEvent() -> PhotonTransportFuture {
     return {};
 }
 
-auto G4GOEventAdapter::SelectedBackend() const
+auto Geant4EventAdapter::SelectedBackend() const
     -> PhotonTransportBackend {
     return fConfiguration.fBackend;
 }
 
-auto G4GOEventAdapter::RunStatistics() const
+auto Geant4EventAdapter::RunStatistics() const
     -> const PhotonTransportStatistics& {
     if (fConfiguration.fBackend == PhotonTransportBackend::OptiX) {
         return fBatchScheduler->RunStatistics();
@@ -143,7 +143,7 @@ auto G4GOEventAdapter::RunStatistics() const
     return fRunStatistics;
 }
 
-auto G4GOEventAdapter::ObserveGenerated(const G4Track& track) -> void {
+auto Geant4EventAdapter::ObserveGenerated(const G4Track& track) -> void {
     ++fEventStatistics.fGeneratedCount;
     const auto* creatorProcess{track.GetCreatorProcess()};
     if (creatorProcess == nullptr) {
@@ -157,7 +157,7 @@ auto G4GOEventAdapter::ObserveGenerated(const G4Track& track) -> void {
     }
 }
 
-auto G4GOEventAdapter::Capture(const G4Track& track) -> void {
+auto Geant4EventAdapter::Capture(const G4Track& track) -> void {
     const auto diagnostics{fConfiguration.fEnablePerformanceDiagnostics};
     const auto captureStart{
         diagnostics ? std::chrono::steady_clock::now() :
@@ -187,10 +187,10 @@ auto G4GOEventAdapter::Capture(const G4Track& track) -> void {
     };
     emission.fType = OpticalEmissionType::Direct;
     AppendOffloadedEmission(track, std::move(emission), 1, captureStart,
-                            "G4GOEventAdapter::Capture", "the creation");
+                            "Geant4EventAdapter::Capture", "the creation");
 }
 
-auto G4GOEventAdapter::CaptureOffloaded(const G4Track& track) -> void {
+auto Geant4EventAdapter::CaptureOffloaded(const G4Track& track) -> void {
     const auto appendTrackContext = [this, &track](
                                         G4ExceptionDescription& description) {
         const auto* material{track.GetMaterial()};
@@ -216,7 +216,7 @@ auto G4GOEventAdapter::CaptureOffloaded(const G4Track& track) -> void {
                        "metadata (";
         appendTrackContext(description);
         description << ")";
-        G4Exception("G4GOEventAdapter::CaptureOffloaded",
+        G4Exception("Geant4EventAdapter::CaptureOffloaded",
                     "G4GOCerenkovMetadata", FatalException, description);
         return;
     }
@@ -230,7 +230,7 @@ auto G4GOEventAdapter::CaptureOffloaded(const G4Track& track) -> void {
                     << track.GetCreatorModelID() << " (";
         appendTrackContext(description);
         description << ")";
-        G4Exception("G4GOEventAdapter::CaptureOffloaded",
+        G4Exception("Geant4EventAdapter::CaptureOffloaded",
                     "G4GOScintillationModel", FatalException, description);
         return;
     }
@@ -245,11 +245,11 @@ auto G4GOEventAdapter::CaptureOffloaded(const G4Track& track) -> void {
     description << "quasi-optical track has no recognized offload metadata (";
     appendTrackContext(description);
     description << ")";
-    G4Exception("G4GOEventAdapter::CaptureOffloaded",
+    G4Exception("Geant4EventAdapter::CaptureOffloaded",
                 "G4GOUnknownOffloadTrack", FatalException, description);
 }
 
-auto G4GOEventAdapter::AppendOffloadedEmission(
+auto Geant4EventAdapter::AppendOffloadedEmission(
     const G4Track& track,
     OpticalEmission emission,
     std::size_t photonCount,
@@ -324,7 +324,7 @@ auto G4GOEventAdapter::AppendOffloadedEmission(
     return true;
 }
 
-auto G4GOEventAdapter::CaptureCerenkov(
+auto Geant4EventAdapter::CaptureCerenkov(
     const G4Track& track, const G4CerenkovQuasiTrackInfo& info) -> void {
     const auto diagnostics{fConfiguration.fEnablePerformanceDiagnostics};
     const auto captureStart{
@@ -362,12 +362,12 @@ auto G4GOEventAdapter::CaptureCerenkov(
     emission.fType = OpticalEmissionType::Cerenkov;
     if (AppendOffloadedEmission(
             track, std::move(emission), photonCount, captureStart,
-            "G4GOEventAdapter::CaptureCerenkov", "Cerenkov offload")) {
+            "Geant4EventAdapter::CaptureCerenkov", "Cerenkov offload")) {
         fEventPerformance.fCerenkovPhotonCount += photonCount;
     }
 }
 
-auto G4GOEventAdapter::CaptureScintillation(
+auto Geant4EventAdapter::CaptureScintillation(
     const G4Track& track, const G4GOQuasiScintillationTrackInfo& info) -> void {
     const auto diagnostics{fConfiguration.fEnablePerformanceDiagnostics};
     const auto captureStart{
@@ -394,7 +394,7 @@ auto G4GOEventAdapter::CaptureScintillation(
         if (material != nullptr) {
             description << ", material " << material->GetName();
         }
-        G4Exception("G4GOEventAdapter::CaptureScintillation",
+        G4Exception("Geant4EventAdapter::CaptureScintillation",
                     "G4GOScintillationProperties", FatalException,
                     description);
         return;
@@ -412,7 +412,7 @@ auto G4GOEventAdapter::CaptureScintillation(
             description << material->GetName();
         }
         description << " (index " << data.mat_index << ")";
-        G4Exception("G4GOEventAdapter::CaptureScintillation",
+        G4Exception("Geant4EventAdapter::CaptureScintillation",
                     "G4GOScintillationComponent", FatalException,
                     description);
         return;
@@ -432,7 +432,7 @@ auto G4GOEventAdapter::CaptureScintillation(
             description << material->GetName();
         }
         description << " (index " << data.mat_index << ")";
-        G4Exception("G4GOEventAdapter::CaptureScintillation",
+        G4Exception("Geant4EventAdapter::CaptureScintillation",
                     "G4GOScintillationComponent", FatalException,
                     description);
         return;
@@ -454,13 +454,13 @@ auto G4GOEventAdapter::CaptureScintillation(
     emission.fType = OpticalEmissionType::Scintillation;
     if (AppendOffloadedEmission(
             track, std::move(emission), photonCount, captureStart,
-            "G4GOEventAdapter::CaptureScintillation",
+            "Geant4EventAdapter::CaptureScintillation",
             "scintillation offload")) {
         fEventPerformance.fScintillationPhotonCount += photonCount;
     }
 }
 
-auto G4GOEventAdapter::LocateVolume(const G4Track& track) const
+auto Geant4EventAdapter::LocateVolume(const G4Track& track) const
     -> const G4VPhysicalVolume* {
     if (const auto* volume{track.GetVolume()}; volume != nullptr) {
         return volume;
@@ -473,7 +473,7 @@ auto G4GOEventAdapter::LocateVolume(const G4Track& track) const
     return navigator->LocateGlobalPointAndSetup(position, &direction, false);
 }
 
-auto G4GOEventAdapter::VolumeIDFromTrack(
+auto Geant4EventAdapter::VolumeIDFromTrack(
     const G4Track& track, const G4VPhysicalVolume* locatedVolume) const
     -> std::uint32_t {
     const auto locatedID{static_cast<std::uint32_t>(
@@ -568,7 +568,7 @@ auto G4GOEventAdapter::VolumeIDFromTrack(
     return parentVolumeID;
 }
 
-auto G4GOEventAdapter::MaterialIDFromVolume(std::uint32_t volumeID) const
+auto Geant4EventAdapter::MaterialIDFromVolume(std::uint32_t volumeID) const
     -> std::uint32_t {
     if (volumeID == InvalidID) {
         return InvalidID;
@@ -578,14 +578,14 @@ auto G4GOEventAdapter::MaterialIDFromVolume(std::uint32_t volumeID) const
         G4ExceptionDescription description{};
         description << "volume " << volumeID
                     << " is missing from the exported optical scene";
-        G4Exception("G4GOEventAdapter::MaterialIDFromVolume",
+        G4Exception("Geant4EventAdapter::MaterialIDFromVolume",
                     "G4GOSceneMaterialLookup", FatalException, description);
         return InvalidID;
     }
     return volume->fMaterialID;
 }
 
-auto G4GOEventAdapter::AccumulateEventStatistics() -> void {
+auto Geant4EventAdapter::AccumulateEventStatistics() -> void {
     fRunStatistics.fValidFields |= fEventStatistics.fValidFields;
     fRunStatistics.fGeneratedCount += fEventStatistics.fGeneratedCount;
     fRunStatistics.fCapturedCount += fEventStatistics.fCapturedCount;

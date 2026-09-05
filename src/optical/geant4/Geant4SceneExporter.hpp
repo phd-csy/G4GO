@@ -8,11 +8,11 @@ class G4VPhysicalVolume;
 
 namespace G4GO::Optical {
 
-class G4GOSceneExporter final {
+class Geant4SceneExporter final {
 public:
-    explicit G4GOSceneExporter(std::uint32_t meshRotationSteps = 360) :
+    explicit Geant4SceneExporter(std::uint32_t meshRotationSteps = 360) :
         fMeshRotationSteps{meshRotationSteps} {}
-    ~G4GOSceneExporter() = default;
+    ~Geant4SceneExporter() = default;
 
     auto Export(const G4VPhysicalVolume* world) const -> Scene;
 

@@ -4,7 +4,7 @@
 #include "G4QuasiOpticalPhoton.hh"
 #include "G4Track.hh"
 #include "G4VProcess.hh"
-#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -12,7 +12,7 @@
 namespace G4GO::Simulation {
 
 StackingAction::StackingAction(
-    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter) :
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter) :
     fAdapter{std::move(adapter)} {
     if (!fAdapter) {
         throw std::invalid_argument(

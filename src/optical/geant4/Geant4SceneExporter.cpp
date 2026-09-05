@@ -1,4 +1,4 @@
-#include "G4GOSceneExporter.hpp"
+#include "Geant4SceneExporter.hpp"
 
 #include "G4GeometryTolerance.hh"
 #include "G4LogicalBorderSurface.hh"
@@ -928,7 +928,7 @@ private:
 
 } // namespace
 
-auto G4GOSceneExporter::Export(const G4VPhysicalVolume* world) const -> Scene {
+auto Geant4SceneExporter::Export(const G4VPhysicalVolume* world) const -> Scene {
     return SceneBuilder{fMeshRotationSteps}.Build(world);
 }
 

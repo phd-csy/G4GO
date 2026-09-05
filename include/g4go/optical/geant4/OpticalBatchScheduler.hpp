@@ -33,14 +33,14 @@ struct PhotonBatchStatistics {
     PhotonTransportPerformance fPerformance{};
 };
 
-class G4GOBatchScheduler final {
+class OpticalBatchScheduler final {
 public:
-    explicit G4GOBatchScheduler(
+    explicit OpticalBatchScheduler(
         PhotonTransportConfig configuration);
-    ~G4GOBatchScheduler();
+    ~OpticalBatchScheduler();
 
-    G4GOBatchScheduler(const G4GOBatchScheduler&) = delete;
-    auto operator=(const G4GOBatchScheduler&) -> G4GOBatchScheduler& = delete;
+    OpticalBatchScheduler(const OpticalBatchScheduler&) = delete;
+    auto operator=(const OpticalBatchScheduler&) -> OpticalBatchScheduler& = delete;
 
     auto BeginRun() -> void;
     auto EndRun() -> void;

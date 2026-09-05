@@ -19,17 +19,17 @@ class G4GOQuasiScintillationTrackInfo;
 
 namespace G4GO::Optical {
 
-class G4GOBatchScheduler;
+class OpticalBatchScheduler;
 
-class G4GOEventAdapter final {
+class Geant4EventAdapter final {
 public:
-    explicit G4GOEventAdapter(
+    explicit Geant4EventAdapter(
         PhotonTransportConfig configuration,
-        std::shared_ptr<G4GOBatchScheduler> batchScheduler);
-    ~G4GOEventAdapter();
+        std::shared_ptr<OpticalBatchScheduler> batchScheduler);
+    ~Geant4EventAdapter();
 
-    G4GOEventAdapter(const G4GOEventAdapter&) = delete;
-    auto operator=(const G4GOEventAdapter&) -> G4GOEventAdapter& = delete;
+    Geant4EventAdapter(const Geant4EventAdapter&) = delete;
+    auto operator=(const Geant4EventAdapter&) -> Geant4EventAdapter& = delete;
 
     auto BeginRun() -> void;
     auto EndRun() -> void;
@@ -109,7 +109,7 @@ private:
     mutable const G4VPhysicalVolume* fCachedLocatedVolume;
     mutable std::uint32_t fCachedLocatedCopyNo;
     mutable std::uint32_t fCachedVolumeID;
-    std::shared_ptr<G4GOBatchScheduler> fBatchScheduler;
+    std::shared_ptr<OpticalBatchScheduler> fBatchScheduler;
     PhotonTransportStatistics fEventStatistics;
     PhotonTransportPerformance fEventPerformance;
     PhotonTransportStatistics fRunStatistics;

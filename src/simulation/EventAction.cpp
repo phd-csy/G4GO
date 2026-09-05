@@ -7,7 +7,7 @@
 #include "g4go/detector/DetectorConstruction.hpp"
 #include "g4go/detector/ScintillatorHit.hpp"
 #include "g4go/detector/SensorHit.hpp"
-#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
 #include <cstddef>
@@ -16,7 +16,7 @@
 namespace G4GO::Simulation {
 
 EventAction::EventAction(
-    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter,
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
     std::shared_ptr<Analysis> analysis) :
     fAdapter{std::move(adapter)},
     fAnalysis{std::move(analysis)} {}

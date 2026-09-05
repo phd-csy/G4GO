@@ -2,8 +2,8 @@
 
 #include "G4AnalysisManager.hh"
 #include "G4ios.hh"
-#include "g4go/optical/geant4/G4GOBatchScheduler.hpp"
-#include "g4go/optical/geant4/G4GOEventAdapter.hpp"
+#include "g4go/optical/geant4/OpticalBatchScheduler.hpp"
+#include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
 #include <chrono>
@@ -12,8 +12,8 @@
 namespace G4GO::Simulation {
 
 RunAction::RunAction(
-    std::shared_ptr<G4GO::Optical::G4GOBatchScheduler> batchScheduler,
-    std::shared_ptr<G4GO::Optical::G4GOEventAdapter> adapter,
+    std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> batchScheduler,
+    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
     std::shared_ptr<Analysis> analysis,
     bool isMaster) :
     G4UserRunAction{},

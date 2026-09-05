@@ -1,6 +1,6 @@
-#include "g4go/optical/geant4/G4GOBatchScheduler.hpp"
+#include "g4go/optical/geant4/OpticalBatchScheduler.hpp"
 
-#include "G4GOSceneExporter.hpp"
+#include "Geant4SceneExporter.hpp"
 #include "G4TransportationManager.hh"
 
 #ifdef G4GO_ENABLE_OPTIX
@@ -16,7 +16,7 @@
 
 namespace G4GO::Optical {
 
-G4GOBatchScheduler::G4GOBatchScheduler(
+OpticalBatchScheduler::OpticalBatchScheduler(
     PhotonTransportConfig configuration) :
     fConfiguration{std::move(configuration)},
     fBackend{fConfiguration.fBackend},
@@ -40,11 +40,11 @@ G4GOBatchScheduler::G4GOBatchScheduler(
     fBatchBuffer{} {
 }
 
-G4GOBatchScheduler::~G4GOBatchScheduler() {
+OpticalBatchScheduler::~OpticalBatchScheduler() {
     EndRun();
 }
 
-auto G4GOBatchScheduler::BeginRun() -> void {
+auto OpticalBatchScheduler::BeginRun() -> void {
     std::unique_lock lock{fMutex};
     if (fStarted) {
         fCondition.wait(lock, [this] { return fReady; });
@@ -90,7 +90,7 @@ auto G4GOBatchScheduler::BeginRun() -> void {
             ->GetNavigatorForTracking()
             ->GetWorldVolume()};
     try {
-        fScene = G4GOSceneExporter{fConfiguration.fMeshRotationSteps}
+        fScene = Geant4SceneExporter{fConfiguration.fMeshRotationSteps}
                      .Export(world);
     } catch (...) {
         fFailure = std::current_exception();
@@ -121,7 +121,7 @@ auto G4GOBatchScheduler::BeginRun() -> void {
 #endif
 }
 
-auto G4GOBatchScheduler::EndRun() -> void {
+auto OpticalBatchScheduler::EndRun() -> void {
     {
         std::lock_guard lock{fMutex};
         if (!fStarted) {
@@ -147,7 +147,7 @@ auto G4GOBatchScheduler::EndRun() -> void {
     fStopRequested = false;
 }
 
-auto G4GOBatchScheduler::Submit(OpticalSubmission submission)
+auto OpticalBatchScheduler::Submit(OpticalSubmission submission)
     -> PhotonTransportFuture {
     auto promise{
         std::make_shared<std::promise<PhotonTransportOutput>>()};
@@ -254,28 +254,28 @@ auto G4GOBatchScheduler::Submit(OpticalSubmission submission)
     return future;
 }
 
-auto G4GOBatchScheduler::SelectedBackend() const
+auto OpticalBatchScheduler::SelectedBackend() const
     -> PhotonTransportBackend {
     std::lock_guard lock{fMutex};
     return fBackend;
 }
 
-auto G4GOBatchScheduler::RunStatistics() const
+auto OpticalBatchScheduler::RunStatistics() const
     -> const PhotonTransportStatistics& {
     return fRunStatistics;
 }
 
-auto G4GOBatchScheduler::BatchStatistics() const
+auto OpticalBatchScheduler::BatchStatistics() const
     -> const PhotonBatchStatistics& {
     return fBatchStatistics;
 }
 
-auto G4GOBatchScheduler::PerformanceStatistics() const
+auto OpticalBatchScheduler::PerformanceStatistics() const
     -> const PhotonTransportPerformance& {
     return fPerformance;
 }
 
-auto G4GOBatchScheduler::CompleteBatch(
+auto OpticalBatchScheduler::CompleteBatch(
     std::vector<TransportRequest> requests,
     std::size_t photonCount,
     PhotonTransportOutput transportOutput) -> void {
@@ -592,7 +592,7 @@ auto G4GOBatchScheduler::CompleteBatch(
     }
 }
 
-auto G4GOBatchScheduler::ProcessBatches() -> void {
+auto OpticalBatchScheduler::ProcessBatches() -> void {
 #ifdef G4GO_ENABLE_OPTIX
     struct InFlightBatch {
         std::vector<TransportRequest> fRequests{};
@@ -807,7 +807,7 @@ auto G4GOBatchScheduler::ProcessBatches() -> void {
 #endif
 }
 
-auto G4GOBatchScheduler::FailPendingRequests(std::exception_ptr error)
+auto OpticalBatchScheduler::FailPendingRequests(std::exception_ptr error)
     -> void {
     std::deque<TransportRequest> pending{};
     {
