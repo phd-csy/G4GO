@@ -113,49 +113,6 @@ auto RaiseSourceError(const char* method,
                 description);
 }
 
-// G4Scintillation consumes the primary Geant4 random stream while it
-// materializes every optical photon. The compact GPU source defers that
-// materialization to OptiX, so consume the equivalent source-side draws here
-// to keep subsequent charged-particle transport on the same stream.
-auto ConsumeNativePhotonDraws(const G4Track& track,
-                              G4int photonCount,
-                              G4double riseTime,
-                              G4double decayTime) -> void {
-    if (photonCount <= 0) {
-        return;
-    }
-    const auto* dynamicParticle{track.GetDynamicParticle()};
-    const auto isNeutral{dynamicParticle == nullptr ||
-                         dynamicParticle->GetDefinition()->GetPDGCharge() ==
-                             0.0};
-    for (auto photon{G4int{}}; photon < photonCount; ++photon) {
-        // Sampled energy, direction costheta, direction phi, and
-        // polarization phi.
-        static_cast<void>(G4UniformRand());
-        static_cast<void>(G4UniformRand());
-        static_cast<void>(G4UniformRand());
-        static_cast<void>(G4UniformRand());
-        if (!isNeutral) {
-            // Charged-particle emission position along the step.
-            static_cast<void>(G4UniformRand());
-        }
-        if (!(riseTime > 0.0)) {
-            // Exponential decay time.
-            static_cast<void>(G4UniformRand());
-            continue;
-        }
-        // Match G4Scintillation::sample_time for a finite rise time.
-        for (;;) {
-            const auto sample{-decayTime *
-                              std::log(1.0 - G4UniformRand())};
-            if (G4UniformRand() <=
-                (1.0 - std::exp(-sample / riseTime))) {
-                break;
-            }
-        }
-    }
-}
-
 } // namespace
 
 G4GOQuasiScintillation::G4GOQuasiScintillation(
@@ -308,19 +265,6 @@ auto G4GOQuasiScintillation::PostStepDoIt(const G4Track& track,
             componentPhotonCounts.at(1) = countFromYield(yield2);
             componentPhotonCounts.at(2) = countFromYield(yield3);
         }
-    }
-
-    for (std::size_t index{}; index < componentCount; ++index) {
-        const auto scintTime{GetScintillationByParticleType() ?
-                                 (index == 0U ? timeConstant1 :
-                                  index == 1U ? timeConstant2 :
-                                                timeConstant3) :
-                                 ComponentTimeConstant(*properties, index)};
-        const auto riseTime{GetFiniteRiseTime() ?
-                                ComponentRiseTime(*properties, index) :
-                                G4double{}};
-        ConsumeNativePhotonDraws(
-            track, componentPhotonCounts.at(index), riseTime, scintTime);
     }
 
     std::size_t emissionCount{};

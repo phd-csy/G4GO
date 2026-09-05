@@ -8,10 +8,10 @@
 #include "G4OpticalPhysics.hh"
 #include "G4ProcessManager.hh"
 #include "G4ProcessVector.hh"
+#include "G4QuasiCerenkov.hh"
 #include "G4RadioactiveDecayPhysics.hh"
 #include "G4VModularPhysicsList.hh"
 #include "G4VProcess.hh"
-#include "g4go/optical/geant4/G4GOQuasiCerenkov.hpp"
 #include "g4go/optical/geant4/G4GOQuasiScintillation.hpp"
 #include "G4QuasiOpticalPhoton.hh"
 
@@ -38,10 +38,10 @@ auto PhysicsList::ConstructProcess() -> void {
     if (fUseOpticalOffload) {
         auto* parameters{G4OpticalParameters::Instance()};
 
-        G4GOQuasiCerenkov* cerenkov{nullptr};
+        G4QuasiCerenkov* cerenkov{nullptr};
         if (parameters->GetProcessActivation("QuasiCerenkov") ||
             parameters->GetCerenkovOffloadPhotons()) {
-            cerenkov = new G4GOQuasiCerenkov{"QuasiCerenkov"};
+            cerenkov = new G4QuasiCerenkov{"QuasiCerenkov"};
             cerenkov->SetMaxNumPhotonsPerStep(
                 parameters->GetCerenkovMaxPhotonsPerStep());
             cerenkov->SetMaxBetaChangePerStep(
