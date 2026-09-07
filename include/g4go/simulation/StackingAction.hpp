@@ -16,12 +16,10 @@ namespace G4GO::Simulation {
 
 class StackingAction final : public G4UserStackingAction {
 public:
-    explicit StackingAction(
-        std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter);
+    explicit StackingAction(std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter);
     ~StackingAction() override = default;
 
-    auto ClassifyNewTrack(const G4Track* track)
-        -> G4ClassificationOfNewTrack override;
+    auto ClassifyNewTrack(const G4Track* track) -> G4ClassificationOfNewTrack override;
 
 private:
     std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter;

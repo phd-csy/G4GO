@@ -7,18 +7,21 @@ namespace G4GO::Detector {
 
 class SensorHit : public G4VHit {
 public:
-    SensorHit() : G4VHit{}, globalTime{}, copyNo{-1} {}
+    SensorHit() :
+        G4VHit{},
+        fGlobalTime{},
+        fCopyNo{-1} {}
     ~SensorHit() override = default;
 
-    auto GlobalTime(G4double time) -> void { globalTime = time; }
-    auto GlobalTime() const -> G4double { return globalTime; }
+    auto GlobalTime(G4double time) -> void { fGlobalTime = time; }
+    auto GlobalTime() const -> G4double { return fGlobalTime; }
 
-    auto CopyNo(G4int copyNumber) -> void { copyNo = copyNumber; }
-    auto CopyNo() const -> G4int { return copyNo; }
+    auto CopyNo(G4int copyNumber) -> void { fCopyNo = copyNumber; }
+    auto CopyNo() const -> G4int { return fCopyNo; }
 
 private:
-    G4double globalTime;
-    G4int copyNo;
+    G4double fGlobalTime;
+    G4int fCopyNo;
 };
 
 using SensorHC = G4THitsCollection<SensorHit>;

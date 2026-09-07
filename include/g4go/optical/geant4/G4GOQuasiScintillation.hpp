@@ -35,17 +35,13 @@ class G4VParticleChange;
 // it never enters the regular optical-photon secondary loop.
 class G4GOQuasiScintillation final : public G4QuasiScintillation {
 public:
-    explicit G4GOQuasiScintillation(
-        const G4String& processName = "G4GOQuasiScintillation",
-        G4ProcessType type = fElectromagnetic);
+    explicit G4GOQuasiScintillation(const G4String& processName = "G4GOQuasiScintillation",
+                                    G4ProcessType type = fElectromagnetic);
     ~G4GOQuasiScintillation() override = default;
 
     G4GOQuasiScintillation(const G4GOQuasiScintillation&) = delete;
-    auto operator=(const G4GOQuasiScintillation&)
-        -> G4GOQuasiScintillation& = delete;
+    auto operator=(const G4GOQuasiScintillation&) -> G4GOQuasiScintillation& = delete;
 
-    auto PostStepDoIt(const G4Track& track, const G4Step& step)
-        -> G4VParticleChange* override;
-    auto AtRestDoIt(const G4Track& track, const G4Step& step)
-        -> G4VParticleChange* override;
+    auto PostStepDoIt(const G4Track& track, const G4Step& step) -> G4VParticleChange* override;
+    auto AtRestDoIt(const G4Track& track, const G4Step& step) -> G4VParticleChange* override;
 };

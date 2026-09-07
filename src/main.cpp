@@ -19,8 +19,8 @@
 #include "Randomize.hh"
 
 #include <cstdint>
+#include <exception>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -48,84 +48,52 @@ auto UseOpticalOffload(G4GO::Optical::PhotonTransportBackend backend) -> bool {
 auto main(int argc, char** argv) -> int {
     CLI::App app{"G4GO optical photon simulation", argv[0]};
     CommandLineOptions options{};
-    std::string backendName{
-        G4GO::Optical::ToString(
-            options.photonTransportConfig.fBackend)};
+    std::string backendName{G4GO::Optical::ToString(options.photonTransportConfig.backend)};
     std::string macroFile{};
 
     app.set_help_flag("");
     app.add_flag("-h,--help", options.help, "Print this help message");
-    app.add_option(
-           "--backend", backendName, "Optical photon transport backend")
+    app.add_option("--backend", backendName, "Optical photon transport backend")
         ->check(CLI::IsMember({"auto", "cpu", "gpu"}))
         ->capture_default_str();
-    app.add_option(
-           "--seed", options.photonTransportConfig.fSeed, "Random seed")
-        ->capture_default_str();
-    app.add_option(
-           "--threads", options.threads, "Number of Geant4 worker threads")
-        ->capture_default_str();
-    app.add_option(
-           "--max-photons",
-           options.photonTransportConfig.fMaxPhotonsPerEvent,
-           "Maximum number of captured optical photons")
+    app.add_option("--seed", options.photonTransportConfig.seed, "Random seed")->capture_default_str();
+    app.add_option("--threads", options.threads, "Number of Geant4 worker threads")->capture_default_str();
+    app.add_option("--max-photons", options.photonTransportConfig.maxPhotonsPerEvent,
+                   "Maximum number of captured optical photons")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
-    app.add_option(
-           "--max-bounces",
-           options.photonTransportConfig.fMaxBouncesPerPhoton,
-           "Maximum number of optical photon bounces")
+    app.add_option("--max-bounces", options.photonTransportConfig.maxBouncesPerPhoton,
+                   "Maximum number of optical photon bounces")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
-    app.add_option(
-           "--batch-photons",
-           options.photonTransportConfig.fTargetPhotonsPerBatch,
-           "Target optical photons per GPU batch")
+    app.add_option("--batch-photons", options.photonTransportConfig.targetPhotonsPerBatch,
+                   "Target optical photons per GPU batch")
         ->check(CLI::PositiveNumber)
         ->capture_default_str();
-    app.add_option(
-           "--batch-timeout-ms",
-           options.photonTransportConfig.fBatchCollectionTimeoutMs,
-           "Maximum GPU batch collection wait in milliseconds")
+    app.add_option("--batch-timeout-ms", options.photonTransportConfig.batchCollectionTimeoutMs,
+                   "Maximum GPU batch collection wait in milliseconds")
         ->check(CLI::Range(0U, 10'000U))
         ->capture_default_str();
-    app.add_flag(
-        "--perf-diagnostics",
-        options.photonTransportConfig.fEnablePerformanceDiagnostics,
-        "Enable optical transport performance diagnostics");
-    app.add_option(
-           "--mesh-rotation-steps",
-           options.photonTransportConfig.fMeshRotationSteps,
-           "Number of Geant4 polyhedron rotation steps")
+    app.add_flag("--perf-diagnostics", options.photonTransportConfig.enablePerformanceDiagnostics,
+                 "Enable optical transport performance diagnostics");
+    app.add_option("--mesh-rotation-steps", options.photonTransportConfig.meshRotationSteps,
+                   "Number of Geant4 polyhedron rotation steps")
         ->check(CLI::Range(8U, 4096U))
         ->capture_default_str();
-    app.add_option("macro", macroFile, "Geant4 macro file")
-        ->expected(0, 1);
+    app.add_option("macro", macroFile, "Geant4 macro file")->expected(0, 1);
 
     try {
         app.parse(argc, argv);
 
-        if (backendName == "auto") {
-            options.photonTransportConfig.fBackend =
-                G4GO::Optical::PhotonTransportBackend::Auto;
-        } else if (backendName == "cpu") {
-            options.photonTransportConfig.fBackend =
-                G4GO::Optical::PhotonTransportBackend::Geant4;
-        } else if (backendName == "gpu") {
-            options.photonTransportConfig.fBackend =
-                G4GO::Optical::PhotonTransportBackend::OptiX;
-        } else {
-            throw std::invalid_argument(
-                "invalid value for --backend: " + backendName);
-        }
+        options.photonTransportConfig.backend = backendName == "gpu" ? G4GO::Optical::PhotonTransportBackend::OptiX :
+                                                backendName == "cpu" ? G4GO::Optical::PhotonTransportBackend::Geant4 :
+                                                                       G4GO::Optical::PhotonTransportBackend::Auto;
 
         if (!macroFile.empty()) {
             options.macroFile = std::move(macroFile);
         }
 
-    } catch (const CLI::ParseError& error) {
-        return app.exit(error);
-    } catch (const std::exception& exception) {
+    } catch (const CLI::ParseError& error) { return app.exit(error); } catch (const std::exception& exception) {
         G4cerr << "[g4go] " << exception.what() << G4endl;
         G4cout << app.help() << G4endl;
         return 1;
@@ -136,8 +104,7 @@ auto main(int argc, char** argv) -> int {
         return 0;
     }
 
-    const auto useOpticalOffload{
-        UseOpticalOffload(options.photonTransportConfig.fBackend)};
+    const auto useOpticalOffload{UseOpticalOffload(options.photonTransportConfig.backend)};
 
     const auto timer{new G4Timer()};
     timer->Start();
@@ -158,8 +125,7 @@ auto main(int argc, char** argv) -> int {
 #endif
 
     G4Random::setTheEngine(new CLHEP::MTwistEngine());
-    G4Random::setTheSeed(
-        static_cast<long>(options.photonTransportConfig.fSeed));
+    G4Random::setTheSeed(static_cast<long>(options.photonTransportConfig.seed));
 
     G4int precision{4};
     G4SteppingVerbose::UseBestUnit(precision);
@@ -178,8 +144,7 @@ auto main(int argc, char** argv) -> int {
     }
 #endif
 
-    runManager->SetUserInitialization(
-        new G4GO::Detector::DetectorConstruction());
+    runManager->SetUserInitialization(new G4GO::Detector::DetectorConstruction());
 
     auto* opticalParameters{G4OpticalParameters::Instance()};
     if (useOpticalOffload) {
@@ -191,14 +156,11 @@ auto main(int argc, char** argv) -> int {
         opticalParameters->SetCerenkovTrackSecondariesFirst(false);
         opticalParameters->SetScintTrackSecondariesFirst(false);
     }
-    auto* physicsList{
-        new G4GO::Simulation::PhysicsList{useOpticalOffload}};
+    auto* physicsList{new G4GO::Simulation::PhysicsList{useOpticalOffload}};
     opticalParameters->SetBoundaryInvokeSD(true);
     runManager->SetUserInitialization(physicsList);
 
-    runManager->SetUserInitialization(
-        new G4GO::Simulation::ActionInitialization(
-            options.photonTransportConfig));
+    runManager->SetUserInitialization(new G4GO::Simulation::ActionInitialization(options.photonTransportConfig));
 
 #ifdef G4GO_USE_UIVIS
     G4VisManager* visManager{new G4VisExecutive("Quiet")};

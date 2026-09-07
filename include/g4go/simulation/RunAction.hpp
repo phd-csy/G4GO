@@ -17,12 +17,9 @@ class Analysis;
 
 class RunAction : public G4UserRunAction {
 public:
-    explicit RunAction(
-        std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> batchScheduler =
-            {},
-        std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter = {},
-        std::shared_ptr<Analysis> analysis = {},
-        bool isMaster = false);
+    explicit RunAction(std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> batchScheduler = {},
+                       std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter = {},
+                       std::shared_ptr<Analysis> analysis = {}, bool isMaster = false);
     ~RunAction() override = default;
 
     auto BeginOfRunAction(const G4Run* run) -> void override;

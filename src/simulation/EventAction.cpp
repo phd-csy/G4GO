@@ -15,45 +15,34 @@
 
 namespace G4GO::Simulation {
 
-EventAction::EventAction(
-    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
-    std::shared_ptr<Analysis> analysis) :
+EventAction::EventAction(std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+                         std::shared_ptr<Analysis> analysis) :
     fAdapter{std::move(adapter)},
     fAnalysis{std::move(analysis)} {}
 
-auto EventAction::BeginOfEventAction(const G4Event* event) -> void {
-    fAdapter->BeginEvent(event->GetEventID());
-}
+auto EventAction::BeginOfEventAction(const G4Event* event) -> void { fAdapter->BeginEvent(event->GetEventID()); }
 
 auto EventAction::EndOfEventAction(const G4Event* event) -> void {
     const auto transportFuture{fAdapter->EndEvent()};
 
-    auto scintillatorHCid{
-        G4SDManager::GetSDMpointer()->GetCollectionID(
-            "ScintillatorHitsCollection")};
-    auto scintHC{static_cast<G4GO::Detector::ScintillatorHC*>(
-        event->GetHCofThisEvent()->GetHC(scintillatorHCid))};
+    auto scintillatorHCid{G4SDManager::GetSDMpointer()->GetCollectionID("ScintillatorHitsCollection")};
+    auto scintHC{static_cast<G4GO::Detector::ScintillatorHC*>(event->GetHCofThisEvent()->GetHC(scintillatorHCid))};
 
-    auto sensorHCid{
-        G4SDManager::GetSDMpointer()->GetCollectionID("SensorHitsCollection")};
-    auto sensorHC{static_cast<G4GO::Detector::SensorHC*>(
-        event->GetHCofThisEvent()->GetHC(sensorHCid))};
+    auto sensorHCid{G4SDManager::GetSDMpointer()->GetCollectionID("SensorHitsCollection")};
+    auto sensorHC{static_cast<G4GO::Detector::SensorHC*>(event->GetHCofThisEvent()->GetHC(sensorHCid))};
 
     const auto moduleID{static_cast<const G4GO::Detector::DetectorConstruction*>(
                             G4RunManager::GetRunManager()->GetUserDetectorConstruction())
                             ->ModuleID()};
     const auto eventID{event->GetEventID()};
-    const auto generatedPhotonCount{static_cast<int>(
-        fAdapter->EventStatistics().fGeneratedCount)};
+    const auto generatedPhotonCount{static_cast<int>(fAdapter->EventStatistics().generatedCount)};
     std::vector<CrystalHitOutput> crystalHits{};
     crystalHits.reserve(moduleID);
     for (int i{}; i < moduleID; ++i) {
-        const auto energyDeposit{
-            scintHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
+        const auto energyDeposit{scintHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
         if (energyDeposit > 0.) {
             crystalHits.emplace_back(
-                CrystalHitOutput{eventID, i, static_cast<float>(energyDeposit),
-                                 generatedPhotonCount});
+                CrystalHitOutput{eventID, i, static_cast<float>(energyDeposit), generatedPhotonCount});
         }
     }
 
@@ -70,10 +59,8 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
         }
     }
 
-    fAnalysis->Enqueue(std::move(crystalHits), std::move(sensorHits),
-                       transportFuture);
-    if (fAnalysis->PendingCount() >=
-        fAdapter->Configuration().fMaxPendingEvents) {
+    fAnalysis->Enqueue(std::move(crystalHits), std::move(sensorHits), transportFuture);
+    if (fAnalysis->PendingCount() >= fAdapter->Configuration().maxPendingEvents) {
         fAnalysis->WaitAndWriteNextEvent();
     } else {
         fAnalysis->WriteReadyEvents();

@@ -41,88 +41,101 @@ enum class SurfaceFinish : std::uint8_t {
 };
 
 struct Rotation {
-    float fXX{1.0F};
-    float fXY{};
-    float fXZ{};
-    float fYX{};
-    float fYY{1.0F};
-    float fYZ{};
-    float fZX{};
-    float fZY{};
-    float fZZ{1.0F};
+    float xx{1.0F};
+    float xy{};
+    float xz{};
+    float yx{};
+    float yy{1.0F};
+    float yz{};
+    float zx{};
+    float zy{};
+    float zz{1.0F};
 };
 
 struct Transform {
-    Rotation fRotation{};
-    G4ThreeVector fTranslationMm{};
+    Rotation rotation{};
+    G4ThreeVector translationMm{};
 };
 
-struct PropertyTable {
-    std::vector<float> fEnergyEv{};
-    std::vector<float> fValues{};
+inline auto RotateToWorld(const Rotation& rotation, G4ThreeVector vector) -> G4ThreeVector {
+    return {
+        rotation.xx * vector.x() + rotation.xy * vector.y() + rotation.xz * vector.z(),
+        rotation.yx * vector.x() + rotation.yy * vector.y() + rotation.yz * vector.z(),
+        rotation.zx * vector.x() + rotation.zy * vector.y() + rotation.zz * vector.z(),
+    };
+}
 
-    auto Empty() const -> bool { return fEnergyEv.empty(); }
+inline auto ToWorld(const Transform& transform, G4ThreeVector point) -> G4ThreeVector {
+    const auto rotated{RotateToWorld(transform.rotation, point)};
+    return {rotated.x() + transform.translationMm.x(), rotated.y() + transform.translationMm.y(),
+            rotated.z() + transform.translationMm.z()};
+}
+
+struct PropertyTable {
+    std::vector<float> energyEv{};
+    std::vector<float> values{};
+
+    auto Empty() const -> bool { return energyEv.empty(); }
     auto Constant() const -> bool;
-    auto Sample(float energyEv, float defaultValue) const -> float;
 };
 
 struct Material {
-    std::string fName{};
-    PropertyTable fRindex{};
-    float fRindexMax{1.0F};
-    PropertyTable fGroupVelocityMmPerNs{};
-    PropertyTable fAbsLengthMm{};
-    std::array<PropertyTable, 3> fScintillationSpectrum{};
+    std::string name{};
+    PropertyTable rindex{};
+    float rindexMax{1.0F};
+    PropertyTable groupVelocityMmPerNs{};
+    PropertyTable absLengthMm{};
+    std::array<PropertyTable, 3> scintillationSpectrum{};
 };
 
 struct Surface {
-    std::string fName{};
-    SurfaceType fType{SurfaceType::DielectricDielectric};
-    SurfaceModel fModel{SurfaceModel::Unified};
-    SurfaceFinish fFinish{SurfaceFinish::Polished};
-    float fModelValue{1.0F};
-    PropertyTable fReflectivity{};
-    PropertyTable fEfficiency{};
-    PropertyTable fTransmittance{};
-    PropertyTable fRindex{};
-    PropertyTable fSpecularLobe{};
-    PropertyTable fSpecularSpike{};
-    PropertyTable fBackscatter{};
-    PropertyTable fSurfaceRoughness{};
+    std::string name{};
+    SurfaceType type{SurfaceType::DielectricDielectric};
+    SurfaceModel model{SurfaceModel::Unified};
+    SurfaceFinish finish{SurfaceFinish::Polished};
+    float modelValue{1.0F};
+    PropertyTable reflectivity{};
+    PropertyTable efficiency{};
+    PropertyTable transmittance{};
+    PropertyTable rindex{};
+    PropertyTable specularLobe{};
+    PropertyTable specularSpike{};
+    PropertyTable backscatter{};
+    PropertyTable surfaceRoughness{};
 };
 
 struct MeshGeometry {
-    std::string fName{};
-    std::vector<G4ThreeVector> fVerticesMm{};
-    std::vector<std::uint32_t> fIndices{};
-    std::vector<G4ThreeVector> fTriangleNormals{};
-    std::vector<std::uint8_t> fTriangleFlags{};
+    std::string name{};
+    std::vector<G4ThreeVector> verticesMm{};
+    std::vector<std::uint32_t> indices{};
+    std::vector<G4ThreeVector> triangleNormals{};
+    std::vector<std::uint8_t> triangleFlags{};
 };
 
 struct Geometry {
-    std::string fName{};
-    MeshGeometry fMesh{};
+    std::string name{};
+    MeshGeometry mesh{};
 };
 
 struct Volume {
-    std::string fName{};
-    std::uint32_t fVolumeID{InvalidID};
-    std::uint32_t fPhysicalVolumeID{InvalidID};
-    std::uint32_t fCopyNo{};
-    std::uint32_t fGeometryID{InvalidID};
-    std::uint32_t fMaterialID{InvalidID};
-    std::uint32_t fParentVolumeID{InvalidID};
-    std::uint32_t fSkinSurfaceID{InvalidID};
-    std::uint32_t fSensorID{InvalidID};
-    std::uint32_t fDepth{};
-    bool fMayHaveCoincidentBoundary{};
-    Transform fTransform{};
+    std::string name{};
+    std::uint32_t volumeID{InvalidID};
+    std::uint32_t physicalVolumeID{InvalidID};
+    std::uint32_t copyNo{};
+    std::uint32_t geometryID{InvalidID};
+    std::uint32_t materialID{InvalidID};
+    std::uint32_t parentVolumeID{InvalidID};
+    std::uint32_t skinSurfaceID{InvalidID};
+    std::uint32_t sensorID{InvalidID};
+    std::uint32_t depth{};
+    bool mayHaveCoincidentBoundary{};
+    Transform transform{};
 };
 
 struct SurfaceBinding {
-    std::uint32_t fFromVolumeID{InvalidID};
-    std::uint32_t fToVolumeID{InvalidID};
-    std::uint32_t fSurfaceID{InvalidID};
+    std::uint32_t fromVolumeID{InvalidID};
+    std::uint32_t toVolumeID{InvalidID};
+    std::uint32_t surfaceID{InvalidID};
 };
 
 class Scene final {
@@ -137,34 +150,21 @@ public:
     auto AddSurfaceBinding(SurfaceBinding binding) -> void;
 
     auto FindGeometry(std::uint32_t geometryID) -> Geometry*;
-    auto FindMaterial(std::uint32_t materialID) const -> const Material*;
     auto FindSurface(std::uint32_t surfaceID) const -> const Surface*;
     auto FindGeometry(std::uint32_t geometryID) const -> const Geometry*;
     auto FindVolume(std::uint32_t volumeID) const -> const Volume*;
-    auto FindVolume(std::uint32_t physicalVolumeID,
-                    std::uint32_t copyNo,
+    auto FindVolume(std::uint32_t physicalVolumeID, std::uint32_t copyNo,
                     std::uint32_t parentVolumeID) const -> const Volume*;
-    auto FindBoundarySurface(std::uint32_t fromVolumeID,
-                             std::uint32_t toVolumeID) const
-        -> const Surface*;
+    auto FindBoundarySurface(std::uint32_t fromVolumeID, std::uint32_t toVolumeID) const -> const Surface*;
 
-    auto Materials() const -> const std::vector<Material>& {
-        return fMaterials;
-    }
+    auto Materials() const -> const std::vector<Material>& { return fMaterials; }
     auto Surfaces() const -> const std::vector<Surface>& { return fSurfaces; }
-    auto Geometries() const -> const std::vector<Geometry>& {
-        return fGeometries;
-    }
+    auto Geometries() const -> const std::vector<Geometry>& { return fGeometries; }
     auto Volumes() const -> const std::vector<Volume>& { return fVolumes; }
-    auto SurfaceBindings() const -> const std::vector<SurfaceBinding>& {
-        return fSurfaceBindings;
-    }
+    auto SurfaceBindings() const -> const std::vector<SurfaceBinding>& { return fSurfaceBindings; }
     auto WorldVolumeID() const -> std::uint32_t { return fWorldVolumeID; }
-    auto WorldVolumeID(std::uint32_t volumeID) -> void {
-        fWorldVolumeID = volumeID;
-    }
-    auto VolumeMayHaveCoincidentBoundary(std::uint32_t volumeID,
-                                         bool value) -> void;
+    auto WorldVolumeID(std::uint32_t volumeID) -> void { fWorldVolumeID = volumeID; }
+    auto VolumeMayHaveCoincidentBoundary(std::uint32_t volumeID, bool value) -> void;
     auto EnsureUniqueGeometry(std::uint32_t volumeID) -> void;
 
 private:

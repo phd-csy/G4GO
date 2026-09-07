@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.24)
 
 project(G4GO LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
@@ -33,7 +31,6 @@ include(CTest)
 
 option(G4GO_BUILD_UIVIS "Build with Geant4 UI and visualization support" ON)
 option(G4GO_ENABLE_OPTIX "Try to build the CUDA/OptiX optical backend" ON)
-option(G4GO_ENABLE_FORMAT_TARGETS "Add clang-format targets" ON)
 option(G4GO_ENABLE_CLANG_TIDY "Enable clang-tidy during compilation" OFF)
 
 set(G4GO_CUDA_ARCHITECTURE "120"
@@ -41,39 +38,42 @@ set(G4GO_CUDA_ARCHITECTURE "120"
 
 set(G4GO_OPTIX_AVAILABLE OFF)
 if(G4GO_ENABLE_OPTIX)
-    FetchContent_MakeAvailable(optix_dev)
-
     include(CheckLanguage)
     check_language(CUDA)
 
     if(CMAKE_CUDA_COMPILER)
-        find_package(CUDAToolkit 12.0 QUIET)
-        if(CUDAToolkit_FOUND)
-            enable_language(CUDA)
-            find_program(G4GO_BIN2C_EXECUTABLE
-                NAMES bin2c
-                HINTS ${CUDAToolkit_BIN_DIR})
+        find_package(CUDAToolkit 12.8 QUIET)
+    endif()
 
-            if(G4GO_BIN2C_EXECUTABLE AND
-               EXISTS ${optix_dev_SOURCE_DIR}/include/optix.h AND
-               EXISTS ${optix_dev_SOURCE_DIR}/include/optix_stubs.h AND
-               EXISTS ${optix_dev_SOURCE_DIR}/include/optix_function_table_definition.h)
-                set(G4GO_OPTIX_AVAILABLE ON)
-                message(STATUS "G4GO OptiX build: enabled")
-            else()
-                message(STATUS
-                    "G4GO OptiX build dependencies are incomplete; building Geant4 backend")
-            endif()
-        else()
-            message(STATUS
-                "G4GO OptiX build dependencies are incomplete; building Geant4 backend")
+    if(CMAKE_CUDA_COMPILER AND CUDAToolkit_FOUND)
+        enable_language(CUDA)
+        FetchContent_MakeAvailable(optix_dev)
+        find_program(G4GO_BIN2C_EXECUTABLE
+            NAMES bin2c
+            HINTS ${CUDAToolkit_BIN_DIR})
+
+        if(G4GO_BIN2C_EXECUTABLE AND
+           EXISTS ${optix_dev_SOURCE_DIR}/include/optix.h AND
+           EXISTS ${optix_dev_SOURCE_DIR}/include/optix_stubs.h AND
+           EXISTS ${optix_dev_SOURCE_DIR}/include/optix_function_table_definition.h)
+            set(G4GO_OPTIX_AVAILABLE ON)
         endif()
+    endif()
+
+    if(G4GO_OPTIX_AVAILABLE)
+        message(STATUS "G4GO OptiX build: enabled")
+    elseif(NOT CMAKE_CUDA_COMPILER)
+        message(STATUS
+            "G4GO OptiX unavailable: CUDA compiler was not detected")
+    elseif(NOT CUDAToolkit_FOUND)
+        message(STATUS
+            "G4GO OptiX unavailable: CUDA Toolkit 12.8 or newer was not found")
     else()
         message(STATUS
-            "CUDA compiler was not detected; building Geant4 backend")
+            "G4GO OptiX unavailable: bin2c or OptiX headers are missing")
     endif()
 else()
-    message(STATUS "OptiX build disabled by G4GO_ENABLE_OPTIX; building Geant4 backend")
+    message(STATUS "G4GO OptiX unavailable: disabled by G4GO_ENABLE_OPTIX")
 endif()
 
 if(G4GO_BUILD_UIVIS)
@@ -82,19 +82,18 @@ else()
     find_package(Geant4 11.4.2 REQUIRED)
 endif()
 
-include(${Geant4_USE_FILE})
-
 if(G4GO_ENABLE_CLANG_TIDY)
     find_program(G4GO_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
 endif()
 
 function(g4go_configure_cpp_target target)
-    target_compile_features(${target} PUBLIC cxx_std_20)
-    target_include_directories(${target}
-        PUBLIC ${PROJECT_SOURCE_DIR}/include)
+    target_compile_features(${target} PRIVATE cxx_std_20)
+    target_include_directories(${target} PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(${target} PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>)
     endif()
 
     if(G4GO_ENABLE_CLANG_TIDY)
@@ -179,17 +178,21 @@ file(GLOB G4GO_APPLICATION_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/*.cpp"
 )
 
+add_library(g4go_optical STATIC
+    ${G4GO_OPTICAL_CORE_FILES})
+g4go_configure_cpp_target(g4go_optical)
+target_link_libraries(g4go_optical PRIVATE
+    ${Geant4_LIBRARIES})
+
 add_executable(g4go
     ${G4GO_APPLICATION_FILES}
-    ${G4GO_OPTICAL_CORE_FILES}
     ${G4GO_OPTICAL_GEANT4_FILES}
     ${G4GO_DETECTOR_FILES}
     ${G4GO_SIMULATION_FILES}
 )
 g4go_configure_cpp_target(g4go)
-target_include_directories(g4go PRIVATE
-    ${Geant4_INCLUDE_DIRS})
 target_link_libraries(g4go PRIVATE
+    g4go_optical
     CLI11::CLI11
     ${Geant4_LIBRARIES})
 
@@ -226,58 +229,16 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 )
 file(COPY "${G4GO_SCRIPT_DIR}" DESTINATION "${PROJECT_BINARY_DIR}")
 
-if(G4GO_ENABLE_FORMAT_TARGETS)
-    find_program(G4GO_CLANG_FORMAT_EXECUTABLE NAMES clang-format)
-
-    if(G4GO_CLANG_FORMAT_EXECUTABLE)
-        file(GLOB_RECURSE G4GO_FORMAT_FILES CONFIGURE_DEPENDS
-            "${PROJECT_SOURCE_DIR}/src/*.cpp"
-            "${PROJECT_SOURCE_DIR}/src/*.hpp"
-            "${PROJECT_SOURCE_DIR}/src/*.cu"
-            "${PROJECT_SOURCE_DIR}/src/*.cuh"
-            "${PROJECT_SOURCE_DIR}/include/*.hpp"
-            "${PROJECT_SOURCE_DIR}/include/*.cuh"
-            "${PROJECT_SOURCE_DIR}/test/*.cpp"
-            "${PROJECT_SOURCE_DIR}/test/*.cxx"
-            "${PROJECT_SOURCE_DIR}/test/*.C"
-        )
-
-        add_custom_target(g4go-format
-            COMMAND ${G4GO_CLANG_FORMAT_EXECUTABLE}
-                    --style=file
-                    -i
-                    ${G4GO_FORMAT_FILES}
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-            COMMENT "Formatting G4GO C++ sources"
-            VERBATIM
-        )
-
-        add_custom_target(g4go-format-check
-            COMMAND ${G4GO_CLANG_FORMAT_EXECUTABLE}
-                    --style=file
-                    --dry-run
-                    --Werror
-                    ${G4GO_FORMAT_FILES}
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-            COMMENT "Checking G4GO C++ formatting"
-            VERBATIM
-        )
-    else()
-        message(STATUS "clang-format not found; format targets are unavailable")
-    endif()
-endif()
-
 install(TARGETS g4go RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
     add_executable(g4go_optical_boundary_tests
-        test/TestOpticalBoundaryPhysics.cxx
-        ${G4GO_OPTICAL_CORE_FILES})
+        test/TestOpticalBoundaryPhysics.cxx)
     g4go_configure_cpp_target(g4go_optical_boundary_tests)
     target_include_directories(g4go_optical_boundary_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/optical/optix
-        ${Geant4_INCLUDE_DIRS})
+        ${PROJECT_SOURCE_DIR}/src/optical/optix)
     target_link_libraries(g4go_optical_boundary_tests PRIVATE
+        g4go_optical
         ${Geant4_LIBRARIES})
     add_test(NAME g4go_optical_boundary
              COMMAND $<TARGET_FILE:g4go_optical_boundary_tests>)

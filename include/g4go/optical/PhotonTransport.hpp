@@ -30,164 +30,144 @@ enum class PhotonTransportStatisticField : std::uint8_t {
     TransportTime,
 };
 
-constexpr auto StatisticFieldBit(PhotonTransportStatisticField field)
-    -> std::uint32_t {
+constexpr auto StatisticFieldBit(PhotonTransportStatisticField field) -> std::uint32_t {
     return std::uint32_t{1} << static_cast<std::uint32_t>(field);
-}
-
-constexpr auto AllStatisticFieldBits() -> std::uint32_t {
-    return StatisticFieldBit(PhotonTransportStatisticField::Generated) |
-           StatisticFieldBit(PhotonTransportStatisticField::Captured) |
-           StatisticFieldBit(PhotonTransportStatisticField::Detected) |
-           StatisticFieldBit(PhotonTransportStatisticField::Absorbed) |
-           StatisticFieldBit(PhotonTransportStatisticField::Escaped) |
-           StatisticFieldBit(PhotonTransportStatisticField::Truncated) |
-           StatisticFieldBit(PhotonTransportStatisticField::MaxBounce) |
-           StatisticFieldBit(PhotonTransportStatisticField::InvalidState) |
-           StatisticFieldBit(PhotonTransportStatisticField::ZeroStep) |
-           StatisticFieldBit(PhotonTransportStatisticField::TransportTime);
 }
 
 // Compact metadata produced by Geant4.  The GPU expands one record into its
 // photons in the ray-generation program; the CPU never materialises those
 // photons for the offload path.
 struct alignas(16) OpticalEmission {
-    std::array<float, 3> fPositionMm{};
-    float fTimeNs{};
+    std::array<float, 3> positionMm{};
+    float timeNs{};
 
-    std::array<float, 3> fDirection{};
-    float fStepLengthMm{};
+    std::array<float, 3> direction{};
+    float stepLengthMm{};
 
-    std::array<float, 3> fStepDeltaMm{};
-    float fPreVelocityMmPerNs{};
+    std::array<float, 3> stepDeltaMm{};
+    float preVelocityMmPerNs{};
 
-    std::array<float, 3> fPolarization{};
-    float fDeltaVelocityMmPerNs{};
+    std::array<float, 3> polarization{};
+    float deltaVelocityMmPerNs{};
 
-    float fEnergyEv{};
-    float fWeight{1.0F};
-    float fPreMeanPhotonCount{};
-    float fPostMeanPhotonCount{};
+    float energyEv{};
+    float preMeanPhotonCount{};
+    float postMeanPhotonCount{};
 
-    float fDecayTimeNs{};
-    float fRiseTimeNs{};
-    float fCharge{};
-    std::uint32_t fEventID{};
+    float decayTimeNs{};
+    float riseTimeNs{};
+    float charge{};
+    std::uint32_t eventID{};
 
-    std::uint32_t fEmissionID{};
-    std::uint32_t fFirstPhotonID{};
-    std::uint32_t fPhotonCount{};
-    std::uint32_t fVolumeID{InvalidID};
+    std::uint32_t firstPhotonID{};
+    std::uint32_t photonCount{};
+    std::uint32_t volumeID{InvalidID};
 
-    std::uint32_t fMaterialID{InvalidID};
-    std::uint32_t fSpectrumID{};
-    OpticalEmissionType fType{OpticalEmissionType::Direct};
-    std::uint8_t fFlags{};
-    std::uint16_t fReserved{};
+    std::uint32_t materialID{InvalidID};
+    std::uint32_t spectrumID{};
+    OpticalEmissionType type{OpticalEmissionType::Direct};
 };
 
 struct alignas(16) PhotonDetection {
-    std::array<float, 3> fPositionMm{};
-    float fTimeNs{};
+    std::array<float, 3> positionMm{};
+    float timeNs{};
 
-    std::array<float, 3> fDirection{};
-    float fEnergyEv{};
+    std::array<float, 3> direction{};
+    float energyEv{};
 
-    std::uint32_t fEventID{};
-    std::uint32_t fPhotonID{};
-    std::uint32_t fSensorID{};
-    std::uint32_t fFlags{};
+    std::uint32_t eventID{};
+    std::uint32_t photonID{};
+    std::uint32_t sensorID{};
 };
 
 struct PhotonTransportStatistics {
-    std::uint32_t fValidFields{};
-    std::uint64_t fGeneratedCount{};
-    std::uint64_t fCapturedCount{};
-    std::uint64_t fDetectedCount{};
-    std::uint64_t fAbsorbedCount{};
-    std::uint64_t fEscapedCount{};
-    std::uint64_t fTruncatedCount{};
-    std::uint64_t fMaxBounceCount{};
-    std::uint64_t fInvalidStateCount{};
-    std::uint64_t fZeroStepCount{};
-    double fTransportTimeMs{};
+    std::uint32_t validFields{};
+    std::uint64_t generatedCount{};
+    std::uint64_t capturedCount{};
+    std::uint64_t detectedCount{};
+    std::uint64_t absorbedCount{};
+    std::uint64_t escapedCount{};
+    std::uint64_t truncatedCount{};
+    std::uint64_t maxBounceCount{};
+    std::uint64_t invalidStateCount{};
+    std::uint64_t zeroStepCount{};
+    double transportTimeMs{};
 };
 
 struct PhotonTransportEventStatistics {
-    std::uint32_t fEventID{};
-    PhotonTransportStatistics fStatistics{};
+    std::uint32_t eventID{};
+    PhotonTransportStatistics statistics{};
 };
 
 struct PhotonTransportPerformance {
-    double fCaptureTotalMs{};
-    double fCaptureLocateVolumeMs{};
-    double fCaptureVolumeMappingMs{};
-    double fSchedulerQueueWaitMs{};
-    double fSchedulerBatchFlattenMs{};
-    std::uint64_t fSchedulerBatchFlattenBytes{};
-    double fHostToDeviceMs{};
-    std::uint64_t fHostToDeviceBytes{};
-    double fDeviceMemsetMs{};
-    double fOptiXKernelMs{};
-    double fDeviceHitCompactionMs{};
-    double fDeviceToHostMs{};
-    double fDeviceMetadataToHostMs{};
-    std::uint64_t fDeviceMetadataToHostBytes{};
-    double fDeviceHitsToHostMs{};
-    std::uint64_t fDeviceHitsToHostBytes{};
-    double fHostHitCompactionMs{};
-    std::uint64_t fTotalBounceCount{};
-    std::uint64_t fCoincidentCandidateTraceCount{};
-    std::uint64_t fCoincidentCandidateHitCount{};
-    std::uint64_t fCerenkovPhotonCount{};
-    std::uint64_t fScintillationPhotonCount{};
+    double captureTotalMs{};
+    double captureLocateVolumeMs{};
+    double captureVolumeMappingMs{};
+    double schedulerQueueWaitMs{};
+    double schedulerBatchFlattenMs{};
+    std::uint64_t schedulerBatchFlattenBytes{};
+    double hostToDeviceMs{};
+    std::uint64_t hostToDeviceBytes{};
+    double deviceMemsetMs{};
+    double optiXKernelMs{};
+    double deviceHitCompactionMs{};
+    double deviceToHostMs{};
+    double deviceMetadataToHostMs{};
+    std::uint64_t deviceMetadataToHostBytes{};
+    double deviceHitsToHostMs{};
+    std::uint64_t deviceHitsToHostBytes{};
+    double hostHitCompactionMs{};
+    std::uint64_t totalBounceCount{};
+    std::uint64_t coincidentCandidateTraceCount{};
+    std::uint64_t coincidentCandidateHitCount{};
+    std::uint64_t cerenkovPhotonCount{};
+    std::uint64_t scintillationPhotonCount{};
 
     auto Accumulate(const PhotonTransportPerformance& other) -> void {
-        fCaptureTotalMs += other.fCaptureTotalMs;
-        fCaptureLocateVolumeMs += other.fCaptureLocateVolumeMs;
-        fCaptureVolumeMappingMs += other.fCaptureVolumeMappingMs;
-        fSchedulerQueueWaitMs += other.fSchedulerQueueWaitMs;
-        fSchedulerBatchFlattenMs += other.fSchedulerBatchFlattenMs;
-        fSchedulerBatchFlattenBytes += other.fSchedulerBatchFlattenBytes;
-        fHostToDeviceMs += other.fHostToDeviceMs;
-        fHostToDeviceBytes += other.fHostToDeviceBytes;
-        fDeviceMemsetMs += other.fDeviceMemsetMs;
-        fOptiXKernelMs += other.fOptiXKernelMs;
-        fDeviceHitCompactionMs += other.fDeviceHitCompactionMs;
-        fDeviceToHostMs += other.fDeviceToHostMs;
-        fDeviceMetadataToHostMs += other.fDeviceMetadataToHostMs;
-        fDeviceMetadataToHostBytes += other.fDeviceMetadataToHostBytes;
-        fDeviceHitsToHostMs += other.fDeviceHitsToHostMs;
-        fDeviceHitsToHostBytes += other.fDeviceHitsToHostBytes;
-        fHostHitCompactionMs += other.fHostHitCompactionMs;
-        fTotalBounceCount += other.fTotalBounceCount;
-        fCoincidentCandidateTraceCount +=
-            other.fCoincidentCandidateTraceCount;
-        fCoincidentCandidateHitCount += other.fCoincidentCandidateHitCount;
-        fCerenkovPhotonCount += other.fCerenkovPhotonCount;
-        fScintillationPhotonCount += other.fScintillationPhotonCount;
+        captureTotalMs += other.captureTotalMs;
+        captureLocateVolumeMs += other.captureLocateVolumeMs;
+        captureVolumeMappingMs += other.captureVolumeMappingMs;
+        schedulerQueueWaitMs += other.schedulerQueueWaitMs;
+        schedulerBatchFlattenMs += other.schedulerBatchFlattenMs;
+        schedulerBatchFlattenBytes += other.schedulerBatchFlattenBytes;
+        hostToDeviceMs += other.hostToDeviceMs;
+        hostToDeviceBytes += other.hostToDeviceBytes;
+        deviceMemsetMs += other.deviceMemsetMs;
+        optiXKernelMs += other.optiXKernelMs;
+        deviceHitCompactionMs += other.deviceHitCompactionMs;
+        deviceToHostMs += other.deviceToHostMs;
+        deviceMetadataToHostMs += other.deviceMetadataToHostMs;
+        deviceMetadataToHostBytes += other.deviceMetadataToHostBytes;
+        deviceHitsToHostMs += other.deviceHitsToHostMs;
+        deviceHitsToHostBytes += other.deviceHitsToHostBytes;
+        hostHitCompactionMs += other.hostHitCompactionMs;
+        totalBounceCount += other.totalBounceCount;
+        coincidentCandidateTraceCount += other.coincidentCandidateTraceCount;
+        coincidentCandidateHitCount += other.coincidentCandidateHitCount;
+        cerenkovPhotonCount += other.cerenkovPhotonCount;
+        scintillationPhotonCount += other.scintillationPhotonCount;
     }
 };
 
 struct PhotonTransportOutput {
-    std::vector<PhotonDetection> fDetections{};
-    PhotonTransportStatistics fStatistics{};
-    PhotonTransportPerformance fPerformance{};
-    std::vector<PhotonTransportEventStatistics> fEventStatistics{};
+    std::vector<PhotonDetection> detections{};
+    PhotonTransportStatistics statistics{};
+    PhotonTransportPerformance performance{};
+    std::vector<PhotonTransportEventStatistics> eventStatistics{};
 };
 
 struct PhotonTransportBatch {
-    std::span<const OpticalEmission> fEmissions{};
-    std::span<const std::uint32_t> fEventIDs{};
-    std::span<const std::uint32_t> fEmissionEventIndices{};
+    std::span<const OpticalEmission> emissions{};
+    std::span<const std::uint32_t> eventIDs{};
+    std::span<const std::uint32_t> emissionEventIndices{};
 };
 
 struct OpticalSubmission {
-    std::uint32_t fEventID{};
-    std::vector<OpticalEmission> fEmissions{};
-    std::uint64_t fPhotonCount{};
-    PhotonTransportStatistics fSourceStatistics{};
-    PhotonTransportPerformance fSourcePerformance{};
+    std::uint32_t eventID{};
+    std::vector<OpticalEmission> emissions{};
+    std::uint64_t photonCount{};
+    PhotonTransportStatistics sourceStatistics{};
+    PhotonTransportPerformance sourcePerformance{};
 };
 
 using PhotonTransportFuture = std::shared_future<PhotonTransportOutput>;
@@ -196,18 +176,5 @@ static_assert(std::is_trivially_copyable_v<PhotonDetection>);
 static_assert(std::is_trivially_copyable_v<OpticalEmission>);
 static_assert(sizeof(OpticalEmission) == 128);
 static_assert(sizeof(PhotonDetection) == 48);
-
-class PhotonTransport {
-public:
-    PhotonTransport() = default;
-    virtual ~PhotonTransport() = default;
-
-    PhotonTransport(const PhotonTransport&) = delete;
-    auto operator=(const PhotonTransport&) -> PhotonTransport& = delete;
-
-    virtual auto PropagateEmissions(
-        const Scene& scene, const PhotonTransportBatch& batch)
-        -> PhotonTransportOutput = 0;
-};
 
 } // namespace G4GO::Optical

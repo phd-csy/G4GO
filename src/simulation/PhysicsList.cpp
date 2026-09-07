@@ -3,17 +3,16 @@
 #include "G4EmStandardPhysics_option3.hh"
 #include "G4Exception.hh"
 #include "G4LossTableManager.hh"
-#include "G4OpticalPhoton.hh"
 #include "G4OpticalParameters.hh"
+#include "G4OpticalPhoton.hh"
 #include "G4OpticalPhysics.hh"
 #include "G4ProcessManager.hh"
 #include "G4ProcessVector.hh"
 #include "G4QuasiCerenkov.hh"
+#include "G4QuasiOpticalPhoton.hh"
 #include "G4RadioactiveDecayPhysics.hh"
-#include "G4VModularPhysicsList.hh"
 #include "G4VProcess.hh"
 #include "g4go/optical/geant4/G4GOQuasiScintillation.hpp"
-#include "G4QuasiOpticalPhoton.hh"
 
 namespace G4GO::Simulation {
 
@@ -39,39 +38,26 @@ auto PhysicsList::ConstructProcess() -> void {
         auto* parameters{G4OpticalParameters::Instance()};
 
         G4QuasiCerenkov* cerenkov{nullptr};
-        if (parameters->GetProcessActivation("QuasiCerenkov") ||
-            parameters->GetCerenkovOffloadPhotons()) {
+        if (parameters->GetProcessActivation("QuasiCerenkov") || parameters->GetCerenkovOffloadPhotons()) {
             cerenkov = new G4QuasiCerenkov{"QuasiCerenkov"};
-            cerenkov->SetMaxNumPhotonsPerStep(
-                parameters->GetCerenkovMaxPhotonsPerStep());
-            cerenkov->SetMaxBetaChangePerStep(
-                parameters->GetCerenkovMaxBetaChange());
-            cerenkov->SetTrackSecondariesFirst(
-                parameters->GetCerenkovTrackSecondariesFirst());
+            cerenkov->SetMaxNumPhotonsPerStep(parameters->GetCerenkovMaxPhotonsPerStep());
+            cerenkov->SetMaxBetaChangePerStep(parameters->GetCerenkovMaxBetaChange());
+            cerenkov->SetTrackSecondariesFirst(parameters->GetCerenkovTrackSecondariesFirst());
             cerenkov->SetStackPhotons(true);
-            cerenkov->SetVerboseLevel(
-                parameters->GetCerenkovVerboseLevel());
+            cerenkov->SetVerboseLevel(parameters->GetCerenkovVerboseLevel());
         }
 
         G4GOQuasiScintillation* scintillation{nullptr};
-        if (parameters->GetProcessActivation("QuasiScintillation") ||
-            parameters->GetScintOffloadPhotons()) {
-            scintillation =
-                new G4GOQuasiScintillation{"QuasiScintillation"};
-            scintillation->AddSaturation(
-                G4LossTableManager::Instance()->EmSaturation());
-            scintillation->SetScintillationByParticleType(
-                parameters->GetScintByParticleType());
-            scintillation->SetScintillationTrackInfo(
-                parameters->GetScintTrackInfo());
-            scintillation->SetTrackSecondariesFirst(
-                parameters->GetScintTrackSecondariesFirst());
-            scintillation->SetFiniteRiseTime(
-                parameters->GetScintFiniteRiseTime());
+        if (parameters->GetProcessActivation("QuasiScintillation") || parameters->GetScintOffloadPhotons()) {
+            scintillation = new G4GOQuasiScintillation{"QuasiScintillation"};
+            scintillation->AddSaturation(G4LossTableManager::Instance()->EmSaturation());
+            scintillation->SetScintillationByParticleType(parameters->GetScintByParticleType());
+            scintillation->SetScintillationTrackInfo(parameters->GetScintTrackInfo());
+            scintillation->SetTrackSecondariesFirst(parameters->GetScintTrackSecondariesFirst());
+            scintillation->SetFiniteRiseTime(parameters->GetScintFiniteRiseTime());
             scintillation->SetStackPhotons(true);
             scintillation->SetOffloadPhotons(true);
-            scintillation->SetVerboseLevel(
-                parameters->GetScintVerboseLevel());
+            scintillation->SetVerboseLevel(parameters->GetScintVerboseLevel());
         }
 
         auto* iterator{GetParticleIterator()};
@@ -84,37 +70,29 @@ auto PhysicsList::ConstructProcess() -> void {
             auto* processManager{particle->GetProcessManager()};
             if (processManager == nullptr) {
                 G4ExceptionDescription description{};
-                description << "Particle " << particle->GetParticleName()
-                            << " has no process manager";
-                G4Exception("G4GOPhysicsList", "G4GOProcessManager",
-                            FatalException, description);
+                description << "Particle " << particle->GetParticleName() << " has no process manager";
+                G4Exception("G4GOPhysicsList", "G4GOProcessManager", FatalException, description);
                 return;
             }
             if (cerenkov != nullptr && cerenkov->IsApplicable(*particle)) {
                 processManager->AddDiscreteProcess(cerenkov);
             }
-            if (scintillation != nullptr &&
-                scintillation->IsApplicable(*particle)) {
+            if (scintillation != nullptr && scintillation->IsApplicable(*particle)) {
                 processManager->AddProcess(scintillation);
-                processManager->SetProcessOrderingToLast(scintillation,
-                                                         idxAtRest);
-                processManager->SetProcessOrderingToLast(scintillation,
-                                                         idxPostStep);
+                processManager->SetProcessOrderingToLast(scintillation, idxAtRest);
+                processManager->SetProcessOrderingToLast(scintillation, idxPostStep);
             }
         }
     }
 
-    auto* processManager{
-        G4OpticalPhoton::OpticalPhotonDefinition()->GetProcessManager()};
+    auto* processManager{G4OpticalPhoton::OpticalPhotonDefinition()->GetProcessManager()};
     if (processManager == nullptr) {
         return;
     }
     auto* processes{processManager->GetProcessList()};
-    for (auto index{processManager->GetProcessListLength() - 1}; index >= 0;
-         --index) {
+    for (auto index{processManager->GetProcessListLength() - 1}; index >= 0; --index) {
         auto* process{(*processes)[index]};
-        if (process != nullptr &&
-            process->GetProcessName() == "Scintillation") {
+        if (process != nullptr && process->GetProcessName() == "Scintillation") {
             processManager->RemoveProcess(process);
         }
     }

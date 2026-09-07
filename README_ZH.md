@@ -143,8 +143,7 @@ g4go [OPTIONS] [macro]
 | 文件 | 用途 | Analysis 文件名 |
 | --- | --- | --- |
 | `scripts/run_optical_test.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_test.root` |
-| `scripts/run_cpu_benchmark.mac` | 5 MeV 电子束单核 CPU 基准，共 1000 个 event | `run_cpu_benchmark.root` |
-| `scripts/run_eminus_regression.mac` | 5 MeV 电子束 CPU/GPU 回归，共 100000 个 event | `run_eminus_regression.root` |
+| `scripts/run_eminus_regression.mac` | 5 MeV 电子束 CPU/GPU 回归，共 50000 个 event | `run_eminus_regression.root` |
 | `scripts/vis.mac` | 交互式几何与轨迹可视化 | `vis.root` |
 
 ROOT 文件写入当前工作目录，文件名由 macro 中的 `/analysis/setFileName` 确定。
@@ -227,7 +226,7 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 
 `test/regression_test.sh` 同时负责性能测量和 CPU/GPU 回归检验。为便于说明，本文统一使用以下配置名称：
 
-- `CPU-6T`：6 个 Geant4 worker 的 CPU 运行，生成回归 reference；性能时间由 1T CPU benchmark 估算。
+- `CPU-6T`：6 个 Geant4 worker 的 CPU 运行，生成回归 reference 和 CPU 性能基准。
 - `GPU-1T`：1 个 Geant4 worker 的 GPU/OptiX 运行。
 - `GPU-6T`：6 个 Geant4 worker 的 GPU/OptiX 运行。
 
@@ -236,15 +235,15 @@ ctest --test-dir build --output-on-failure -L 'unit|smoke'
 1. 运行或读取缓存的 `CPU-6T` reference。
 2. 测量 `GPU-1T` 和 `GPU-6T` 的墙钟时间并保存 ROOT 输出。
 3. 将两组 GPU 输出分别与同一个 `CPU-6T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率。
-4. 按相同 worker 数比较性能：`GPU-1T` 对照估算的 `CPU-1T`，`GPU-6T` 对照估算的 `CPU-6T`：
+4. 比较性能：`GPU-1T` 对照估算的 `CPU-1T`，`GPU-6T` 对照实测的 `CPU-6T`：
 
    ```text
+   估算的 CPU-1T 时间 = CPU-6T 墙钟时间 × 6
    GPU-1T 加速比 = 估算的 CPU-1T 时间 / GPU-1T 墙钟时间
-   估算的 CPU-6T 时间 = 估算的 CPU-1T 时间 / 6
-   GPU-6T 加速比 = 估算的 CPU-6T 时间 / GPU-6T 墙钟时间
+   GPU-6T 加速比 = CPU-6T 墙钟时间 / GPU-6T 墙钟时间
    ```
 
-脚本另外运行 `run_cpu_benchmark.mac` 的单 worker CPU benchmark，并按线性扩展估算 CPU-6T 性能时间。直接运行完整流程：
+直接运行完整流程：
 
 ```bash
 test/regression_test.sh --build-dir build
@@ -267,7 +266,7 @@ ctest --test-dir build --output-on-failure \
 bash build/test/regression_test.sh --build-dir build --verbose
 ```
 
-每次运行的汇总和 ROOT 报告保存在 `build/test/regression/` 下的时间戳目录中；`comparisons/gpu_1t/` 和 `comparisons/gpu_6t/` 分别保存两组回归报告，图片保存在对应的 `figures/`，日志保存在 `logs/`。
+每次运行的产物保存在 `build/test/regression/` 下的时间戳目录中；两组回归报告以 `gpu_1t` 和 `gpu_6t` 文件名前缀区分，图片保存在 `figures/`，日志保存在 `logs/`。
 
 ## WSL2 OptiX runtime 排障
 

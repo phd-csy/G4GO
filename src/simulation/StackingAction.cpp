@@ -3,7 +3,6 @@
 #include "G4OpticalPhoton.hh"
 #include "G4QuasiOpticalPhoton.hh"
 #include "G4Track.hh"
-#include "G4VProcess.hh"
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 
 #include <stdexcept>
@@ -11,45 +10,26 @@
 
 namespace G4GO::Simulation {
 
-StackingAction::StackingAction(
-    std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter) :
+StackingAction::StackingAction(std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter) :
     fAdapter{std::move(adapter)} {
     if (!fAdapter) {
-        throw std::invalid_argument(
-            "StackingAction requires an event adapter");
+        throw std::invalid_argument("StackingAction requires an event adapter");
     }
 }
 
-auto StackingAction::ClassifyNewTrack(const G4Track* track)
-    -> G4ClassificationOfNewTrack {
-    if (track == nullptr ||
-        track->GetDefinition() != G4OpticalPhoton::OpticalPhotonDefinition()) {
-        if (track != nullptr &&
-            track->GetDefinition() ==
-                G4QuasiOpticalPhoton::QuasiOpticalPhotonDefinition() &&
-            fAdapter->SelectedBackend() ==
-                G4GO::Optical::PhotonTransportBackend::OptiX) {
+auto StackingAction::ClassifyNewTrack(const G4Track* track) -> G4ClassificationOfNewTrack {
+    if (track->GetDefinition() != G4OpticalPhoton::OpticalPhotonDefinition()) {
+        if (track->GetDefinition() == G4QuasiOpticalPhoton::QuasiOpticalPhotonDefinition() &&
+            fAdapter->SelectedBackend() == G4GO::Optical::PhotonTransportBackend::OptiX) {
             fAdapter->CaptureOffloaded(*track);
             return fKill;
         }
         return fUrgent;
     }
 
-    if (fAdapter->SelectedBackend() ==
-        G4GO::Optical::PhotonTransportBackend::Geant4) {
+    if (fAdapter->SelectedBackend() == G4GO::Optical::PhotonTransportBackend::Geant4) {
         fAdapter->ObserveGenerated(*track);
         return fUrgent;
-    }
-
-    if (const auto* creatorProcess{track->GetCreatorProcess()};
-        creatorProcess != nullptr) {
-        const auto& processName{creatorProcess->GetProcessName()};
-        if (processName == "QuasiCerenkov" ||
-            processName == "QuasiScintillation") {
-            // Keep a defensive kill switch for a misconfigured process that
-            // accidentally creates a regular photon beside its quasi track.
-            return fKill;
-        }
     }
 
     fAdapter->Capture(*track);

@@ -8,191 +8,185 @@ namespace G4GO::Optical {
 using DeviceVector3 = std::array<float, 3>;
 
 struct DevicePhoton {
-    DeviceVector3 fPositionMm{};
-    float fTimeNs{};
+    DeviceVector3 positionMm{};
+    float timeNs{};
 
-    DeviceVector3 fDirection{};
-    float fEnergyEv{};
+    DeviceVector3 direction{};
+    float energyEv{};
 
-    DeviceVector3 fPolarization{};
-    float fWeight{1.0F};
+    DeviceVector3 polarization{};
 
-    std::uint32_t fEventID{};
-    std::uint32_t fPhotonID{};
-    std::uint32_t fVolumeID{};
-    std::uint32_t fEventIndex{};
+    std::uint32_t eventID{};
+    std::uint32_t photonID{};
+    std::uint32_t volumeID{};
+    std::uint32_t eventIndex{};
 };
 
 struct DevicePhotonHit {
-    DeviceVector3 fPositionMm{};
-    float fTimeNs{};
+    DeviceVector3 positionMm{};
+    float timeNs{};
 
-    DeviceVector3 fDirection{};
-    float fEnergyEv{};
+    DeviceVector3 direction{};
+    float energyEv{};
 
-    std::uint32_t fEventID{};
-    std::uint32_t fPhotonID{};
-    std::uint32_t fSensorID{};
-    std::uint32_t fFlags{};
+    std::uint32_t eventID{};
+    std::uint32_t photonID{};
+    std::uint32_t sensorID{};
 };
 
 struct alignas(16) DeviceOpticalEmission {
-    DeviceVector3 fPositionMm{};
-    float fTimeNs{};
+    DeviceVector3 positionMm{};
+    float timeNs{};
 
-    DeviceVector3 fDirection{};
-    float fStepLengthMm{};
+    DeviceVector3 direction{};
+    float stepLengthMm{};
 
-    DeviceVector3 fStepDeltaMm{};
-    float fPreVelocityMmPerNs{};
+    DeviceVector3 stepDeltaMm{};
+    float preVelocityMmPerNs{};
 
-    DeviceVector3 fPolarization{};
-    float fDeltaVelocityMmPerNs{};
+    DeviceVector3 polarization{};
+    float deltaVelocityMmPerNs{};
 
-    float fEnergyEv{};
-    float fWeight{1.0F};
-    float fPreMeanPhotonCount{};
-    float fPostMeanPhotonCount{};
+    float energyEv{};
+    float preMeanPhotonCount{};
+    float postMeanPhotonCount{};
 
-    float fDecayTimeNs{};
-    float fRiseTimeNs{};
-    float fCharge{};
-    std::uint32_t fEventID{};
+    float decayTimeNs{};
+    float riseTimeNs{};
+    float charge{};
+    std::uint32_t eventID{};
 
-    std::uint32_t fEmissionID{};
-    std::uint32_t fFirstPhotonID{};
-    std::uint32_t fPhotonCount{};
-    std::uint32_t fVolumeID{};
+    std::uint32_t firstPhotonID{};
+    std::uint32_t photonCount{};
+    std::uint32_t volumeID{};
 
-    std::uint32_t fMaterialID{};
-    std::uint32_t fSpectrumID{};
-    std::uint8_t fType{};
-    std::uint8_t fFlags{};
-    std::uint16_t fReserved{};
+    std::uint32_t materialID{};
+    std::uint32_t spectrumID{};
+    std::uint8_t type{};
 };
 
 struct DeviceProperty {
-    const float* fEnergyEv{};
-    const float* fValues{};
-    std::uint32_t fCount{};
-    std::uint32_t fConstant{};
+    const float* energyEv{};
+    const float* values{};
+    std::uint32_t count{};
+    std::uint32_t constant{};
 };
 
 struct DeviceMaterial {
-    DeviceProperty fRindex{};
-    float fRindexMax{1.0F};
-    DeviceProperty fGroupVelocityMmPerNs{};
-    DeviceProperty fAbsLengthMm{};
-    std::array<DeviceProperty, 3> fScintillationSpectrum{};
+    DeviceProperty rindex{};
+    float rindexMax{1.0F};
+    DeviceProperty groupVelocityMmPerNs{};
+    DeviceProperty absLengthMm{};
+    std::array<DeviceProperty, 3> scintillationSpectrum{};
 };
 
 struct DeviceSurface {
-    std::uint8_t fType{};
-    std::uint8_t fModel{};
-    std::uint8_t fFinish{};
-    std::uint8_t fReserved{};
-    float fModelValue{1.0F};
-    DeviceProperty fReflectivity{};
-    DeviceProperty fEfficiency{};
-    DeviceProperty fTransmittance{};
-    DeviceProperty fRindex{};
-    DeviceProperty fSpecularLobe{};
-    DeviceProperty fSpecularSpike{};
-    DeviceProperty fBackscatter{};
-    DeviceProperty fSurfaceRoughness{};
+    std::uint8_t type{};
+    std::uint8_t model{};
+    std::uint8_t finish{};
+    std::uint8_t reserved{};
+    float modelValue{1.0F};
+    DeviceProperty reflectivity{};
+    DeviceProperty efficiency{};
+    DeviceProperty transmittance{};
+    DeviceProperty rindex{};
+    DeviceProperty specularLobe{};
+    DeviceProperty specularSpike{};
+    DeviceProperty backscatter{};
+    DeviceProperty surfaceRoughness{};
 };
 
 struct DeviceMeshGeometry {
-    const DeviceVector3* fVertices{};
-    const std::uint32_t* fIndices{};
-    const DeviceVector3* fNormals{};
-    const std::uint8_t* fTriangleFlags{};
-    std::uint32_t fVertexCount{};
-    std::uint32_t fTriangleCount{};
+    const DeviceVector3* vertices{};
+    const std::uint32_t* indices{};
+    const DeviceVector3* normals{};
+    const std::uint8_t* triangleFlags{};
+    std::uint32_t vertexCount{};
+    std::uint32_t triangleCount{};
 };
 
 struct DeviceGeometry {
-    DeviceMeshGeometry fMesh{};
+    DeviceMeshGeometry mesh{};
 };
 
 struct DeviceVolume {
-    std::uint32_t fVolumeID{};
-    std::uint32_t fPhysicalVolumeID{};
-    std::uint32_t fCopyNo{};
-    std::uint32_t fGeometryID{};
-    std::uint32_t fMaterialID{};
-    std::uint32_t fParentVolumeID{};
-    std::uint32_t fSkinSurfaceID{};
-    std::uint32_t fSensorID{};
-    std::uint32_t fDepth{};
-    std::uint8_t fMayHaveCoincidentBoundary{};
-    std::uint8_t fReserved[3]{};
+    std::uint32_t volumeID{};
+    std::uint32_t physicalVolumeID{};
+    std::uint32_t copyNo{};
+    std::uint32_t geometryID{};
+    std::uint32_t materialID{};
+    std::uint32_t parentVolumeID{};
+    std::uint32_t skinSurfaceID{};
+    std::uint32_t sensorID{};
+    std::uint32_t depth{};
+    std::uint8_t mayHaveCoincidentBoundary{};
+    std::uint8_t reserved[3]{};
 };
 
 struct DeviceSurfaceBinding {
-    std::uint32_t fFromVolumeID{};
-    std::uint32_t fToVolumeID{};
-    std::uint32_t fSurfaceID{};
+    std::uint32_t fromVolumeID{};
+    std::uint32_t toVolumeID{};
+    std::uint32_t surfaceID{};
 };
 
 struct DeviceScene {
-    const DeviceMaterial* fMaterials{};
-    std::uint32_t fMaterialCount{};
-    const DeviceSurface* fSurfaces{};
-    std::uint32_t fSurfaceCount{};
-    const DeviceGeometry* fGeometries{};
-    std::uint32_t fGeometryCount{};
-    const DeviceVolume* fVolumes{};
-    std::uint32_t fVolumeCount{};
-    const DeviceSurfaceBinding* fSurfaceBindings{};
-    std::uint32_t fSurfaceBindingCount{};
-    std::uint32_t fWorldVolumeID{};
+    const DeviceMaterial* materials{};
+    std::uint32_t materialCount{};
+    const DeviceSurface* surfaces{};
+    std::uint32_t surfaceCount{};
+    const DeviceGeometry* geometries{};
+    std::uint32_t geometryCount{};
+    const DeviceVolume* volumes{};
+    std::uint32_t volumeCount{};
+    const DeviceSurfaceBinding* surfaceBindings{};
+    std::uint32_t surfaceBindingCount{};
+    std::uint32_t worldVolumeID{};
 };
 
 struct DeviceTransportStats {
-    unsigned long long fDetectedCount{};
-    unsigned long long fAbsorbedCount{};
-    unsigned long long fEscapedCount{};
-    unsigned long long fTruncatedCount{};
-    unsigned long long fMaxBounceCount{};
-    unsigned long long fInvalidStateCount{};
-    unsigned long long fZeroStepCount{};
-    unsigned long long fTotalBounceCount{};
-    unsigned long long fCoincidentCandidateTraceCount{};
-    unsigned long long fCoincidentCandidateHitCount{};
+    unsigned long long detectedCount{};
+    unsigned long long absorbedCount{};
+    unsigned long long escapedCount{};
+    unsigned long long truncatedCount{};
+    unsigned long long maxBounceCount{};
+    unsigned long long invalidStateCount{};
+    unsigned long long zeroStepCount{};
+    unsigned long long totalBounceCount{};
+    unsigned long long coincidentCandidateTraceCount{};
+    unsigned long long coincidentCandidateHitCount{};
 };
 
 struct DeviceEventTransportStats {
-    unsigned long long fDetectedCount{};
-    unsigned long long fAbsorbedCount{};
-    unsigned long long fEscapedCount{};
-    unsigned long long fTruncatedCount{};
-    unsigned long long fMaxBounceCount{};
-    unsigned long long fInvalidStateCount{};
-    unsigned long long fZeroStepCount{};
+    unsigned long long detectedCount{};
+    unsigned long long absorbedCount{};
+    unsigned long long escapedCount{};
+    unsigned long long truncatedCount{};
+    unsigned long long maxBounceCount{};
+    unsigned long long invalidStateCount{};
+    unsigned long long zeroStepCount{};
 };
 
 struct OptixLaunchParams {
-    DeviceOpticalEmission* fEmissions{};
-    const std::uint32_t* fEmissionEventIndices{};
-    const std::uint32_t* fEmissionOffsets{};
-    DevicePhotonHit* fHits{};
-    std::uint32_t* fHitFlags{};
-    DeviceTransportStats* fStats{};
-    DeviceEventTransportStats* fEventStats{};
-    DeviceScene fScene{};
-    std::uint64_t fTraversable{};
-    std::uint64_t fSeed{};
-    std::uint32_t fMaxBounceCount{};
-    std::uint32_t fEmissionCount{};
-    std::uint32_t fEventCount{};
-    std::uint32_t fPhotonCount{};
-    std::uint32_t fEnablePerformanceDiagnostics{};
-    float fBoundaryEpsilonMm{};
+    DeviceOpticalEmission* emissions{};
+    const std::uint32_t* emissionEventIndices{};
+    const std::uint32_t* emissionOffsets{};
+    DevicePhotonHit* hits{};
+    std::uint32_t* hitFlags{};
+    DeviceTransportStats* stats{};
+    DeviceEventTransportStats* eventStats{};
+    DeviceScene scene{};
+    std::uint64_t traversable{};
+    std::uint64_t seed{};
+    std::uint32_t maxBounceCount{};
+    std::uint32_t emissionCount{};
+    std::uint32_t eventCount{};
+    std::uint32_t photonCount{};
+    std::uint32_t enablePerformanceDiagnostics{};
+    float boundaryEpsilonMm{};
 };
 
-static_assert(sizeof(DevicePhoton) == 64);
-static_assert(sizeof(DevicePhotonHit) == 48);
+static_assert(sizeof(DevicePhoton) == 60);
+static_assert(sizeof(DevicePhotonHit) == 44);
 static_assert(sizeof(DeviceOpticalEmission) == 128);
 
 } // namespace G4GO::Optical

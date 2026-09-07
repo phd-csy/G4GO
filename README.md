@@ -143,8 +143,7 @@ Built-in macros:
 | File | Purpose | Analysis file |
 | --- | --- | --- |
 | `scripts/run_optical_test.mac` | Emit one deterministic optical photon from inside the crystal | `run_optical_test.root` |
-| `scripts/run_cpu_benchmark.mac` | Emit a 5 MeV electron beam for the single-core CPU benchmark (1000 events) | `run_cpu_benchmark.root` |
-| `scripts/run_eminus_regression.mac` | Emit a 5 MeV electron beam for the CPU/GPU regression (100000 events) | `run_eminus_regression.root` |
+| `scripts/run_eminus_regression.mac` | Emit a 5 MeV electron beam for the CPU/GPU regression (50000 events) | `run_eminus_regression.root` |
 | `scripts/vis.mac` | Interactive geometry and track visualization | `vis.root` |
 
 ROOT files are written to the current working directory using each macro's `/analysis/setFileName` value.
@@ -153,7 +152,7 @@ ROOT files are written to the current working directory using each macro's `/ana
 
 `test/regression_test.sh` is the single driver for performance measurement and CPU/GPU regression checks. For concise reference, it uses these configuration names:
 
-- `CPU-6T`: a CPU run with 6 Geant4 workers that produces the regression reference; its estimated performance time is derived from the 1T CPU benchmark.
+- `CPU-6T`: a CPU run with 6 Geant4 workers that produces the regression reference and the CPU performance baseline.
 - `GPU-1T`: a GPU/OptiX run with 1 Geant4 worker.
 - `GPU-6T`: a GPU/OptiX run with 6 Geant4 workers.
 
@@ -162,15 +161,15 @@ The driver runs them in this order:
 1. Generate or load the cached `CPU-6T` reference.
 2. Measure wall time and save ROOT output for `GPU-1T` and `GPU-6T`.
 3. Compare both GPU outputs with the same `CPU-6T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy.
-4. Compare performance with matching worker counts: `GPU-1T` against estimated `CPU-1T`, and `GPU-6T` against estimated `CPU-6T`:
+4. Compare performance: `GPU-1T` against estimated `CPU-1T`, and `GPU-6T` against measured `CPU-6T`:
 
    ```text
+   estimated CPU-1T time = CPU-6T wall time × 6
    GPU-1T speedup = estimated CPU-1T time / GPU-1T wall time
-   estimated CPU-6T time = estimated CPU-1T time / 6
-   GPU-6T speedup = estimated CPU-6T time / GPU-6T wall time
+   GPU-6T speedup = CPU-6T wall time / GPU-6T wall time
    ```
 
-The driver also runs the small one-worker CPU benchmark from `run_cpu_benchmark.mac`; the 6T CPU performance time is estimated by assuming linear scaling from 1T. Run the complete workflow directly with:
+Run the complete workflow directly with:
 
 ~~~bash
 test/regression_test.sh --build-dir build
@@ -265,7 +264,7 @@ The test requires both GPU comparisons and their ROOT reports, summaries, and pl
 bash build/test/regression_test.sh --build-dir build --verbose
 ~~~
 
-Each run stores its aggregate summary and timestamped artifacts under `build/test/regression/`; individual reports are under `comparisons/gpu_1t/` and `comparisons/gpu_6t/`, with their plots in the corresponding `figures/` directories and logs in `logs/`.
+Each run stores its artifacts in a timestamped directory under `build/test/regression/`; the two regression reports use the `gpu_1t` and `gpu_6t` filename prefixes, plots live in `figures/`, and logs live in `logs/`.
 
 ## WSL2 OptiX runtime troubleshooting
 

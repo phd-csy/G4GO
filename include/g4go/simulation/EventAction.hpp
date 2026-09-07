@@ -16,9 +16,8 @@ class Analysis;
 
 class EventAction : public G4UserEventAction {
 public:
-    explicit EventAction(
-        std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
-        std::shared_ptr<Analysis> analysis);
+    explicit EventAction(std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter,
+                         std::shared_ptr<Analysis> analysis);
     ~EventAction() override = default;
 
     auto BeginOfEventAction(const G4Event*) -> void override;

@@ -9,24 +9,22 @@
 namespace G4GO::Simulation {
 
 struct CrystalHitOutput {
-    int fEventID{};
-    int fModuleID{};
-    float fEnergyDeposit{};
-    int fGeneratedPhotonCount{};
+    int eventID{};
+    int moduleID{};
+    float energyDeposit{};
+    int generatedPhotonCount{};
 };
 
 struct SensorHitOutput {
-    int fEventID{};
-    int fSensorID{};
-    float fTimeOfFlight{};
+    int eventID{};
+    int sensorID{};
+    float timeOfFlight{};
 };
 
 class Analysis final {
 public:
-    auto Enqueue(
-        std::vector<CrystalHitOutput> crystalHits,
-        std::vector<SensorHitOutput> sensorHits,
-        G4GO::Optical::PhotonTransportFuture transportFuture) -> void;
+    auto Enqueue(std::vector<CrystalHitOutput> crystalHits, std::vector<SensorHitOutput> sensorHits,
+                 G4GO::Optical::PhotonTransportFuture transportFuture) -> void;
     auto WriteReadyEvents() -> void;
     auto WaitAndWriteNextEvent() -> void;
     auto Flush() -> void;
@@ -34,9 +32,9 @@ public:
 
 private:
     struct PendingEvent {
-        std::vector<CrystalHitOutput> fCrystalHits{};
-        std::vector<SensorHitOutput> fSensorHits{};
-        G4GO::Optical::PhotonTransportFuture fTransportFuture{};
+        std::vector<CrystalHitOutput> crystalHits{};
+        std::vector<SensorHitOutput> sensorHits{};
+        G4GO::Optical::PhotonTransportFuture transportFuture{};
     };
 
     auto ProcessReadyEvents(bool waitForFrontEvent) -> void;

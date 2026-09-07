@@ -24,19 +24,19 @@ constexpr auto ToString(PhotonTransportBackend backend) -> std::string_view {
 }
 
 struct PhotonTransportConfig {
-    PhotonTransportBackend fBackend{PhotonTransportBackend::Auto};
-    std::uint64_t fSeed{42};
-    std::uint32_t fMaxPhotonsPerEvent{5'000'000};
-    std::uint32_t fMaxBouncesPerPhoton{4096};
-    float fBoundaryToleranceMm{1.0e-4F};
-    std::uint32_t fTargetPhotonsPerBatch{1'000'000};
-    std::uint32_t fMaxEventsPerBatch{10'000};
-    std::uint32_t fMaxQueuedPhotons{2'000'000};
-    std::uint32_t fMaxQueuedSubmissions{1'024};
-    std::uint32_t fMaxPendingEvents{64};
-    std::uint32_t fBatchCollectionTimeoutMs{10};
-    std::uint32_t fMeshRotationSteps{360};
-    bool fEnablePerformanceDiagnostics{};
+    PhotonTransportBackend backend{PhotonTransportBackend::Auto};
+    std::uint64_t seed{42};
+    std::uint32_t maxPhotonsPerEvent{5'000'000};
+    std::uint32_t maxBouncesPerPhoton{4096};
+    float boundaryToleranceMm{1.0e-4F};
+    std::uint32_t targetPhotonsPerBatch{1'000'000};
+    std::uint32_t maxEventsPerBatch{10'000};
+    std::uint32_t maxQueuedPhotons{2'000'000};
+    std::uint32_t maxQueuedSubmissions{1'024};
+    std::uint32_t maxPendingEvents{64};
+    std::uint32_t batchCollectionTimeoutMs{10};
+    std::uint32_t meshRotationSteps{360};
+    bool enablePerformanceDiagnostics{};
 };
 
 } // namespace G4GO::Optical

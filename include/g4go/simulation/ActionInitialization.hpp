@@ -13,8 +13,7 @@ namespace G4GO::Simulation {
 
 class ActionInitialization : public G4VUserActionInitialization {
 public:
-    explicit ActionInitialization(
-        G4GO::Optical::PhotonTransportConfig configuration);
+    explicit ActionInitialization(G4GO::Optical::PhotonTransportConfig configuration);
     ~ActionInitialization() override = default;
 
     auto BuildForMaster() const -> void override;

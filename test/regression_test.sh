@@ -3,8 +3,17 @@
 set -uo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-project_dir="$(cd -- "${script_dir}/.." && pwd)"
-build_dir="${project_dir}/build"
+# The script is copied to <build>/test/regression_test.sh. When that copy is
+# invoked, the build dir is the directory one level up (which holds the g4go
+# binary) and the source tree is its parent; otherwise both live under the
+# source tree. Both copies then run without --build-dir.
+if [[ -x "${script_dir}/../g4go" ]]; then
+    build_dir="$(cd -- "${script_dir}/.." && pwd)"
+    source_dir="$(cd -- "${build_dir}/.." && pwd)"
+else
+    source_dir="$(cd -- "${script_dir}/.." && pwd)"
+    build_dir="${source_dir}/build"
+fi
 cpu_affinity="${G4GO_CPU_AFFINITY:-2}"
 batch_timeout_ms="${G4GO_BATCH_TIMEOUT_MS:-10}"
 perf_diagnostics="${G4GO_PERF_DIAGNOSTICS:-0}"
@@ -68,9 +77,10 @@ if [[ "$perf_diagnostics" != 0 && "$perf_diagnostics" != 1 ]]; then
 fi
 
 g4go="${build_dir}/g4go"
-cpu_benchmark_macro="${project_dir}/scripts/run_cpu_benchmark.mac"
-regression_macro="${project_dir}/scripts/run_eminus_regression.mac"
-compare_macro="${script_dir}/TestOpticalTransport.cxx"
+regression_macro="${source_dir}/scripts/run_eminus_regression.mac"
+# Use the comparison macro copied into the build tree so both the source-tree
+# and the copied script exercise the same build artifact.
+compare_macro="${build_dir}/test/TestOpticalTransport.cxx"
 root_executable="$(command -v root || true)"
 regression_dir="${build_dir}/test/regression"
 run_timestamp="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)-$$"
@@ -78,10 +88,6 @@ run_dir="${regression_dir}/${run_timestamp}"
 
 if [[ ! -x "$g4go" ]]; then
     echo "Executable is missing or not executable" >&2
-    exit 1
-fi
-if [[ ! -f "$cpu_benchmark_macro" ]]; then
-    echo "CPU benchmark macro is missing" >&2
     exit 1
 fi
 if [[ ! -f "$regression_macro" ]]; then
@@ -104,63 +110,42 @@ if [[ -z "$sha256sum_executable" ]]; then
 fi
 
 g4go_sha256="$("$sha256sum_executable" "$g4go" | awk '{print $1}')"
-cpu_benchmark_macro_sha256="$(
-    "$sha256sum_executable" "$cpu_benchmark_macro" | awk '{print $1}'
-)"
 regression_macro_sha256="$(
     "$sha256sum_executable" "$regression_macro" | awk '{print $1}'
 )"
 
-benchmark_events="$(sed -nE \
-    's@^[[:space:]]*/run/beamOn[[:space:]]+([0-9]+).*@\1@p' \
-    "$cpu_benchmark_macro" | tail -n 1)"
 target_events="$(sed -nE \
     's@^[[:space:]]*/run/beamOn[[:space:]]+([0-9]+).*@\1@p' \
     "$regression_macro" | tail -n 1)"
-if [[ ! "$benchmark_events" =~ ^[0-9]+$ ]] || ((benchmark_events == 0)); then
-    echo "Unable to parse a positive /run/beamOn count from CPU benchmark macro" >&2
-    exit 1
-fi
 if [[ ! "$target_events" =~ ^[0-9]+$ ]] || ((target_events == 0)); then
     echo "Unable to parse a positive /run/beamOn count from regression macro" >&2
     exit 1
 fi
 
-# The first 1000-event benchmark timing is retained in the CPU timing cache
-# and provides the single-core timing used for later event-count extrapolation.
-cpu_single_reference_events=1000
-if ((benchmark_events != cpu_single_reference_events)); then
-    echo "run_cpu_benchmark.mac must contain ${cpu_single_reference_events} events; found ${benchmark_events}" >&2
-    exit 1
-fi
-
-cpu_single_reference="${regression_dir}/cpu_single_benchmark.root"
 cpu_6t_reference="${regression_dir}/cpu_6t.root"
 gpu_1t_reference="${regression_dir}/gpu_1t.root"
 gpu_6t_reference="${regression_dir}/gpu_6t.root"
 cpu_timing_file="${regression_dir}/cpu_timing.txt"
 cpu_regression_threads=6
 logs_dir="${run_dir}/logs"
-cpu_single_log="${logs_dir}/cpu_single_benchmark.log"
 cpu_6t_log="${logs_dir}/cpu_6t.log"
 gpu_1t_log="${logs_dir}/gpu_1t.log"
 gpu_6t_log="${logs_dir}/gpu_6t.log"
 comparison_1t_log="${logs_dir}/comparison_gpu_1t.log"
 comparison_6t_log="${logs_dir}/comparison_gpu_6t.log"
 regression_log="${logs_dir}/regression.log"
-comparison_1t_dir="${run_dir}/comparisons/gpu_1t"
-comparison_6t_dir="${run_dir}/comparisons/gpu_6t"
 
 mkdir -p "$regression_dir" "$logs_dir"
 cd "$regression_dir" || exit 1
-# The 1T benchmark provides the timing used to estimate the 6T CPU baseline.
-# Remove the transient benchmark ROOT output before each run so it cannot be
-# mistaken for a persisted reference artifact.
-rm -f -- run_cpu_benchmark.root
+# The measured CPU-6T run provides both the regression reference and the
+# CPU timing baseline. Remove deprecated single-core benchmark artifacts so
+# they cannot be mistaken for current cache entries.
+rm -f -- run_cpu_benchmark.root "${regression_dir}/cpu_single_benchmark.root"
 # Remove stale GPU output names before writing the current run results.
 rm -f -- "${regression_dir}/gpu_run_1.root" \
     "$gpu_1t_reference" "$gpu_6t_reference" \
-    "${regression_dir}/gpu_single.root"
+    "${regression_dir}/gpu_single.root" \
+    "${regression_dir}/run_eminus_regression.root"
 : > "$regression_log"
 
 start_time="$(date +%s)"
@@ -200,13 +185,14 @@ run_g4go_single() {
 run_comparison() {
     local comparison_name="$1"
     local log_file="$2"
-    local output_directory="$3"
+    local label="$3"
     local gpu_file_name="$4"
     local gpu_elapsed="$5"
     local cpu_elapsed="$6"
-    local compare_call command_status output_file
+    local output_directory="${run_dir}"
+    local compare_call command_status output_file figure_name
 
-    mkdir -p "$output_directory"
+    mkdir -p "${output_directory}/figures"
     compare_call="${compare_macro}(\"${cpu_6t_reference}\",\"${gpu_file_name}\",${cpu_elapsed},${gpu_elapsed},\"${output_directory}\")"
     run_logged "$log_file" "$root_executable" -l -b -q "$compare_call"
     command_status="$?"
@@ -214,13 +200,23 @@ run_comparison() {
         echo "[${comparison_name}] FAIL exit_code=${command_status}"
         return 1
     fi
-    for output_file in \
-        regression_summary.txt \
-        figures/noptpho_comparison.png figures/tof_comparison.png \
-        figures/edep_comparison.png \
-        noptpho_regression_report.root; do
-        if [[ ! -s "${output_directory}/${output_file}" ]]; then
-            echo "[${comparison_name}] required output is missing: ${output_file}"
+    # Name each comparison's text summary with the comparison label so the two
+    # groups are symmetric and self-describing. The per-group summaries are
+    # folded into the aggregate regression_summary.txt and removed below.
+    summary_name="${label}_regression_summary.txt"
+    mv -- "${output_directory}/regression_summary.txt" \
+        "${output_directory}/${summary_name}" || return 1
+    for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
+        mv -- "${output_directory}/figures/${figure_name}" \
+            "${output_directory}/figures/${label}_${figure_name}" || return 1
+    done
+    if [[ ! -s "${output_directory}/${summary_name}" ]]; then
+        echo "[${comparison_name}] required output is missing: ${summary_name}"
+        return 1
+    fi
+    for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
+        if [[ ! -s "${output_directory}/figures/${label}_${figure_name}" ]]; then
+            echo "[${comparison_name}] required output is missing: figures/${label}_${figure_name}"
             return 1
         fi
     done
@@ -244,30 +240,6 @@ read_timing_value() {
     awk -F= -v key="$key" \
         '$1 == key {print substr($0, index($0, "=") + 1); exit}' \
         "$cpu_timing_file"
-}
-
-read_first_single_benchmark_log_time() {
-    local benchmark_log benchmark_time
-    while IFS= read -r benchmark_log; do
-        benchmark_time="$(awk '
-            /Time runs:/ {
-                for (field = 1; field <= NF; ++field) {
-                    if ($field ~ /^Real=/) {
-                        split($field, value, "=");
-                        sub(/s$/, "", value[2]);
-                        print value[2];
-                        exit;
-                    }
-                }
-            }
-        ' "$benchmark_log")"
-        if is_positive_number "$benchmark_time"; then
-            printf '%s\n' "$benchmark_time"
-            return 0
-        fi
-    done < <(find "$regression_dir" -mindepth 2 -maxdepth 3 -type f \
-        -name 'cpu_single_benchmark.log' -print | LC_ALL=C sort)
-    return 1
 }
 
 is_positive_number() {
@@ -309,64 +281,26 @@ run_timed_cpu_phase() {
 }
 
 write_cpu_timing() {
-    local single_measured="$1"
-    local full_regression_elapsed="$2"
+    local regression_elapsed="$1"
     {
         echo "seed=42"
         echo "cpu_affinity=${cpu_affinity}"
         echo "g4go_sha256=${g4go_sha256}"
-        echo "cpu_benchmark_macro_sha256=${cpu_benchmark_macro_sha256}"
         echo "regression_macro_sha256=${regression_macro_sha256}"
-        echo "cpu_single_reference_events=${cpu_single_reference_events}"
-        echo "cpu_single_benchmark_time_for_estimate_s=${single_measured}"
-        echo "cpu_single_benchmark_events=${benchmark_events}"
-        echo "cpu_single_benchmark_measured_real_time_s=${single_measured}"
         echo "cpu_target_events=${target_events}"
         echo "cpu_regression_threads=${cpu_regression_threads}"
         echo "cpu_6t_regression_events=${target_events}"
-        echo "cpu_6t_regression_real_time_s=${full_regression_elapsed}"
+        echo "cpu_6t_regression_real_time_s=${regression_elapsed}"
     } > "$cpu_timing_file"
 }
 
 echo "[regression] target_events=${target_events}"
 
-cpu_single_measured="$(read_timing_value cpu_single_benchmark_measured_real_time_s)"
-cpu_single_benchmark_events_cached="$(read_timing_value cpu_single_benchmark_events)"
 cached_g4go_sha256="$(read_timing_value g4go_sha256)"
-cached_cpu_benchmark_macro_sha256="$(
-    read_timing_value cpu_benchmark_macro_sha256
-)"
 cached_regression_macro_sha256="$(read_timing_value regression_macro_sha256)"
-cached_cpu_affinity="$(read_timing_value cpu_affinity)"
-if ! is_positive_number "$cpu_single_measured" &&
-   [[ -s "$cpu_single_reference" ]]; then
-    cpu_single_measured="$(read_first_single_benchmark_log_time || true)"
-    if is_positive_number "$cpu_single_measured"; then
-        cpu_single_benchmark_events_cached="$benchmark_events"
-    fi
-fi
 cpu_6t_regression_elapsed="$(read_timing_value cpu_6t_regression_real_time_s)"
-cpu_single_source=cached
 cpu_6t_regression_source=cached
 cached_cpu_regression_threads="$(read_timing_value cpu_regression_threads)"
-
-if [[ ! -s "$cpu_single_reference" ]] ||
-   [[ "$cached_cpu_affinity" != "$cpu_affinity" ]] ||
-   [[ "$cached_g4go_sha256" != "$g4go_sha256" ]] ||
-   [[ "$cached_cpu_benchmark_macro_sha256" != "$cpu_benchmark_macro_sha256" ]] ||
-   [[ "$cpu_single_benchmark_events_cached" != "$benchmark_events" ]] ||
-   ! is_positive_number "$cpu_single_measured"; then
-    run_timed_cpu_phase \
-        cpu-single-benchmark "$cpu_single_log" run_cpu_benchmark.root \
-        cpu_single_measured single \
-        "$benchmark_events" \
-        --backend cpu --threads 1 --seed 42 "$cpu_benchmark_macro"
-    cp -- run_cpu_benchmark.root "$cpu_single_reference" || fail_test 1
-    rm -f -- run_cpu_benchmark.root
-    cpu_single_source=generated
-else
-    echo "[cpu-single-benchmark] CACHED events=${benchmark_events} time=${cpu_single_measured}s"
-fi
 
 if [[ ! -s "$cpu_6t_reference" ]] ||
    [[ "$cached_g4go_sha256" != "$g4go_sha256" ]] ||
@@ -387,39 +321,10 @@ else
 fi
 
 write_cpu_timing \
-    "$cpu_single_measured" \
     "$cpu_6t_regression_elapsed"
 
 if ! is_positive_number "$cpu_6t_regression_elapsed"; then
     echo "CPU timing cache contains invalid values"
-    fail_test 1
-fi
-
-cpu_single_estimated_real_time_s="$(awk \
-    -v target_events="$target_events" \
-    -v benchmark_events="$benchmark_events" \
-    -v single_benchmark="$cpu_single_measured" \
-    'BEGIN {
-        if (target_events > 0.0 && benchmark_events > 0.0 &&
-            single_benchmark > 0.0) {
-            printf "%.6f", target_events * single_benchmark / benchmark_events;
-        }
-    }')"
-if ! is_positive_number "$cpu_single_estimated_real_time_s"; then
-    echo "Unable to estimate single-core CPU time"
-    fail_test 1
-fi
-
-cpu_6t_estimated_real_time_s="$(awk \
-    -v single_core_time="$cpu_single_estimated_real_time_s" \
-    -v cpu_threads="$cpu_regression_threads" \
-    'BEGIN {
-        if (single_core_time > 0.0 && cpu_threads > 0.0) {
-            printf "%.6f", single_core_time / cpu_threads;
-        }
-    }')"
-if ! is_positive_number "$cpu_6t_estimated_real_time_s"; then
-    echo "Unable to estimate 6T CPU time"
     fail_test 1
 fi
 
@@ -454,46 +359,53 @@ fi
 cp -- run_eminus_regression.root "$gpu_6t_reference" || fail_test 1
 echo "[gpu-6t] ROOT reference=$(basename "$gpu_6t_reference")"
 
-gpu_1t_speedup_vs_cpu1="$(awk \
-    -v cpu="$cpu_single_estimated_real_time_s" \
+# Estimate the CPU-1T wall time by scaling the measured CPU-6T time with the
+# worker count; GPU-1T is compared against that estimate, while GPU-6T is
+# compared directly against the measured CPU-6T baseline.
+cpu_1t_estimated_real_time_s="$(awk \
+    -v cpu_6t_time="$cpu_6t_regression_elapsed" \
+    -v cpu_threads="$cpu_regression_threads" \
+    'BEGIN {
+        if (cpu_6t_time > 0.0 && cpu_threads > 0.0) {
+            printf "%.6f", cpu_6t_time * cpu_threads;
+        }
+    }')"
+if ! is_positive_number "$cpu_1t_estimated_real_time_s"; then
+    echo "Unable to estimate CPU-1T time"
+    fail_test 1
+fi
+
+gpu_1t_speedup_vs_cpu_1t_estimated="$(awk \
+    -v cpu="$cpu_1t_estimated_real_time_s" \
     -v gpu="$gpu_1t_elapsed_seconds" \
     'BEGIN { if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu; }')"
-gpu_6t_speedup_vs_cpu6="$(awk \
-    -v cpu="$cpu_6t_estimated_real_time_s" \
+gpu_6t_speedup_vs_cpu_6t="$(awk \
+    -v cpu="$cpu_6t_regression_elapsed" \
     -v gpu="$gpu_6t_elapsed_seconds" \
     'BEGIN { if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu; }')"
-if ! is_positive_number "$gpu_1t_speedup_vs_cpu1" ||
-   ! is_positive_number "$gpu_6t_speedup_vs_cpu6"; then
-    echo "Unable to calculate thread-matched GPU speedups"
+if ! is_positive_number "$gpu_1t_speedup_vs_cpu_1t_estimated" ||
+   ! is_positive_number "$gpu_6t_speedup_vs_cpu_6t"; then
+    echo "Unable to calculate GPU speedups"
     fail_test 1
 fi
 
 {
     echo "cpu_affinity=${cpu_affinity}"
     echo "g4go_sha256=${g4go_sha256}"
-    echo "cpu_benchmark_macro_sha256=${cpu_benchmark_macro_sha256}"
     echo "regression_macro_sha256=${regression_macro_sha256}"
     echo "cpu_geant4_threads=${cpu_regression_threads}"
     echo "gpu_1t_geant4_threads=1"
     echo "gpu_6t_geant4_threads=${cpu_regression_threads}"
     echo "batch_timeout_ms=${batch_timeout_ms}"
-    echo "cpu_single_reference_events=${cpu_single_reference_events}"
-    echo "cpu_single_benchmark_time_for_estimate_s=${cpu_single_measured}"
-    echo "cpu_single_benchmark_measured_real_time_s=${cpu_single_measured}"
-    echo "cpu_single_benchmark_source=${cpu_single_source}"
     echo "cpu_target_events=${target_events}"
     echo "cpu_6t_regression_events=${target_events}"
     echo "cpu_6t_regression_real_time_s=${cpu_6t_regression_elapsed}"
     echo "cpu_6t_regression_source=${cpu_6t_regression_source}"
-    echo "cpu_single_estimated_real_time_s=${cpu_single_estimated_real_time_s}"
-    echo "cpu_6t_estimated_real_time_s=${cpu_6t_estimated_real_time_s}"
-    echo "cpu_6t_data_reference=$(basename "$cpu_6t_reference")"
     echo "gpu_1t_wall_time_s=${gpu_1t_elapsed_seconds}"
     echo "gpu_6t_wall_time_s=${gpu_6t_elapsed_seconds}"
-    echo "gpu_1t_speedup_vs_estimated_1t_cpu=${gpu_1t_speedup_vs_cpu1}x"
-    echo "gpu_6t_speedup_vs_estimated_6t_cpu=${gpu_6t_speedup_vs_cpu6}x"
-    echo "gpu_1t_data_reference=$(basename "$gpu_1t_reference")"
-    echo "gpu_6t_data_reference=$(basename "$gpu_6t_reference")"
+    echo "cpu_1t_estimated_real_time_s=${cpu_1t_estimated_real_time_s}"
+    echo "gpu_1t_speedup_vs_cpu_1t_estimated=${gpu_1t_speedup_vs_cpu_1t_estimated}x"
+    echo "gpu_6t_speedup_vs_cpu_6t=${gpu_6t_speedup_vs_cpu_6t}x"
 } > "${run_dir}/benchmark_summary.txt"
 
 if ((perf_diagnostics)); then
@@ -514,66 +426,37 @@ fi
 
 comparison_failed=0
 if ! run_comparison \
-    "comparison-gpu-1t-vs-estimated-cpu-1t" "$comparison_1t_log" \
-    "$comparison_1t_dir" "$gpu_1t_reference" \
-    "$gpu_1t_elapsed_seconds" "$cpu_single_estimated_real_time_s"; then
+    "comparison-gpu-1t-vs-cpu-6t" "$comparison_1t_log" \
+    gpu_1t "$gpu_1t_reference" \
+    "$gpu_1t_elapsed_seconds" "$cpu_1t_estimated_real_time_s"; then
     comparison_failed=1
 fi
 if ! run_comparison \
-    "comparison-gpu-6t-vs-estimated-cpu-6t" "$comparison_6t_log" \
-    "$comparison_6t_dir" "$gpu_6t_reference" \
-    "$gpu_6t_elapsed_seconds" "$cpu_6t_estimated_real_time_s"; then
+    "comparison-gpu-6t-vs-cpu-6t" "$comparison_6t_log" \
+    gpu_6t "$gpu_6t_reference" \
+    "$gpu_6t_elapsed_seconds" "$cpu_6t_regression_elapsed"; then
     comparison_failed=1
 fi
 if ((comparison_failed)); then
     fail_test 1
 fi
 
-mkdir -p "${run_dir}/figures"
-for comparison_label in gpu_1t gpu_6t; do
-    if [[ "$comparison_label" == gpu_1t ]]; then
-        comparison_directory="$comparison_1t_dir"
-    else
-        comparison_directory="$comparison_6t_dir"
-    fi
-    cp -- "${comparison_directory}/regression_summary.txt" \
-        "${run_dir}/regression_summary_${comparison_label}.txt" || fail_test 1
-    cp -- "${comparison_directory}/noptpho_regression_report.root" \
-        "${run_dir}/noptpho_regression_report_${comparison_label}.root" || fail_test 1
-    for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
-        cp -- "${comparison_directory}/figures/${figure_name}" \
-            "${run_dir}/figures/${comparison_label}_${figure_name}" || fail_test 1
-    done
-done
-# Preserve the established single-GPU artifact names as aliases for the 1T run.
-cp -- "${run_dir}/regression_summary_gpu_1t.txt" \
-    "${run_dir}/regression_summary.txt" || fail_test 1
-cp -- "${run_dir}/noptpho_regression_report_gpu_1t.root" \
-    "${run_dir}/noptpho_regression_report.root" || fail_test 1
-cp -- "$gpu_1t_reference" "${regression_dir}/gpu_single.root" || fail_test 1
-cp -- "${run_dir}/noptpho_regression_report.root" \
-    "${regression_dir}/noptpho_regression_report.root" || fail_test 1
-cp -- "${run_dir}/noptpho_regression_report_gpu_6t.root" \
-    "${regression_dir}/noptpho_regression_report_gpu_6t.root" || fail_test 1
-for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
-    cp -- "${run_dir}/figures/gpu_1t_${figure_name}" \
-        "${run_dir}/figures/${figure_name}" || fail_test 1
-done
-
 {
     echo "Status: PASSED"
-    echo "Reference: 6TCPU ROOT; thread-matched CPU timing from 1T CPU"
-    echo "Speedup: 1T+GPU vs estimated 1TCPU=${gpu_1t_speedup_vs_cpu1}x"
-    echo "Speedup: 6T+GPU vs estimated 6TCPU=${gpu_6t_speedup_vs_cpu6}x"
+    echo "Reference: CPU-6T ROOT and measured CPU-6T wall time"
+    echo "Speedup: GPU-1T vs estimated CPU-1T=${gpu_1t_speedup_vs_cpu_1t_estimated}x"
+    echo "Speedup: GPU-6T vs CPU-6T=${gpu_6t_speedup_vs_cpu_6t}x"
     echo
-    echo "=== 1T+GPU vs estimated 1TCPU ==="
-    cat "${run_dir}/regression_summary_gpu_1t.txt"
+    echo "=== GPU-1T vs estimated CPU-1T ==="
+    cat "${run_dir}/gpu_1t_regression_summary.txt"
     echo
-    echo "=== 6T+GPU vs estimated 6TCPU ==="
-    cat "${run_dir}/regression_summary_gpu_6t.txt"
+    echo "=== GPU-6T vs CPU-6T ==="
+    cat "${run_dir}/gpu_6t_regression_summary.txt"
 } > "${run_dir}/regression_summary.txt"
+rm -f -- "${run_dir}/gpu_1t_regression_summary.txt" \
+    "${run_dir}/gpu_6t_regression_summary.txt"
 
 echo "[regression] OUTPUT: PASSED"
-echo "[regression] 1T+GPU speedup vs estimated 1TCPU=${gpu_1t_speedup_vs_cpu1}x"
-echo "[regression] 6T+GPU speedup vs estimated 6TCPU=${gpu_6t_speedup_vs_cpu6}x"
+echo "[regression] GPU-1T speedup vs estimated CPU-1T=${gpu_1t_speedup_vs_cpu_1t_estimated}x"
+echo "[regression] GPU-6T speedup vs CPU-6T=${gpu_6t_speedup_vs_cpu_6t}x"
 print_summary

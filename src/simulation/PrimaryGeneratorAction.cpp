@@ -14,8 +14,7 @@ PrimaryGeneratorAction::PrimaryGeneratorAction(std::uint64_t seed) :
     fSeed{seed} {}
 
 auto PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent) -> void {
-    const auto eventSeed{
-        fSeed + static_cast<std::uint64_t>(anEvent->GetEventID())};
+    const auto eventSeed{fSeed + static_cast<std::uint64_t>(anEvent->GetEventID())};
     G4Random::setTheSeed(static_cast<long>(eventSeed));
     fParticleGun->GeneratePrimaryVertex(anEvent);
 }

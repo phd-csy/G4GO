@@ -1,13 +1,11 @@
 #include "ROOT/RDataFrame.hxx"
 #include "TCanvas.h"
 #include "TError.h"
-#include "TFile.h"
 #include "TH1D.h"
 #include "TLegend.h"
 #include "TLine.h"
 #include "TMath.h"
 #include "TPad.h"
-#include "TParameter.h"
 #include "TROOT.h"
 #include "TSystem.h"
 
@@ -19,173 +17,120 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
-#include <string>
-#include <vector>
 
 namespace {
 
-struct HistogramComparison {
-    double fChi2{};
-    int fNdf{};
-    int fGoodnessFlag{};
-    double fPValue{std::numeric_limits<double>::quiet_NaN()};
-    double fZScore{std::numeric_limits<double>::quiet_NaN()};
-    bool fValid{};
-};
-
-struct ShapeComparison {
-    double fPValue{std::numeric_limits<double>::quiet_NaN()};
-    bool fValid{};
-};
-
-auto CompareHistograms(TH1D* reference, TH1D* candidate)
-    -> HistogramComparison {
-    HistogramComparison output{};
-    auto option{const_cast<Option_t*>("UU P OF")};
-    output.fPValue = reference->Chi2TestX(
-        candidate, output.fChi2, output.fNdf, output.fGoodnessFlag, option);
-    // ROOT uses the goodness flag for statistical warnings such as sparse
-    // bins. Keep those warnings in the report while accepting a finite,
-    // well-defined chi-square p-value as a valid comparison result.
-    output.fValid = std::isfinite(output.fChi2) &&
-                    std::isfinite(output.fPValue) &&
-                    output.fPValue >= 0.0 && output.fPValue <= 1.0;
-    if (output.fValid) {
-        output.fZScore = output.fPValue == 0.0 ? std::numeric_limits<double>::infinity() : -TMath::NormQuantile(output.fPValue / 2.0);
-    }
-    return output;
+auto ZScore(double pValue) -> double {
+    return pValue == 0.0 ? std::numeric_limits<double>::infinity() : -TMath::NormQuantile(pValue / 2.0);
 }
 
-auto CompareShapes(TH1D* reference, TH1D* candidate) -> ShapeComparison {
-    ShapeComparison output{};
-    output.fPValue = reference->KolmogorovTest(candidate);
-    output.fValid = std::isfinite(output.fPValue) &&
-                    output.fPValue >= 0.0 && output.fPValue <= 1.0;
-    return output;
-}
-
-auto HasOutOfRange(const TH1D& histogram) -> bool {
-    return histogram.GetBinContent(0) != 0.0 ||
-           histogram.GetBinContent(histogram.GetNbinsX() + 1) != 0.0;
-}
-
-auto ComparisonStatus(double zScore,
-                      bool valid,
-                      bool rangeValid = true) -> const char* {
+auto ComparisonStatus(double pValue, bool rangeValid = true) -> const char* {
+    const auto valid{std::isfinite(pValue) && pValue >= 0.0 && pValue <= 1.0};
     if (!rangeValid || !valid) {
         return "INVALID";
     }
-    if (zScore > 5.0) {
+    const auto z{ZScore(pValue)};
+    if (z > 5.0) {
         return "FAILED";
     }
-    if (zScore > 3.0) {
+    if (z > 3.0) {
         return "SUSPICIOUS";
     }
-    if (zScore > 0.0) {
+    if (z > 0.0) {
         return "PASSED";
     }
     return "IDENTICAL";
 }
 
-auto ComparisonStatus(const HistogramComparison& comparison,
-                      bool rangeValid = true) -> const char* {
-    return ComparisonStatus(comparison.fZScore, comparison.fValid,
-                            rangeValid);
+auto ComparisonPassed(double pValue, bool rangeValid = true) -> bool {
+    const auto valid{std::isfinite(pValue) && pValue >= 0.0 && pValue <= 1.0};
+    return rangeValid && valid && ZScore(pValue) <= 5.0;
 }
 
-auto ComparisonPassed(double zScore,
-                      bool valid,
-                      bool rangeValid = true) -> bool {
-    return rangeValid && valid && zScore <= 5.0;
+auto HasOutOfRange(const TH1D& histogram) -> bool {
+    return histogram.GetBinContent(0) != 0.0 || histogram.GetBinContent(histogram.GetNbinsX() + 1) != 0.0;
 }
 
-auto ComparisonPassed(const HistogramComparison& comparison,
-                      bool rangeValid = true) -> bool {
-    return ComparisonPassed(comparison.fZScore, comparison.fValid,
-                            rangeValid);
-}
+auto DrawComparison(TH1D* cpuHistogram, TH1D* gpuHistogram, const char* canvasName, const char* canvasTitle,
+                    const char* pullName, const char* pullTitle, const std::filesystem::path& imagePath, bool logY,
+                    double cpuLegendX, const char* gpuLegendLabel) -> void {
+    TH1D cpuPlot{*cpuHistogram};
+    TH1D gpuPlot{*gpuHistogram};
+    cpuPlot.SetDirectory(nullptr);
+    gpuPlot.SetDirectory(nullptr);
+    // Keep one x-axis title in the combined figure. The lower pull panel
+    // carries it; the upper histogram uses the same label-free baseline.
+    cpuPlot.GetXaxis()->SetTitle("");
+    gpuPlot.GetXaxis()->SetTitle("");
+    constexpr auto axisTitleSize{0.06};
+    constexpr auto axisLabelSize{0.045};
+    cpuPlot.GetXaxis()->SetTitleSize(axisTitleSize);
+    cpuPlot.GetYaxis()->SetTitleSize(axisTitleSize);
+    gpuPlot.GetXaxis()->SetTitleSize(axisTitleSize);
+    gpuPlot.GetYaxis()->SetTitleSize(axisTitleSize);
+    cpuPlot.GetXaxis()->SetLabelSize(axisLabelSize);
+    cpuPlot.GetYaxis()->SetLabelSize(axisLabelSize);
+    gpuPlot.GetXaxis()->SetLabelSize(axisLabelSize);
+    gpuPlot.GetYaxis()->SetLabelSize(axisLabelSize);
 
-auto BuildComparisonEdges(const std::vector<int>& cpuValues,
-                          const std::vector<int>& gpuValues)
-    -> std::vector<double> {
-    constexpr auto targetBinCount{8U};
-    std::vector<int> values{};
-    values.reserve(cpuValues.size() + gpuValues.size());
-    values.insert(values.end(), cpuValues.begin(), cpuValues.end());
-    values.insert(values.end(), gpuValues.begin(), gpuValues.end());
-    std::sort(values.begin(), values.end());
-    if (values.empty()) {
-        return {0.0, 1.0};
+    const auto binCount{cpuPlot.GetNbinsX()};
+    TH1D pull{pullName, pullTitle, binCount, cpuPlot.GetXaxis()->GetXmin(), cpuPlot.GetXaxis()->GetXmax()};
+    for (auto i{1}; i <= binCount; ++i) {
+        const auto difference{cpuPlot.GetBinContent(i) - gpuPlot.GetBinContent(i)};
+        const auto error{std::hypot(cpuPlot.GetBinError(i), gpuPlot.GetBinError(i))};
+        pull.SetBinContent(i, error == 0.0 ? 0.0 : difference / error);
+        pull.SetBinError(i, 1.0);
     }
+    pull.GetXaxis()->SetTitleSize(axisTitleSize);
+    pull.GetYaxis()->SetTitleSize(axisTitleSize);
+    pull.GetXaxis()->SetLabelSize(axisLabelSize);
+    pull.GetYaxis()->SetLabelSize(axisLabelSize);
 
-    std::vector<double> edges{};
-    edges.reserve(targetBinCount + 1U);
-    edges.emplace_back(static_cast<double>(values.at(0)) - 0.5);
-    for (auto index{1U}; index < targetBinCount; ++index) {
-        const auto valueIndex{std::min(
-            values.size() - 1U,
-            values.size() * static_cast<std::size_t>(index) /
-                targetBinCount)};
-        const auto edge{static_cast<double>(values.at(valueIndex)) - 0.5};
-        if (edge > edges.at(edges.size() - 1U)) {
-            edges.emplace_back(edge);
-        }
-    }
-    const auto upperEdge{
-        static_cast<double>(values.at(values.size() - 1U)) + 0.5};
-    if (upperEdge > edges.at(edges.size() - 1U)) {
-        edges.emplace_back(upperEdge);
-    }
-    return edges;
-}
+    TCanvas canvas{canvasName, canvasTitle, 1000, 800};
+    TPad upperPad{"histogram_pad", "histogram_pad", 0.0, 0.4, 1.0, 1.0};
+    TPad lowerPad{"pull_pad", "pull_pad", 0.0, 0.0, 1.0, 0.4};
+    upperPad.SetBottomMargin(0.06);
+    lowerPad.SetTopMargin(0.06);
+    lowerPad.SetBottomMargin(0.20);
+    upperPad.Draw();
+    lowerPad.Draw();
 
-auto BuildComparisonEdges(const std::vector<double>& cpuValues,
-                          const std::vector<double>& gpuValues)
-    -> std::vector<double> {
-    constexpr auto targetBinCount{40U};
-    std::vector<double> values{};
-    values.reserve(cpuValues.size() + gpuValues.size());
-    values.insert(values.end(), cpuValues.begin(), cpuValues.end());
-    values.insert(values.end(), gpuValues.begin(), gpuValues.end());
-    if (values.empty() ||
-        !std::all_of(values.begin(), values.end(),
-                     [](const auto value) { return std::isfinite(value); })) {
-        return {};
+    upperPad.cd();
+    if (logY) {
+        upperPad.SetLogy();
+        cpuPlot.SetMinimum(0.5);
+        gpuPlot.SetMinimum(0.5);
     }
-    std::sort(values.begin(), values.end());
+    cpuPlot.SetLineColor(kRed + 1);
+    gpuPlot.SetLineColor(kBlue + 1);
+    cpuPlot.SetLineWidth(2);
+    gpuPlot.SetLineWidth(2);
+    cpuPlot.SetStats(false);
+    gpuPlot.SetStats(false);
+    cpuPlot.Draw("HIST");
+    gpuPlot.Draw("HIST SAME");
+    TLegend legend{cpuLegendX, 0.73, cpuLegendX + 0.29, 0.91};
+    legend.AddEntry(&cpuPlot, "CPU / Geant4 full-core reference", "l");
+    legend.AddEntry(&gpuPlot, gpuLegendLabel, "l");
+    legend.Draw();
 
-    std::vector<double> edges{};
-    edges.reserve(targetBinCount + 1U);
-    edges.emplace_back(
-        std::nextafter(values.at(0), -std::numeric_limits<double>::infinity()));
-    for (auto index{1U}; index < targetBinCount; ++index) {
-        const auto valueIndex{std::min(
-            values.size() - 1U,
-            values.size() * static_cast<std::size_t>(index) /
-                targetBinCount)};
-        const auto edge{values.at(valueIndex)};
-        if (edge > edges.at(edges.size() - 1U)) {
-            edges.emplace_back(edge);
-        }
-    }
-    const auto upperEdge{
-        std::nextafter(values.at(values.size() - 1U),
-                       std::numeric_limits<double>::infinity())};
-    if (upperEdge > edges.at(edges.size() - 1U)) {
-        edges.emplace_back(upperEdge);
-    }
-    return edges;
+    lowerPad.cd();
+    pull.SetStats(false);
+    pull.Draw("HIST");
+    TLine zeroLine{pull.GetXaxis()->GetXmin(), 0.0, pull.GetXaxis()->GetXmax(), 0.0};
+    zeroLine.SetLineStyle(2);
+    zeroLine.Draw();
+
+    canvas.SaveAs(imagePath.c_str());
 }
 
 } // namespace
 
-auto TestOpticalTransport(const char* cpuFileName,
-                          const char* gpuFileName,
-                          double cpuElapsedSeconds = 0.0,
-                          double gpuElapsedSeconds = 0.0,
-                          const char* outputDirectory = ".") -> void {
+auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, double cpuElapsedSeconds = 0.0,
+                          double gpuElapsedSeconds = 0.0, const char* outputDirectory = ".") -> void {
     gROOT->SetBatch(kTRUE);
     gErrorIgnoreLevel = kWarning;
 
@@ -193,782 +138,238 @@ auto TestOpticalTransport(const char* cpuFileName,
         const std::filesystem::path outputPath{outputDirectory};
         const auto figuresPath{outputPath / "figures"};
         std::filesystem::create_directories(figuresPath);
+
         ROOT::RDataFrame cpuData{"CrystalHit", cpuFileName};
         ROOT::RDataFrame gpuData{"CrystalHit", gpuFileName};
         ROOT::RDataFrame cpuSensorData{"SensorHit", cpuFileName};
         ROOT::RDataFrame gpuSensorData{"SensorHit", gpuFileName};
 
-        auto cpuEntries{cpuData.Count()};
-        auto gpuEntries{gpuData.Count()};
-        auto cpuTotalOutput{cpuData.Sum<int>("nOptPho")};
-        auto gpuTotalOutput{gpuData.Sum<int>("nOptPho")};
-        auto cpuMean{cpuData.Mean<int>("nOptPho")};
-        auto gpuMean{gpuData.Mean<int>("nOptPho")};
-        auto cpuRms{cpuData.StdDev<int>("nOptPho")};
-        auto gpuRms{gpuData.StdDev<int>("nOptPho")};
+        // One equal-width histogram per column, shared between the
+        // statistical tests and the plot. Pull the raw values once for range
+        // validation only.
         auto cpuNOptPhoValues{cpuData.Take<int>("nOptPho")};
         auto gpuNOptPhoValues{gpuData.Take<int>("nOptPho")};
         auto cpuEdepValues{cpuData.Take<double>("Edep")};
         auto gpuEdepValues{gpuData.Take<double>("Edep")};
-        auto cpuEdepMean{cpuData.Mean<double>("Edep")};
-        auto gpuEdepMean{gpuData.Mean<double>("Edep")};
-        auto cpuEdepRms{cpuData.StdDev<double>("Edep")};
-        auto gpuEdepRms{gpuData.StdDev<double>("Edep")};
         auto cpuTofValues{cpuSensorData.Take<double>("timeOfFlight")};
         auto gpuTofValues{gpuSensorData.Take<double>("timeOfFlight")};
-        auto cpuSensorEntries{cpuSensorData.Count()};
-        auto gpuSensorEntries{gpuSensorData.Count()};
-        auto cpuTofMean{cpuSensorData.Mean<double>("timeOfFlight")};
-        auto gpuTofMean{gpuSensorData.Mean<double>("timeOfFlight")};
-        auto cpuTofRms{cpuSensorData.StdDev<double>("timeOfFlight")};
-        auto gpuTofRms{gpuSensorData.StdDev<double>("timeOfFlight")};
-
-        if (*cpuEntries < 500U || *gpuEntries < 500U) {
-            throw std::runtime_error("CrystalHit contains too few entries");
-        }
-
-        const auto cpuTotal{static_cast<std::uint64_t>(*cpuTotalOutput)};
-        const auto gpuTotal{static_cast<std::uint64_t>(*gpuTotalOutput)};
-        if (cpuTotal == 0U || gpuTotal == 0U) {
-            throw std::runtime_error("nOptPho total is zero");
-        }
-        if (*cpuSensorEntries == 0U || *gpuSensorEntries == 0U) {
-            throw std::runtime_error("SensorHit contains no detections");
+        if (cpuNOptPhoValues->empty() || gpuNOptPhoValues->empty()) {
+            throw std::runtime_error("CrystalHit contains no nOptPho values");
         }
         if (cpuEdepValues->empty() || gpuEdepValues->empty()) {
             throw std::runtime_error("CrystalHit contains no Edep values");
         }
-
-        constexpr auto spectrumPlotBins{100};
-        constexpr auto spectrumMinimum{double{}};
-        const auto maximumNOptPho{std::max(
-            *std::max_element(cpuNOptPhoValues->begin(),
-                              cpuNOptPhoValues->end()),
-            *std::max_element(gpuNOptPhoValues->begin(),
-                              gpuNOptPhoValues->end()))};
-        const auto spectrumMaximum{
-            static_cast<double>(maximumNOptPho) + 100.0};
-        const auto histogramTitle{"nOptPho spectrum;nOptPho;Entries"};
-        auto cpuHistogram{cpuData.Histo1D(
-            {"cpu_nOptPho", histogramTitle, spectrumPlotBins, spectrumMinimum,
-             spectrumMaximum},
-            "nOptPho")};
-        auto gpuHistogram{gpuData.Histo1D(
-            {"gpu_nOptPho", histogramTitle, spectrumPlotBins, spectrumMinimum,
-             spectrumMaximum},
-            "nOptPho")};
-
-        const auto comparisonEdges{
-            BuildComparisonEdges(*cpuNOptPhoValues, *gpuNOptPhoValues)};
-        if (comparisonEdges.size() < 2U) {
-            throw std::runtime_error(
-                "unable to construct nOptPho comparison bins");
+        if (cpuTofValues->empty() || gpuTofValues->empty()) {
+            throw std::runtime_error("SensorHit contains no time-of-flight values");
         }
-        const auto comparisonBins{
-            static_cast<int>(comparisonEdges.size() - std::size_t{1})};
-        auto cpuComparisonHistogram{cpuData.Histo1D(
-            {"cpu_nOptPho_comparison", histogramTitle, comparisonBins,
-             comparisonEdges.data()},
-            "nOptPho")};
-        auto gpuComparisonHistogram{gpuData.Histo1D(
-            {"gpu_nOptPho_comparison", histogramTitle, comparisonBins,
-             comparisonEdges.data()},
-            "nOptPho")};
 
-        constexpr auto eventEnergyPlotBins{100};
-        const auto maximumEventEnergy{std::max(
-            *std::max_element(cpuEdepValues->begin(), cpuEdepValues->end()),
-            *std::max_element(gpuEdepValues->begin(), gpuEdepValues->end()))};
-        const auto eventEnergyPlotMaximum{
-            std::max(1.0, maximumEventEnergy * 1.05)};
-        const auto eventEnergyTitle{
-            "event total energy deposition;Edep [MeV];Events"};
-        auto cpuEventEnergyHistogram{cpuData.Histo1D(
-            {"cpu_event_total_Edep", eventEnergyTitle, eventEnergyPlotBins,
-             0.0, eventEnergyPlotMaximum},
-            "Edep")};
-        auto gpuEventEnergyHistogram{gpuData.Histo1D(
-            {"gpu_event_total_Edep", eventEnergyTitle, eventEnergyPlotBins,
-             0.0, eventEnergyPlotMaximum},
-            "Edep")};
-        const auto eventEnergyComparisonBins{eventEnergyPlotBins};
-        auto cpuEventEnergyComparisonHistogram{cpuData.Histo1D(
-            {"cpu_event_total_Edep_comparison", eventEnergyTitle,
-             eventEnergyComparisonBins, 0.0, eventEnergyPlotMaximum},
-            "Edep")};
-        auto gpuEventEnergyComparisonHistogram{gpuData.Histo1D(
-            {"gpu_event_total_Edep_comparison", eventEnergyTitle,
-             eventEnergyComparisonBins, 0.0, eventEnergyPlotMaximum},
-            "Edep")};
-        const auto tofValuesFiniteAndNonNegative{
-            std::all_of(cpuTofValues->begin(), cpuTofValues->end(),
-                        [](const auto value) {
-                            return std::isfinite(value) && value >= 0.0;
-                        }) &&
-            std::all_of(gpuTofValues->begin(), gpuTofValues->end(),
-                        [](const auto value) {
-                            return std::isfinite(value) && value >= 0.0;
-                        })};
-        const auto maximumTof{std::max(
-            *std::max_element(cpuTofValues->begin(), cpuTofValues->end()),
-            *std::max_element(gpuTofValues->begin(), gpuTofValues->end()))};
-        const auto tofPlotMaximum{
-            std::max(1000.0, std::ceil(maximumTof + 1.0))};
+        // --- nOptPho spectrum (CrystalHit) ---
+        constexpr auto nOptPhoBins{100};
+        const auto maximumNOptPho{std::max(*std::max_element(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end()),
+                                           *std::max_element(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end()))};
+        const auto nOptPhoMaximum{static_cast<double>(maximumNOptPho) + 100.0};
+        const auto nOptPhoTitle{"nOptPho spectrum;nOptPho;Entries"};
+        auto cpuNOptPhoHistogram{
+            cpuData.Histo1D({"cpu_nOptPho", nOptPhoTitle, nOptPhoBins, 0.0, nOptPhoMaximum}, "nOptPho")};
+        auto gpuNOptPhoHistogram{
+            gpuData.Histo1D({"gpu_nOptPho", nOptPhoTitle, nOptPhoBins, 0.0, nOptPhoMaximum}, "nOptPho")};
+
+        // --- Event energy deposition (CrystalHit) ---
+        constexpr auto edepBins{50};
+        const auto maximumEdep{std::max(*std::max_element(cpuEdepValues->begin(), cpuEdepValues->end()),
+                                        *std::max_element(gpuEdepValues->begin(), gpuEdepValues->end()))};
+        const auto edepMaximum{std::max(1.0, maximumEdep * 1.05)};
+        const auto edepTitle{"event total energy deposition;Edep [MeV];Events"};
+        auto cpuEdepHistogram{cpuData.Histo1D({"cpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
+        auto gpuEdepHistogram{gpuData.Histo1D({"gpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
+
+        // --- Sensor time of flight (SensorHit) ---
+        const auto tofValid{std::all_of(cpuTofValues->begin(), cpuTofValues->end(),
+                                        [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
+                            std::all_of(gpuTofValues->begin(), gpuTofValues->end(),
+                                        [](const auto value) { return std::isfinite(value) && value >= 0.0; })};
+        const auto maximumTof{std::max(*std::max_element(cpuTofValues->begin(), cpuTofValues->end()),
+                                       *std::max_element(gpuTofValues->begin(), gpuTofValues->end()))};
+        const auto tofMaximum{std::max(1000.0, std::ceil(maximumTof + 1.0))};
         auto cpuTofHistogram{cpuSensorData.Histo1D(
-            {"cpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0,
-             tofPlotMaximum},
-            "timeOfFlight")};
+            {"cpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
         auto gpuTofHistogram{gpuSensorData.Histo1D(
-            {"gpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0,
-             tofPlotMaximum},
-            "timeOfFlight")};
-        constexpr auto tofShapeBins{40};
-        auto cpuTofShapeHistogram{cpuSensorData.Histo1D(
-            {"cpu_timeOfFlight_shape", "time of flight;ns;Entries",
-             tofShapeBins, 0.0, tofPlotMaximum},
-            "timeOfFlight")};
-        auto gpuTofShapeHistogram{gpuSensorData.Histo1D(
-            {"gpu_timeOfFlight_shape", "time of flight;ns;Entries",
-             tofShapeBins, 0.0, tofPlotMaximum},
-            "timeOfFlight")};
-        const auto tofComparisonEdges{
-            BuildComparisonEdges(*cpuTofValues, *gpuTofValues)};
-        if (tofComparisonEdges.size() < 2U) {
-            throw std::runtime_error(
-                "unable to construct TOF comparison bins");
-        }
-        const auto tofComparisonBins{static_cast<int>(
-            tofComparisonEdges.size() - std::size_t{1})};
-        auto cpuTofComparisonHistogram{cpuSensorData.Histo1D(
-            {"cpu_timeOfFlight_comparison", "time of flight;ns;Entries",
-             tofComparisonBins, tofComparisonEdges.data()},
-            "timeOfFlight")};
-        auto gpuTofComparisonHistogram{gpuSensorData.Histo1D(
-            {"gpu_timeOfFlight_comparison", "time of flight;ns;Entries",
-             tofComparisonBins, tofComparisonEdges.data()},
-            "timeOfFlight")};
-        auto cpuOccupancyHistogram{cpuSensorData.Histo1D(
-            {"cpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64,
-             0.0, 64.0},
-            "sensorID")};
-        auto gpuOccupancyHistogram{gpuSensorData.Histo1D(
-            {"gpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64,
-             0.0, 64.0},
-            "sensorID")};
+            {"gpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
 
-        auto* cpuHistogramPtr{cpuHistogram.GetPtr()};
-        auto* gpuHistogramPtr{gpuHistogram.GetPtr()};
-        auto* cpuComparisonHistogramPtr{cpuComparisonHistogram.GetPtr()};
-        auto* gpuComparisonHistogramPtr{gpuComparisonHistogram.GetPtr()};
-        auto* cpuEventEnergyHistogramPtr{cpuEventEnergyHistogram.GetPtr()};
-        auto* gpuEventEnergyHistogramPtr{gpuEventEnergyHistogram.GetPtr()};
-        auto* cpuEventEnergyComparisonHistogramPtr{
-            cpuEventEnergyComparisonHistogram.GetPtr()};
-        auto* gpuEventEnergyComparisonHistogramPtr{
-            gpuEventEnergyComparisonHistogram.GetPtr()};
-        auto* cpuTofHistogramPtr{cpuTofHistogram.GetPtr()};
-        auto* gpuTofHistogramPtr{gpuTofHistogram.GetPtr()};
-        auto* cpuTofShapeHistogramPtr{cpuTofShapeHistogram.GetPtr()};
-        auto* gpuTofShapeHistogramPtr{gpuTofShapeHistogram.GetPtr()};
-        auto* cpuTofComparisonHistogramPtr{
-            cpuTofComparisonHistogram.GetPtr()};
-        auto* gpuTofComparisonHistogramPtr{
-            gpuTofComparisonHistogram.GetPtr()};
-        auto* cpuOccupancyHistogramPtr{cpuOccupancyHistogram.GetPtr()};
-        auto* gpuOccupancyHistogramPtr{gpuOccupancyHistogram.GetPtr()};
-        const auto nOptPhoRangeValid{
-            std::all_of(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end(),
-                        [](const auto value) { return value >= 0; }) &&
-            std::all_of(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end(),
-                        [](const auto value) { return value >= 0; }) &&
-            !HasOutOfRange(*cpuHistogramPtr) &&
-            !HasOutOfRange(*gpuHistogramPtr)};
-        const auto nOptPhoComparison{CompareHistograms(
-            cpuComparisonHistogramPtr, gpuComparisonHistogramPtr)};
-        const auto tofComparison{CompareHistograms(
-            cpuTofComparisonHistogramPtr, gpuTofComparisonHistogramPtr)};
-        const auto tofShapeComparison{CompareShapes(
-            cpuTofShapeHistogramPtr, gpuTofShapeHistogramPtr)};
-        const auto occupancyComparison{CompareHistograms(
-            cpuOccupancyHistogramPtr, gpuOccupancyHistogramPtr)};
-        const auto eventEnergyComparison{CompareHistograms(
-            cpuEventEnergyComparisonHistogramPtr,
-            gpuEventEnergyComparisonHistogramPtr)};
-        const auto eventEnergyRangeValid{
-            std::all_of(cpuEdepValues->begin(), cpuEdepValues->end(),
-                        [](const auto value) {
-                            return std::isfinite(value) && value >= 0.0;
-                        }) &&
-            std::all_of(gpuEdepValues->begin(), gpuEdepValues->end(),
-                        [](const auto value) {
-                            return std::isfinite(value) && value >= 0.0;
-                        }) &&
-            !HasOutOfRange(*cpuEventEnergyHistogramPtr) &&
-            !HasOutOfRange(*gpuEventEnergyHistogramPtr)};
-        const auto tofRangeValid{
-            tofValuesFiniteAndNonNegative &&
-            !HasOutOfRange(*cpuTofHistogramPtr) &&
-            !HasOutOfRange(*gpuTofHistogramPtr)};
-        const auto occupancyRangeValid{
-            !HasOutOfRange(*cpuOccupancyHistogramPtr) &&
-            !HasOutOfRange(*gpuOccupancyHistogramPtr)};
-        const auto chi2{nOptPhoComparison.fChi2};
-        const auto ndf{nOptPhoComparison.fNdf};
-        const auto igood{nOptPhoComparison.fGoodnessFlag};
-        const auto pValue{nOptPhoComparison.fPValue};
-        const auto zValue{nOptPhoComparison.fZScore};
-        const auto relativeTotalDifference{
-            std::abs(static_cast<double>(gpuTotal) - static_cast<double>(cpuTotal)) /
-            static_cast<double>(cpuTotal)};
+        // --- Sensor pixel occupancy (SensorHit) ---
+        auto cpuOccupancyHistogram{cpuSensorData.Histo1D(
+            {"cpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64, 0.0, 64.0}, "sensorID")};
+        auto gpuOccupancyHistogram{gpuSensorData.Histo1D(
+            {"gpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64, 0.0, 64.0}, "sensorID")};
+
+        // Materialise all booked histograms.
+        auto* cpuNOptPho{cpuNOptPhoHistogram.GetPtr()};
+        auto* gpuNOptPho{gpuNOptPhoHistogram.GetPtr()};
+        auto* cpuEdep{cpuEdepHistogram.GetPtr()};
+        auto* gpuEdep{gpuEdepHistogram.GetPtr()};
+        auto* cpuTof{cpuTofHistogram.GetPtr()};
+        auto* gpuTof{gpuTofHistogram.GetPtr()};
+        auto* cpuOccupancy{cpuOccupancyHistogram.GetPtr()};
+        auto* gpuOccupancy{gpuOccupancyHistogram.GetPtr()};
+
+        // Derive counts and moments from the materialised histograms instead
+        // of re-running dataframe aggregations.
+        const auto cpuEntries{static_cast<std::uint64_t>(cpuNOptPho->GetEntries())};
+        const auto gpuEntries{static_cast<std::uint64_t>(gpuNOptPho->GetEntries())};
+        const auto cpuTotal{
+            static_cast<std::uint64_t>(std::accumulate(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end(), 0LL))};
+        const auto gpuTotal{
+            static_cast<std::uint64_t>(std::accumulate(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end(), 0LL))};
+        const auto cpuMean{cpuNOptPho->GetMean()};
+        const auto gpuMean{gpuNOptPho->GetMean()};
+        const auto cpuRms{cpuNOptPho->GetStdDev()};
+        const auto gpuRms{gpuNOptPho->GetStdDev()};
+        const auto cpuEdepEntries{cpuEdepValues->size()};
+        const auto gpuEdepEntries{gpuEdepValues->size()};
+        const auto cpuEdepMean{cpuEdep->GetMean()};
+        const auto gpuEdepMean{gpuEdep->GetMean()};
+        const auto cpuEdepRms{cpuEdep->GetStdDev()};
+        const auto gpuEdepRms{gpuEdep->GetStdDev()};
+        const auto cpuSensorEntries{static_cast<std::uint64_t>(cpuTof->GetEntries())};
+        const auto gpuSensorEntries{static_cast<std::uint64_t>(gpuTof->GetEntries())};
+        const auto cpuTofMean{cpuTof->GetMean()};
+        const auto gpuTofMean{gpuTof->GetMean()};
+        const auto cpuTofRms{cpuTof->GetStdDev()};
+        const auto gpuTofRms{gpuTof->GetStdDev()};
+
+        if (cpuEntries < 500U || gpuEntries < 500U) {
+            throw std::runtime_error("CrystalHit contains too few entries");
+        }
+        if (cpuTotal == 0U || gpuTotal == 0U) {
+            throw std::runtime_error("nOptPho total is zero");
+        }
+        if (cpuSensorEntries == 0U || gpuSensorEntries == 0U) {
+            throw std::runtime_error("SensorHit contains no detections");
+        }
+        const auto nOptPhoRangeValid{std::all_of(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end(),
+                                                 [](const auto value) { return value >= 0; }) &&
+                                     std::all_of(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end(),
+                                                 [](const auto value) { return value >= 0; }) &&
+                                     !HasOutOfRange(*cpuNOptPho) && !HasOutOfRange(*gpuNOptPho)};
+        const auto edepRangeValid{std::all_of(cpuEdepValues->begin(), cpuEdepValues->end(),
+                                              [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
+                                  std::all_of(gpuEdepValues->begin(), gpuEdepValues->end(),
+                                              [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
+                                  !HasOutOfRange(*cpuEdep) && !HasOutOfRange(*gpuEdep)};
+        const auto tofRangeValid{tofValid && !HasOutOfRange(*cpuTof) && !HasOutOfRange(*gpuTof)};
+        const auto occupancyRangeValid{!HasOutOfRange(*cpuOccupancy) && !HasOutOfRange(*gpuOccupancy)};
+
+        const auto nOptPhoPValue{cpuNOptPho->Chi2Test(gpuNOptPho, "UU P OF")};
+        const auto tofPValue{cpuTof->Chi2Test(gpuTof, "UU P OF")};
+        const auto tofShapePValue{cpuTof->KolmogorovTest(gpuTof)};
+        const auto occupancyPValue{cpuOccupancy->Chi2Test(gpuOccupancy, "UU P OF")};
+        const auto edepPValue{cpuEdep->Chi2Test(gpuEdep, "UU P OF")};
+
+        const auto nOptPhoZ{ZScore(nOptPhoPValue)};
+        const auto tofZ{ZScore(tofPValue)};
+        const auto occupancyZ{ZScore(occupancyPValue)};
+        const auto edepZ{ZScore(edepPValue)};
+
+        const auto relativeTotalDifference{std::abs(static_cast<double>(gpuTotal) - static_cast<double>(cpuTotal)) /
+                                           static_cast<double>(cpuTotal)};
         const auto relativeSensorDifference{
-            std::abs(static_cast<double>(*gpuSensorEntries) -
-                     static_cast<double>(*cpuSensorEntries)) /
-            static_cast<double>(*cpuSensorEntries)};
+            std::abs(static_cast<double>(gpuSensorEntries) - static_cast<double>(cpuSensorEntries)) /
+            static_cast<double>(cpuSensorEntries)};
         const auto sensorTotalPassed{relativeSensorDifference <= 0.10};
-        const auto nOptPhoMeanRelativeDifference{
-            std::isfinite(*cpuMean) && std::isfinite(*gpuMean) ?
-                std::abs(*gpuMean - *cpuMean) /
-                    std::max(std::abs(*cpuMean),
-                             std::numeric_limits<double>::epsilon()) :
-                std::numeric_limits<double>::infinity()};
-        const auto nOptPhoRmsRelativeDifference{
-            std::isfinite(*cpuRms) && std::isfinite(*gpuRms) ?
-                std::abs(*gpuRms - *cpuRms) /
-                    std::max(std::abs(*cpuRms),
-                             std::numeric_limits<double>::epsilon()) :
-                std::numeric_limits<double>::infinity()};
-        const auto edepEntryRelativeDifference{
-            std::abs(static_cast<double>(gpuEdepValues->size()) -
-                     static_cast<double>(cpuEdepValues->size())) /
-            std::max(static_cast<double>(cpuEdepValues->size()),
-                     std::numeric_limits<double>::epsilon())};
-        const auto edepMeanRelativeDifference{
-            std::isfinite(*cpuEdepMean) && std::isfinite(*gpuEdepMean) ?
-                std::abs(*gpuEdepMean - *cpuEdepMean) /
-                    std::max(std::abs(*cpuEdepMean),
-                             std::numeric_limits<double>::epsilon()) :
-                std::numeric_limits<double>::infinity()};
-        const auto edepRmsRelativeDifference{
-            std::isfinite(*cpuEdepRms) && std::isfinite(*gpuEdepRms) ?
-                std::abs(*gpuEdepRms - *cpuEdepRms) /
-                    std::max(std::abs(*cpuEdepRms),
-                             std::numeric_limits<double>::epsilon()) :
-                std::numeric_limits<double>::infinity()};
-        const auto validTof{std::isfinite(*cpuTofMean) &&
-                            std::isfinite(*gpuTofMean) &&
-                            std::isfinite(*cpuTofRms) &&
-                            std::isfinite(*gpuTofRms)};
-        const auto tofMeanRelativeDifference{
-            validTof ? std::abs(*gpuTofMean - *cpuTofMean) /
-                           std::max(std::abs(*cpuTofMean),
-                                    std::numeric_limits<double>::epsilon()) :
-                       std::numeric_limits<double>::infinity()};
-        const auto tofRmsRelativeDifference{
-            validTof ? std::abs(*gpuTofRms - *cpuTofRms) /
-                           std::max(std::abs(*cpuTofRms),
-                                    std::numeric_limits<double>::epsilon()) :
-                       std::numeric_limits<double>::infinity()};
+        const auto nOptPhoMeanRelDiff{std::abs(gpuMean - cpuMean) /
+                                      std::max(std::abs(cpuMean), std::numeric_limits<double>::epsilon())};
+        const auto nOptPhoRmsRelDiff{std::abs(gpuRms - cpuRms) /
+                                     std::max(std::abs(cpuRms), std::numeric_limits<double>::epsilon())};
+        const auto edepEntryRelDiff{
+            std::abs(static_cast<double>(gpuEdepEntries) - static_cast<double>(cpuEdepEntries)) /
+            std::max(static_cast<double>(cpuEdepEntries), std::numeric_limits<double>::epsilon())};
+        const auto edepMeanRelDiff{std::abs(gpuEdepMean - cpuEdepMean) /
+                                   std::max(std::abs(cpuEdepMean), std::numeric_limits<double>::epsilon())};
+        const auto edepRmsRelDiff{std::abs(gpuEdepRms - cpuEdepRms) /
+                                  std::max(std::abs(cpuEdepRms), std::numeric_limits<double>::epsilon())};
+        const auto tofMeanRelDiff{std::abs(gpuTofMean - cpuTofMean) /
+                                  std::max(std::abs(cpuTofMean), std::numeric_limits<double>::epsilon())};
+        const auto tofRmsRelDiff{std::abs(gpuTofRms - cpuTofRms) /
+                                 std::max(std::abs(cpuTofRms), std::numeric_limits<double>::epsilon())};
+
+        // CPU and GPU use independent random streams after optical offload.
+        // Gate the nOptPho spectrum with aggregate moments and the total-count
+        // tolerance; gate the other distributions with the chi-square shape
+        // test plus moment tolerances.
         constexpr auto tofShapePValueMinimum{0.01};
         constexpr auto tofMeanRelativeTolerance{0.01};
         constexpr auto tofRmsRelativeTolerance{0.05};
-        // CPU and GPU use independent random streams after optical offload.
-        // Keep the nOptPho chi-square as a diagnostic and gate the independent
-        // samples with aggregate moments and the total-count tolerance.
         constexpr auto nOptPhoMeanRelativeTolerance{0.05};
         constexpr auto nOptPhoRmsRelativeTolerance{0.10};
         constexpr auto edepEntryRelativeTolerance{0.01};
         constexpr auto edepMeanRelativeTolerance{0.02};
         constexpr auto edepRmsRelativeTolerance{0.05};
+
         const auto totalPassed{relativeTotalDifference <= 0.10};
-        const auto nOptPhoPassed{
-            nOptPhoRangeValid && nOptPhoComparison.fValid &&
-            nOptPhoMeanRelativeDifference <= nOptPhoMeanRelativeTolerance &&
-            nOptPhoRmsRelativeDifference <= nOptPhoRmsRelativeTolerance};
-        const auto edepShapePassed{ComparisonPassed(
-            eventEnergyComparison, eventEnergyRangeValid)};
+        const auto nOptPhoPassed{nOptPhoRangeValid && nOptPhoMeanRelDiff <= nOptPhoMeanRelativeTolerance &&
+                                 nOptPhoRmsRelDiff <= nOptPhoRmsRelativeTolerance};
         const auto edepPassed{
-            edepShapePassed &&
-            edepEntryRelativeDifference <= edepEntryRelativeTolerance &&
-            edepMeanRelativeDifference <= edepMeanRelativeTolerance &&
-            edepRmsRelativeDifference <= edepRmsRelativeTolerance};
-        const auto edepStatus{!eventEnergyRangeValid ||
-                                      !eventEnergyComparison.fValid ?
-                                  "INVALID" :
-                              edepPassed ?
-                                  "PASSED" :
-                                  "FAILED"};
-        const auto tofPassed{
-            validTof && tofRangeValid && tofComparison.fValid &&
-            tofShapeComparison.fValid &&
-            tofShapeComparison.fPValue >= tofShapePValueMinimum &&
-            tofMeanRelativeDifference <= tofMeanRelativeTolerance &&
-            tofRmsRelativeDifference <= tofRmsRelativeTolerance};
-        const auto occupancyPassed{
-            ComparisonPassed(occupancyComparison, occupancyRangeValid)};
-        const auto tofStatus{!validTof || !tofRangeValid ||
-                                     !tofComparison.fValid ||
-                                     !tofShapeComparison.fValid ?
-                                 "INVALID" :
-                             tofPassed ?
-                                 "PASSED" :
-                                 "FAILED"};
-        const auto occupancyStatus{
-            ComparisonStatus(occupancyComparison, occupancyRangeValid)};
-        const auto distributionsPassed{nOptPhoPassed && edepPassed &&
-                                       tofPassed &&
-                                       occupancyPassed};
-        const auto regressionStatus{totalPassed && sensorTotalPassed &&
-                                            distributionsPassed ?
-                                        "PASSED" :
-                                        "FAILED"};
-        const auto regressionPassed{totalPassed && sensorTotalPassed &&
-                                    distributionsPassed};
-        const auto hasTiming{cpuElapsedSeconds > 0.0 &&
-                             gpuElapsedSeconds > 0.0};
-        const auto gpuSpeedup{
-            hasTiming ? cpuElapsedSeconds / gpuElapsedSeconds : 0.0};
+            ComparisonPassed(edepPValue, edepRangeValid) && edepEntryRelDiff <= edepEntryRelativeTolerance &&
+            edepMeanRelDiff <= edepMeanRelativeTolerance && edepRmsRelDiff <= edepRmsRelativeTolerance};
+        const auto edepStatus{!edepRangeValid ? "INVALID" : edepPassed ? "PASSED" : "FAILED"};
+        const auto tofPassed{tofRangeValid && tofShapePValue >= tofShapePValueMinimum &&
+                             tofMeanRelDiff <= tofMeanRelativeTolerance && tofRmsRelDiff <= tofRmsRelativeTolerance};
+        const auto occupancyPassed{ComparisonPassed(occupancyPValue, occupancyRangeValid)};
+        const auto tofStatus{!tofRangeValid ? "INVALID" : tofPassed ? "PASSED" : "FAILED"};
+        const auto occupancyStatus{ComparisonStatus(occupancyPValue, occupancyRangeValid)};
+        const auto distributionsPassed{nOptPhoPassed && edepPassed && tofPassed && occupancyPassed};
+        const auto regressionPassed{totalPassed && sensorTotalPassed && distributionsPassed};
+        const auto regressionStatus{regressionPassed ? "PASSED" : "FAILED"};
+        const auto hasTiming{cpuElapsedSeconds > 0.0 && gpuElapsedSeconds > 0.0};
+        const auto gpuSpeedup{hasTiming ? cpuElapsedSeconds / gpuElapsedSeconds : 0.0};
 
-        std::cout << std::fixed << std::setprecision(4)
-                  << "regression=" << regressionStatus << '\n'
-                  << "EventDetectedOpticalPhotonCount: cpu_total=" << cpuTotal
-                  << " gpu_total=" << gpuTotal
-                  << " relative_difference=" << relativeTotalDifference
-                  << " p_value=" << pValue
-                  << " z_score=" << zValue
-                  << " status=" << (nOptPhoPassed ? "PASSED" : "FAILED")
-                  << '\n'
-                  << "EventEnergyDeposition: cpu_entries="
-                  << cpuEdepValues->size()
-                  << " gpu_entries=" << gpuEdepValues->size()
-                  << " cpu_mean=" << *cpuEdepMean
-                  << " gpu_mean=" << *gpuEdepMean
-                  << " cpu_rms=" << *cpuEdepRms
-                  << " gpu_rms=" << *gpuEdepRms
-                  << " p_value=" << eventEnergyComparison.fPValue
-                  << " z_score=" << eventEnergyComparison.fZScore
-                  << " status=" << edepStatus << '\n'
-                  << "SensorDetectionCount: cpu_count=" << *cpuSensorEntries
-                  << " gpu_count=" << *gpuSensorEntries
-                  << " relative_difference=" << relativeSensorDifference
-                  << " status=" << (sensorTotalPassed ? "PASSED" : "FAILED")
-                  << '\n'
-                  << "SensorTimeOfFlight: cpu_mean=" << *cpuTofMean
-                  << " gpu_mean=" << *gpuTofMean
-                  << " cpu_rms=" << *cpuTofRms
-                  << " gpu_rms=" << *gpuTofRms
-                  << " p_value=" << tofComparison.fPValue
-                  << " z_score=" << tofComparison.fZScore
-                  << " shape_p_value=" << tofShapeComparison.fPValue
-                  << " status=" << tofStatus << '\n'
-                  << "SensorPixelOccupancy: p_value="
-                  << occupancyComparison.fPValue
-                  << " z_score=" << occupancyComparison.fZScore
-                  << " status=" << occupancyStatus << '\n';
+        std::ostringstream summary{};
+        summary << std::fixed << std::setprecision(6) << "Status: " << regressionStatus << '\n'
+                << "EventDetectedOpticalPhotonCount: cpu_total=" << cpuTotal << " gpu_total=" << gpuTotal
+                << " relative_difference=" << relativeTotalDifference << " p_value=" << nOptPhoPValue
+                << " z_score=" << nOptPhoZ << " status=" << (nOptPhoPassed ? "PASSED" : "FAILED") << '\n'
+                << "EventEnergyDeposition: cpu_entries=" << cpuEdepEntries << " gpu_entries=" << gpuEdepEntries
+                << " cpu_mean=" << cpuEdepMean << " gpu_mean=" << gpuEdepMean << " cpu_rms=" << cpuEdepRms
+                << " gpu_rms=" << gpuEdepRms << " mean_relative_difference=" << edepMeanRelDiff
+                << " rms_relative_difference=" << edepRmsRelDiff << " p_value=" << edepPValue << " z_score=" << edepZ
+                << " status=" << edepStatus << '\n'
+                << "SensorDetectionCount: cpu_count=" << cpuSensorEntries << " gpu_count=" << gpuSensorEntries
+                << " relative_difference=" << relativeSensorDifference
+                << " status=" << (sensorTotalPassed ? "PASSED" : "FAILED") << '\n'
+                << "SensorTimeOfFlight: cpu_mean=" << cpuTofMean << " gpu_mean=" << gpuTofMean
+                << " cpu_rms=" << cpuTofRms << " gpu_rms=" << gpuTofRms << " p_value=" << tofPValue
+                << " z_score=" << tofZ << " shape_p_value=" << tofShapePValue << " status=" << tofStatus << '\n'
+                << "SensorPixelOccupancy: p_value=" << occupancyPValue << " z_score=" << occupancyZ
+                << " status=" << occupancyStatus << '\n';
         if (hasTiming) {
-            std::cout << std::setprecision(6)
-                      << "Timing: cpu_reference=" << cpuElapsedSeconds
-                      << "s gpu=" << gpuElapsedSeconds
-                      << "s speedup=" << std::setprecision(4)
-                      << gpuSpeedup << "x\n";
+            summary << "Timing: cpu_reference=" << cpuElapsedSeconds << "s gpu=" << gpuElapsedSeconds
+                    << "s speedup=" << gpuSpeedup << "x\n";
         } else {
-            std::cout << "Timing: unavailable\n";
+            summary << "Timing: unavailable\n";
         }
+        std::cout << summary.str();
 
-        TH1D cpuPlot{*cpuHistogramPtr};
-        TH1D gpuPlot{*gpuHistogramPtr};
-        cpuPlot.SetName("cpu_nOptPho");
-        gpuPlot.SetName("gpu_nOptPho");
-        cpuPlot.SetDirectory(nullptr);
-        gpuPlot.SetDirectory(nullptr);
-
-        TH1D pull{
-            "nOptPho_pull",
-            "nOptPho pull;nOptPho;Pull",
-            spectrumPlotBins,
-            spectrumMinimum,
-            spectrumMaximum};
-        for (auto i{1}; i <= spectrumPlotBins; ++i) {
-            const auto difference{
-                cpuPlot.GetBinContent(i) - gpuPlot.GetBinContent(i)};
-            const auto error{
-                std::hypot(cpuPlot.GetBinError(i), gpuPlot.GetBinError(i))};
-            pull.SetBinContent(i, error == 0.0 ? 0.0 : difference / error);
-            pull.SetBinError(i, 1.0);
-        }
-
-        TCanvas canvas{"noptpho_comparison", "nOptPho CPU/GPU comparison", 1000, 800};
-        TPad upperPad{"noptpho_histogram", "noptpho_histogram", 0.0, 0.4, 1.0, 1.0};
-        TPad lowerPad{"noptpho_pull_pad", "noptpho_pull_pad", 0.0, 0.0, 1.0, 0.4};
-        upperPad.SetBottomMargin(0.06);
-        lowerPad.SetTopMargin(0.06);
-        lowerPad.SetBottomMargin(0.20);
-        upperPad.Draw();
-        lowerPad.Draw();
-
-        upperPad.cd();
-        cpuPlot.SetLineColor(kRed + 1);
-        gpuPlot.SetLineColor(kBlue + 1);
-        cpuPlot.SetLineWidth(2);
-        gpuPlot.SetLineWidth(2);
-        cpuPlot.SetStats(false);
-        gpuPlot.SetStats(false);
-        cpuPlot.Draw("HIST");
-        gpuPlot.Draw("HIST SAME");
-        TLegend legend{0.14, 0.73, 0.43, 0.91};
-        legend.AddEntry(&cpuPlot, "CPU / Geant4 full-core reference", "l");
         std::ostringstream gpuLegendText{};
         gpuLegendText << "GPU / OptiX";
         if (hasTiming) {
-            gpuLegendText << " (" << std::fixed << std::setprecision(2)
-                          << gpuSpeedup
-                          << "x vs CPU reference)";
+            gpuLegendText << " (" << std::fixed << std::setprecision(2) << gpuSpeedup << "x vs CPU reference)";
         }
         const auto gpuLegendLabel{gpuLegendText.str()};
-        legend.AddEntry(&gpuPlot, gpuLegendLabel.c_str(), "l");
-        legend.Draw();
 
-        lowerPad.cd();
-        pull.SetStats(false);
-        pull.Draw("HIST");
-        TLine zeroLine{pull.GetXaxis()->GetXmin(), 0.0, pull.GetXaxis()->GetXmax(), 0.0};
-        zeroLine.SetLineStyle(2);
-        zeroLine.Draw();
-
-        TH1D cpuEventEnergyPlot{*cpuEventEnergyHistogramPtr};
-        TH1D gpuEventEnergyPlot{*gpuEventEnergyHistogramPtr};
-        cpuEventEnergyPlot.SetName("cpu_event_total_Edep_plot");
-        gpuEventEnergyPlot.SetName("gpu_event_total_Edep_plot");
-        cpuEventEnergyPlot.SetDirectory(nullptr);
-        gpuEventEnergyPlot.SetDirectory(nullptr);
-
-        TH1D eventEnergyPull{
-            "event_total_Edep_pull",
-            "event total energy deposition pull;Edep [MeV];Pull",
-            eventEnergyPlotBins,
-            0.0,
-            eventEnergyPlotMaximum};
-        for (auto i{1}; i <= eventEnergyPlotBins; ++i) {
-            const auto difference{cpuEventEnergyPlot.GetBinContent(i) -
-                                  gpuEventEnergyPlot.GetBinContent(i)};
-            const auto error{std::hypot(cpuEventEnergyPlot.GetBinError(i),
-                                        gpuEventEnergyPlot.GetBinError(i))};
-            eventEnergyPull.SetBinContent(
-                i, error == 0.0 ? 0.0 : difference / error);
-            eventEnergyPull.SetBinError(i, 1.0);
-        }
-
-        TCanvas eventEnergyCanvas{
-            "edep_comparison",
-            "Event total energy deposition CPU/GPU comparison",
-            1000,
-            800};
-        TPad eventEnergyUpperPad{
-            "event_energy_histogram", "event_energy_histogram", 0.0, 0.4,
-            1.0, 1.0};
-        TPad eventEnergyLowerPad{
-            "event_energy_pull_pad", "event_energy_pull_pad", 0.0, 0.0,
-            1.0, 0.4};
-        eventEnergyUpperPad.SetBottomMargin(0.06);
-        eventEnergyLowerPad.SetTopMargin(0.06);
-        eventEnergyLowerPad.SetBottomMargin(0.20);
-        eventEnergyUpperPad.Draw();
-        eventEnergyLowerPad.Draw();
-
-        eventEnergyUpperPad.cd();
-        cpuEventEnergyPlot.SetLineColor(kRed + 1);
-        gpuEventEnergyPlot.SetLineColor(kBlue + 1);
-        cpuEventEnergyPlot.SetLineWidth(2);
-        gpuEventEnergyPlot.SetLineWidth(2);
-        cpuEventEnergyPlot.SetStats(false);
-        gpuEventEnergyPlot.SetStats(false);
-        cpuEventEnergyPlot.Draw("HIST");
-        gpuEventEnergyPlot.Draw("HIST SAME");
-        TLegend eventEnergyLegend{0.14, 0.73, 0.43, 0.91};
-        eventEnergyLegend.AddEntry(
-            &cpuEventEnergyPlot, "CPU / Geant4 full-core reference", "l");
-        eventEnergyLegend.AddEntry(&gpuEventEnergyPlot, "GPU / OptiX", "l");
-        eventEnergyLegend.Draw();
-
-        eventEnergyLowerPad.cd();
-        eventEnergyPull.SetStats(false);
-        eventEnergyPull.Draw("HIST");
-        TLine eventEnergyZeroLine{
-            eventEnergyPull.GetXaxis()->GetXmin(), 0.0,
-            eventEnergyPull.GetXaxis()->GetXmax(), 0.0};
-        eventEnergyZeroLine.SetLineStyle(2);
-        eventEnergyZeroLine.Draw();
-
-        TH1D cpuTofPlot{*cpuTofHistogramPtr};
-        TH1D gpuTofPlot{*gpuTofHistogramPtr};
-        cpuTofPlot.SetName("cpu_timeOfFlight_plot");
-        gpuTofPlot.SetName("gpu_timeOfFlight_plot");
-        cpuTofPlot.SetDirectory(nullptr);
-        gpuTofPlot.SetDirectory(nullptr);
-
-        TH1D tofPull{
-            "timeOfFlight_pull",
-            "time of flight pull;time of flight [ns];Pull",
-            cpuTofPlot.GetNbinsX(),
-            cpuTofPlot.GetXaxis()->GetXmin(),
-            cpuTofPlot.GetXaxis()->GetXmax()};
-        for (auto i{1}; i <= cpuTofPlot.GetNbinsX(); ++i) {
-            const auto difference{
-                cpuTofPlot.GetBinContent(i) - gpuTofPlot.GetBinContent(i)};
-            const auto error{
-                std::hypot(cpuTofPlot.GetBinError(i), gpuTofPlot.GetBinError(i))};
-            tofPull.SetBinContent(i, error == 0.0 ? 0.0 : difference / error);
-            tofPull.SetBinError(i, 1.0);
-        }
-
-        TCanvas tofCanvas{"tof_comparison", "TOF CPU/GPU comparison", 1000, 800};
-        TPad tofUpperPad{"tof_histogram", "tof_histogram", 0.0, 0.4, 1.0, 1.0};
-        TPad tofLowerPad{"tof_pull_pad", "tof_pull_pad", 0.0, 0.0, 1.0, 0.4};
-        tofUpperPad.SetBottomMargin(0.06);
-        tofLowerPad.SetTopMargin(0.06);
-        tofLowerPad.SetBottomMargin(0.20);
-        tofUpperPad.Draw();
-        tofLowerPad.Draw();
-
-        tofUpperPad.cd();
-        tofUpperPad.SetLogy();
-        cpuTofPlot.SetLineColor(kRed + 1);
-        gpuTofPlot.SetLineColor(kBlue + 1);
-        cpuTofPlot.SetLineWidth(2);
-        gpuTofPlot.SetLineWidth(2);
-        cpuTofPlot.SetMinimum(0.5);
-        gpuTofPlot.SetMinimum(0.5);
-        cpuTofPlot.SetStats(false);
-        gpuTofPlot.SetStats(false);
-        cpuTofPlot.Draw("HIST");
-        gpuTofPlot.Draw("HIST SAME");
-        TLegend tofLegend{0.64, 0.73, 0.93, 0.91};
-        tofLegend.AddEntry(&cpuTofPlot,
-                           "CPU / Geant4 full-core reference", "l");
-        tofLegend.AddEntry(&gpuTofPlot, "GPU / OptiX", "l");
-        tofLegend.Draw();
-
-        tofLowerPad.cd();
-        tofPull.SetStats(false);
-        tofPull.Draw("HIST");
-        TLine tofZeroLine{tofPull.GetXaxis()->GetXmin(), 0.0,
-                          tofPull.GetXaxis()->GetXmax(), 0.0};
-        tofZeroLine.SetLineStyle(2);
-        tofZeroLine.Draw();
-
-        const auto rootReportPath{
-            outputPath / "noptpho_regression_report.root"};
-        TFile report{rootReportPath.c_str(), "RECREATE"};
-        if (report.IsZombie()) {
-            throw std::runtime_error("unable to create regression report");
-        }
-        cpuHistogramPtr->Write("cpu_nOptPho");
-        gpuHistogramPtr->Write("gpu_nOptPho");
-        cpuComparisonHistogramPtr->Write("cpu_nOptPhoComparison");
-        gpuComparisonHistogramPtr->Write("gpu_nOptPhoComparison");
-        cpuEventEnergyHistogramPtr->Write("cpu_event_total_Edep");
-        gpuEventEnergyHistogramPtr->Write("gpu_event_total_Edep");
-        cpuEventEnergyComparisonHistogramPtr->Write(
-            "cpu_event_total_EdepComparison");
-        gpuEventEnergyComparisonHistogramPtr->Write(
-            "gpu_event_total_EdepComparison");
-        cpuTofHistogramPtr->Write("cpu_timeOfFlight");
-        gpuTofHistogramPtr->Write("gpu_timeOfFlight");
-        cpuTofShapeHistogramPtr->Write("cpu_timeOfFlightShape");
-        gpuTofShapeHistogramPtr->Write("gpu_timeOfFlightShape");
-        cpuTofComparisonHistogramPtr->Write("cpu_timeOfFlightComparison");
-        gpuTofComparisonHistogramPtr->Write("gpu_timeOfFlightComparison");
-        cpuOccupancyHistogramPtr->Write("cpu_sensorOccupancy");
-        gpuOccupancyHistogramPtr->Write("gpu_sensorOccupancy");
-        cpuPlot.Write();
-        gpuPlot.Write();
-        pull.Write();
-        canvas.Write();
-        cpuEventEnergyPlot.Write();
-        gpuEventEnergyPlot.Write();
-        eventEnergyPull.Write();
-        eventEnergyCanvas.Write();
-        cpuTofPlot.Write();
-        gpuTofPlot.Write();
-        tofPull.Write();
-        tofCanvas.Write();
-        TParameter<double> chi2Parameter{"chi2", chi2};
-        TParameter<int> ndfParameter{"ndf", ndf};
-        TParameter<int> igoodParameter{"igood", igood};
-        TParameter<double> pValueParameter{"pValue", pValue};
-        TParameter<double> zValueParameter{"Z", zValue};
-        TParameter<int> nOptPhoComparisonBinsParameter{
-            "nOptPhoComparisonBins", comparisonBins};
-        TParameter<double> nOptPhoMeanRelativeDifferenceParameter{
-            "nOptPhoMeanRelativeDifference", nOptPhoMeanRelativeDifference};
-        TParameter<double> nOptPhoRmsRelativeDifferenceParameter{
-            "nOptPhoRmsRelativeDifference", nOptPhoRmsRelativeDifference};
-        TParameter<bool> nOptPhoRangeValidParameter{
-            "nOptPhoRangeValid", nOptPhoRangeValid};
-        TParameter<bool> nOptPhoPassedParameter{
-            "nOptPhoPassed", nOptPhoPassed};
-        TParameter<double> eventEnergyChi2Parameter{
-            "eventEdepChi2", eventEnergyComparison.fChi2};
-        TParameter<int> eventEnergyNdfParameter{
-            "eventEdepNdf", eventEnergyComparison.fNdf};
-        TParameter<int> eventEnergyGoodnessFlagParameter{
-            "eventEdepGoodnessFlag", eventEnergyComparison.fGoodnessFlag};
-        TParameter<double> eventEnergyPValueParameter{
-            "eventEdepPValue", eventEnergyComparison.fPValue};
-        TParameter<double> eventEnergyZValueParameter{
-            "eventEdepZ", eventEnergyComparison.fZScore};
-        TParameter<int> eventEnergyComparisonBinsParameter{
-            "eventEdepComparisonBins", eventEnergyComparisonBins};
-        TParameter<bool> eventEnergyRangeValidParameter{
-            "eventEdepRangeValid", eventEnergyRangeValid};
-        TParameter<double> edepEntryRelativeDifferenceParameter{
-            "eventEdepEntryRelativeDifference", edepEntryRelativeDifference};
-        TParameter<double> edepMeanRelativeDifferenceParameter{
-            "eventEdepMeanRelativeDifference", edepMeanRelativeDifference};
-        TParameter<double> edepRmsRelativeDifferenceParameter{
-            "eventEdepRmsRelativeDifference", edepRmsRelativeDifference};
-        TParameter<bool> edepPassedParameter{"eventEdepPassed", edepPassed};
-        TParameter<double> totalDifferenceParameter{
-            "relativeTotalDifference", relativeTotalDifference};
-        TParameter<double> tofChi2Parameter{"tofChi2", tofComparison.fChi2};
-        TParameter<int> tofNdfParameter{"tofNdf", tofComparison.fNdf};
-        TParameter<int> tofGoodnessFlagParameter{
-            "tofGoodnessFlag", tofComparison.fGoodnessFlag};
-        TParameter<double> tofPValueParameter{
-            "tofPValue", tofComparison.fPValue};
-        TParameter<double> tofZValueParameter{"tofZ", tofComparison.fZScore};
-        TParameter<double> tofShapePValueParameter{
-            "tofShapePValue", tofShapeComparison.fPValue};
-        TParameter<double> tofMeanRelativeDifferenceParameter{
-            "tofMeanRelativeDifference", tofMeanRelativeDifference};
-        TParameter<double> tofRmsRelativeDifferenceParameter{
-            "tofRmsRelativeDifference", tofRmsRelativeDifference};
-        TParameter<bool> tofRangeValidParameter{"tofRangeValid", tofRangeValid};
-        TParameter<bool> tofPassedParameter{"tofPassed", tofPassed};
-        TParameter<double> occupancyChi2Parameter{
-            "occupancyChi2", occupancyComparison.fChi2};
-        TParameter<int> occupancyNdfParameter{
-            "occupancyNdf", occupancyComparison.fNdf};
-        TParameter<int> occupancyGoodnessFlagParameter{
-            "occupancyGoodnessFlag", occupancyComparison.fGoodnessFlag};
-        TParameter<double> occupancyPValueParameter{
-            "occupancyPValue", occupancyComparison.fPValue};
-        TParameter<double> occupancyZValueParameter{
-            "occupancyZ", occupancyComparison.fZScore};
-        TParameter<bool> occupancyRangeValidParameter{
-            "occupancyRangeValid", occupancyRangeValid};
-        TParameter<bool> occupancyPassedParameter{
-            "occupancyPassed", occupancyPassed};
-        TParameter<double> cpuElapsedSecondsParameter{
-            "cpuReferenceRealSeconds", cpuElapsedSeconds};
-        TParameter<double> gpuElapsedSecondsParameter{
-            "gpuElapsedSeconds", gpuElapsedSeconds};
-        TParameter<double> gpuSpeedupParameter{
-            "gpuSpeedupVsCpuReference", gpuSpeedup};
-        TParameter<bool> regressionPassedParameter{"regressionPassed",
-                                                   regressionPassed};
-        chi2Parameter.Write();
-        ndfParameter.Write();
-        igoodParameter.Write();
-        pValueParameter.Write();
-        zValueParameter.Write();
-        nOptPhoComparisonBinsParameter.Write();
-        nOptPhoMeanRelativeDifferenceParameter.Write();
-        nOptPhoRmsRelativeDifferenceParameter.Write();
-        nOptPhoRangeValidParameter.Write();
-        nOptPhoPassedParameter.Write();
-        eventEnergyChi2Parameter.Write();
-        eventEnergyNdfParameter.Write();
-        eventEnergyGoodnessFlagParameter.Write();
-        eventEnergyPValueParameter.Write();
-        eventEnergyZValueParameter.Write();
-        eventEnergyComparisonBinsParameter.Write();
-        eventEnergyRangeValidParameter.Write();
-        edepEntryRelativeDifferenceParameter.Write();
-        edepMeanRelativeDifferenceParameter.Write();
-        edepRmsRelativeDifferenceParameter.Write();
-        edepPassedParameter.Write();
-        totalDifferenceParameter.Write();
-        tofChi2Parameter.Write();
-        tofNdfParameter.Write();
-        tofGoodnessFlagParameter.Write();
-        tofPValueParameter.Write();
-        tofZValueParameter.Write();
-        tofShapePValueParameter.Write();
-        tofMeanRelativeDifferenceParameter.Write();
-        tofRmsRelativeDifferenceParameter.Write();
-        tofRangeValidParameter.Write();
-        tofPassedParameter.Write();
-        occupancyChi2Parameter.Write();
-        occupancyNdfParameter.Write();
-        occupancyGoodnessFlagParameter.Write();
-        occupancyPValueParameter.Write();
-        occupancyZValueParameter.Write();
-        occupancyRangeValidParameter.Write();
-        occupancyPassedParameter.Write();
-        cpuElapsedSecondsParameter.Write();
-        gpuElapsedSecondsParameter.Write();
-        gpuSpeedupParameter.Write();
-        regressionPassedParameter.Write();
-        report.Write();
-        report.Close();
-        const auto imagePath{figuresPath / "noptpho_comparison.png"};
-        canvas.SaveAs(imagePath.c_str());
-        const auto tofImagePath{figuresPath / "tof_comparison.png"};
-        tofCanvas.SaveAs(tofImagePath.c_str());
-        const auto eventEnergyImagePath{figuresPath / "edep_comparison.png"};
-        eventEnergyCanvas.SaveAs(eventEnergyImagePath.c_str());
+        DrawComparison(cpuNOptPho, gpuNOptPho, "noptpho_comparison", "nOptPho CPU/GPU comparison", "nOptPho_pull",
+                       ";nOptPho;Pull", figuresPath / "noptpho_comparison.png", false, 0.14, gpuLegendLabel.c_str());
+        DrawComparison(cpuEdep, gpuEdep, "edep_comparison", "Event total energy deposition CPU/GPU comparison",
+                       "event_total_Edep_pull", ";Edep [MeV];Pull", figuresPath / "edep_comparison.png", false, 0.14,
+                       "GPU / OptiX");
+        DrawComparison(cpuTof, gpuTof, "tof_comparison", "TOF CPU/GPU comparison", "timeOfFlight_pull",
+                       ";time of flight [ns];Pull", figuresPath / "tof_comparison.png", true, 0.64, "GPU / OptiX");
 
         const auto textOutputPath{outputPath / "regression_summary.txt"};
         std::ofstream outputFile{textOutputPath};
         if (!outputFile) {
             throw std::runtime_error("unable to create regression output");
         }
-        outputFile << std::fixed << std::setprecision(6)
-                   << "Status: " << regressionStatus << '\n'
-                   << "EventDetectedOpticalPhotonCount: cpu_total=" << cpuTotal
-                   << " gpu_total=" << gpuTotal
-                   << " relative_difference=" << relativeTotalDifference
-                   << " p_value=" << pValue
-                   << " z_score=" << zValue
-                   << " status=" << (nOptPhoPassed ? "PASSED" : "FAILED")
-                   << '\n'
-                   << "EventEnergyDeposition: cpu_entries="
-                   << cpuEdepValues->size()
-                   << " gpu_entries=" << gpuEdepValues->size()
-                   << " cpu_mean=" << *cpuEdepMean
-                   << " gpu_mean=" << *gpuEdepMean
-                   << " cpu_rms=" << *cpuEdepRms
-                   << " gpu_rms=" << *gpuEdepRms
-                   << " mean_relative_difference="
-                   << edepMeanRelativeDifference
-                   << " rms_relative_difference=" << edepRmsRelativeDifference
-                   << " p_value=" << eventEnergyComparison.fPValue
-                   << " z_score=" << eventEnergyComparison.fZScore
-                   << " status=" << edepStatus << '\n'
-                   << "SensorDetectionCount: cpu_count=" << *cpuSensorEntries
-                   << " gpu_count=" << *gpuSensorEntries
-                   << " relative_difference=" << relativeSensorDifference
-                   << " status=" << (sensorTotalPassed ? "PASSED" : "FAILED")
-                   << '\n'
-                   << "SensorTimeOfFlight: cpu_mean=" << *cpuTofMean
-                   << " gpu_mean=" << *gpuTofMean
-                   << " cpu_rms=" << *cpuTofRms
-                   << " gpu_rms=" << *gpuTofRms
-                   << " p_value=" << tofComparison.fPValue
-                   << " z_score=" << tofComparison.fZScore
-                   << " shape_p_value=" << tofShapeComparison.fPValue
-                   << " status=" << tofStatus << '\n'
-                   << "SensorPixelOccupancy: p_value="
-                   << occupancyComparison.fPValue
-                   << " z_score=" << occupancyComparison.fZScore
-                   << " status=" << occupancyStatus << '\n';
-        if (hasTiming) {
-            outputFile << "Timing: cpu_reference=" << cpuElapsedSeconds
-                       << " s gpu=" << gpuElapsedSeconds
-                       << " s speedup=" << gpuSpeedup << "x\n";
-        } else {
-            outputFile << "Timing: unavailable\n";
-        }
+        outputFile << summary.str();
         outputFile.close();
 
         if (!regressionPassed) {

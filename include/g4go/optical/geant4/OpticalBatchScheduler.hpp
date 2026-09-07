@@ -4,7 +4,6 @@
 #include "g4go/optical/PhotonTransportConfig.hpp"
 #include "g4go/optical/Scene.hpp"
 
-#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -19,23 +18,22 @@
 namespace G4GO::Optical {
 
 struct PhotonBatchStatistics {
-    std::uint64_t fBatchCount{};
-    std::uint64_t fEventCount{};
-    std::uint64_t fPhotonCount{};
-    std::uint64_t fMaxBatchPhotonCount{};
-    std::uint64_t fMaxBatchEventCount{};
-    std::uint64_t fQueueHighWaterMark{};
-    std::uint64_t fMinBatchPhotonCount{};
-    std::uint64_t fTotalQueueWaitCount{};
-    double fSchedulerInputWaitMs{};
-    double fSchedulerGpuWaitMs{};
-    PhotonTransportPerformance fPerformance{};
+    std::uint64_t batchCount{};
+    std::uint64_t eventCount{};
+    std::uint64_t photonCount{};
+    std::uint64_t maxBatchPhotonCount{};
+    std::uint64_t maxBatchEventCount{};
+    std::uint64_t queueHighWaterMark{};
+    std::uint64_t minBatchPhotonCount{};
+    std::uint64_t totalQueueWaitCount{};
+    double schedulerInputWaitMs{};
+    double schedulerGpuWaitMs{};
+    PhotonTransportPerformance performance{};
 };
 
 class OpticalBatchScheduler final {
 public:
-    explicit OpticalBatchScheduler(
-        PhotonTransportConfig configuration);
+    explicit OpticalBatchScheduler(PhotonTransportConfig configuration);
     ~OpticalBatchScheduler();
 
     OpticalBatchScheduler(const OpticalBatchScheduler&) = delete;
@@ -44,13 +42,10 @@ public:
     auto BeginRun() -> void;
     auto EndRun() -> void;
 
-    auto Submit(OpticalSubmission submission)
-        -> PhotonTransportFuture;
+    auto Submit(OpticalSubmission submission) -> PhotonTransportFuture;
 
     auto SelectedBackend() const -> PhotonTransportBackend;
-    auto PerformanceDiagnosticsEnabled() const -> bool {
-        return fConfiguration.fEnablePerformanceDiagnostics;
-    }
+    auto PerformanceDiagnosticsEnabled() const -> bool { return fConfiguration.enablePerformanceDiagnostics; }
     auto ExportedScene() const -> const Scene& { return fScene; }
     auto RunStatistics() const -> const PhotonTransportStatistics&;
     auto BatchStatistics() const -> const PhotonBatchStatistics&;
@@ -58,16 +53,14 @@ public:
 
 private:
     struct TransportRequest {
-        OpticalSubmission fSubmission{};
-        std::shared_ptr<std::promise<PhotonTransportOutput>> fPromise{};
-        std::chrono::steady_clock::time_point fQueuedAt{};
+        OpticalSubmission submission{};
+        std::shared_ptr<std::promise<PhotonTransportOutput>> promise{};
+        std::chrono::steady_clock::time_point queuedAt{};
     };
 
     auto ProcessBatches() -> void;
-    auto CompleteBatch(std::vector<TransportRequest> requests,
-                       std::size_t photonCount,
-                       PhotonTransportOutput transportOutput)
-        -> void;
+    auto CompleteBatch(std::vector<TransportRequest>& requests, std::size_t photonCount,
+                       PhotonTransportOutput transportOutput) -> void;
     auto FailPendingRequests(std::exception_ptr error) -> void;
 
     PhotonTransportConfig fConfiguration;
