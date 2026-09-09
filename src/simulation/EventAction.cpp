@@ -25,11 +25,12 @@ auto EventAction::BeginOfEventAction(const G4Event* event) -> void { fAdapter->B
 auto EventAction::EndOfEventAction(const G4Event* event) -> void {
     const auto transportFuture{fAdapter->EndEvent()};
 
-    auto scintillatorHCid{G4SDManager::GetSDMpointer()->GetCollectionID("ScintillatorHitsCollection")};
-    auto scintHC{static_cast<G4GO::Detector::ScintillatorHC*>(event->GetHCofThisEvent()->GetHC(scintillatorHCid))};
+    auto scintillatorHitsCollectionID{G4SDManager::GetSDMpointer()->GetCollectionID("ScintillatorHitsCollection")};
+    auto scintillatorHC{
+        static_cast<G4GO::Detector::ScintillatorHC*>(event->GetHCofThisEvent()->GetHC(scintillatorHitsCollectionID))};
 
-    auto sensorHCid{G4SDManager::GetSDMpointer()->GetCollectionID("SensorHitsCollection")};
-    auto sensorHC{static_cast<G4GO::Detector::SensorHC*>(event->GetHCofThisEvent()->GetHC(sensorHCid))};
+    auto sensorHitsCollectionID{G4SDManager::GetSDMpointer()->GetCollectionID("SensorHitsCollection")};
+    auto sensorHC{static_cast<G4GO::Detector::SensorHC*>(event->GetHCofThisEvent()->GetHC(sensorHitsCollectionID))};
 
     const auto moduleID{static_cast<const G4GO::Detector::DetectorConstruction*>(
                             G4RunManager::GetRunManager()->GetUserDetectorConstruction())
@@ -39,7 +40,7 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
     std::vector<CrystalHitOutput> crystalHits{};
     crystalHits.reserve(moduleID);
     for (int i{}; i < moduleID; ++i) {
-        const auto energyDeposit{scintHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
+        const auto energyDeposit{scintillatorHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
         if (energyDeposit > 0.) {
             crystalHits.emplace_back(
                 CrystalHitOutput{eventID, i, static_cast<float>(energyDeposit), generatedPhotonCount});
@@ -49,7 +50,7 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
     std::vector<SensorHitOutput> sensorHits{};
     if (!transportFuture.valid()) {
         sensorHits.reserve(sensorHC->entries());
-        for (std::size_t i {}; i < sensorHC->entries(); i++) {
+        for (std::size_t i{}; i < sensorHC->entries(); i++) {
             const auto* sensorHit{sensorHC->GetVector()->at(i)};
             sensorHits.emplace_back(SensorHitOutput{
                 eventID,

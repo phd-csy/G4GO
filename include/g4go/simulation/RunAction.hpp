@@ -3,6 +3,7 @@
 #include "G4UserRunAction.hh"
 
 #include <memory>
+#include <vector>
 
 class G4Run;
 
@@ -29,6 +30,8 @@ private:
     std::shared_ptr<G4GO::Optical::Geant4EventAdapter> fAdapter;
     std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> fBatchScheduler;
     std::shared_ptr<Analysis> fAnalysis;
+    std::vector<int> fDummySensorIDs{};
+    std::vector<float> fDummySensorTimes{};
     bool fIsMaster;
 };
 

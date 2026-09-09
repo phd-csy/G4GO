@@ -21,6 +21,12 @@ struct SensorHitOutput {
     float timeOfFlight{};
 };
 
+struct AnalysisPerformance {
+    double sensorPackMs{};
+    double sensorNtupleMs{};
+    double futureWaitMs{};
+};
+
 class Analysis final {
 public:
     auto Enqueue(std::vector<CrystalHitOutput> crystalHitOutput, std::vector<SensorHitOutput> sensorHitOutput,
@@ -29,6 +35,10 @@ public:
     auto WaitAndWriteNextEvent() -> void;
     auto Flush() -> void;
     auto PendingCount() const -> std::size_t { return fPendingEvents.size(); }
+    auto SensorIDs() -> std::vector<int>& { return fSensorIDs; }
+    auto SensorTimes() -> std::vector<float>& { return fSensorTimes; }
+    auto ResetPerformance() -> void { fPerformance = {}; }
+    auto Performance() const -> const AnalysisPerformance& { return fPerformance; }
 
 private:
     struct PendingEvent {
@@ -41,6 +51,9 @@ private:
     auto WriteEvent(PendingEvent event) -> void;
 
     std::deque<PendingEvent> fPendingEvents{};
+    std::vector<int> fSensorIDs{};
+    std::vector<float> fSensorTimes{};
+    AnalysisPerformance fPerformance{};
 };
 
 } // namespace G4GO::Simulation
