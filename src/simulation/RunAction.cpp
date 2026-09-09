@@ -119,15 +119,18 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
         }
     }
 
-    const auto diagnostics{fBatchScheduler && fBatchScheduler->PerformanceDiagnosticsEnabled()};
-    const auto rootOutputStart{diagnostics ? std::chrono::steady_clock::now() :
-                                             std::chrono::steady_clock::time_point{}};
+#ifdef G4MULTITHREADED
+    const auto reportRootOutput{fIsMaster};
+#else
+    const auto reportRootOutput{true};
+#endif
+    const auto rootOutputStart{std::chrono::steady_clock::now()};
     auto analysisManager{G4AnalysisManager::Instance()};
     analysisManager->Write();
     analysisManager->CloseFile();
-    if (diagnostics) {
-        const auto rootOutputMs{
-            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - rootOutputStart}.count()};
+    const auto rootOutputMs{
+        std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - rootOutputStart}.count()};
+    if (reportRootOutput) {
         G4cout << "[g4go] performance_output: root_output_ms=" << rootOutputMs << G4endl;
     }
 }
