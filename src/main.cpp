@@ -53,11 +53,11 @@ auto main(int argc, char** argv) -> int {
 
     app.set_help_flag("");
     app.add_flag("-h,--help", options.help, "Print this help message");
-    app.add_option("--backend", backendName, "Optical photon transport backend")
+    app.add_option("-b,--backend", backendName, "Optical photon transport backend")
         ->check(CLI::IsMember({"auto", "cpu", "gpu"}))
         ->capture_default_str();
-    app.add_option("--seed", options.photonTransportConfig.seed, "Random seed")->capture_default_str();
-    app.add_option("--threads", options.threads, "Number of Geant4 worker threads")->capture_default_str();
+    app.add_option("-s,--seed", options.photonTransportConfig.seed, "Random seed")->capture_default_str();
+    app.add_option("-t,--threads", options.threads, "Number of Geant4 worker threads")->capture_default_str();
     app.add_option("--max-photons", options.photonTransportConfig.maxPhotonsPerEvent,
                    "Maximum number of captured optical photons")
         ->check(CLI::PositiveNumber)
@@ -74,7 +74,7 @@ auto main(int argc, char** argv) -> int {
                    "Maximum GPU batch collection wait in milliseconds")
         ->check(CLI::Range(0U, 10'000U))
         ->capture_default_str();
-    app.add_flag("--perf-diagnostics", options.photonTransportConfig.enablePerformanceDiagnostics,
+    app.add_flag("-d,--diagnostics", options.photonTransportConfig.enablePerformanceDiagnostics,
                  "Enable optical transport performance diagnostics");
     app.add_option("--mesh-rotation-steps", options.photonTransportConfig.meshRotationSteps,
                    "Number of Geant4 polyhedron rotation steps")
