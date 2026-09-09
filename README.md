@@ -155,7 +155,7 @@ g4go [OPTIONS] [macro]
 | --- | --- | --- |
 | `-h, --help` | — | Show help |
 | `-b, --backend auto\|cpu\|gpu` | `auto` | Select the optical-photon transport backend |
-| `-s, --seed UINT64` | `42` | Set Geant4 and OptiX random seeds |
+| `-s, --seed UINT64` | `0` | Set Geant4 and OptiX random seeds |
 | `-t, --threads UINT32` | `0` | Number of Geant4 workers; `0` uses the detected CPU core count |
 | `--batch-photons UINT32` | `1000000` | Target photon count per GPU batch |
 | `--batch-timeout-ms UINT32` | `10` | Maximum wait for more events before emitting a GPU batch |
@@ -233,8 +233,11 @@ ROOT files contain two trees. Tree names use PascalCase and branch names use low
 | `CrystalHit` | `Edep` | Crystal energy deposition |
 | `CrystalHit` | `nOptPho` | Number of SiPM-detected photons in the event |
 | `SensorHit` | `eventID` | Geant4 event ID |
-| `SensorHit` | `sensorID` | SiPM copy number |
-| `SensorHit` | `timeOfFlight` | Photon arrival time |
+| `SensorHit` | `sensorID` | Vector of SiPM copy numbers for detections in the event |
+| `SensorHit` | `timeOfFlight` | Vector of photon arrival times for detections in the event |
+
+`SensorHit` stores one row per event with at least one detection. The `sensorID` and `timeOfFlight` vectors have the
+same length, and elements at the same index describe one detection. Events without detections do not produce a row.
 
 ## Architecture
 

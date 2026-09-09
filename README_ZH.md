@@ -155,7 +155,7 @@ g4go [OPTIONS] [macro]
 | --- | --- | --- |
 | `-h, --help` | — | 显示帮助信息 |
 | `-b, --backend auto\|cpu\|gpu` | `auto` | 选择光学光子输运 backend |
-| `-s, --seed UINT64` | `42` | 设置 Geant4 和 OptiX 随机种子 |
+| `-s, --seed UINT64` | `0` | 设置 Geant4 和 OptiX 随机种子 |
 | `-t, --threads UINT32` | `0` | Geant4 worker 数量；`0` 表示使用检测到的 CPU core 数量 |
 | `--batch-photons UINT32` | `1000000` | GPU batch 的目标光子数 |
 | `--batch-timeout-ms UINT32` | `10` | 发射 GPU batch 前等待更多 event 的最长时间 |
@@ -200,8 +200,11 @@ ROOT 文件包含两个 tree。tree 名使用 PascalCase，branch 名使用 lowe
 | `CrystalHit` | `Edep` | 晶体能量沉积 |
 | `CrystalHit` | `nOptPho` | 该 event 的 SiPM 探测光子数 |
 | `SensorHit` | `eventID` | Geant4 event ID |
-| `SensorHit` | `sensorID` | SiPM copy number |
-| `SensorHit` | `timeOfFlight` | 光子到达时间 |
+| `SensorHit` | `sensorID` | event 内各 detection 的 SiPM copy number vector |
+| `SensorHit` | `timeOfFlight` | event 内各 detection 的光子到达时间 vector |
+
+`SensorHit` 为每个至少包含一个 detection 的 event 写入一行。`sensorID` 与 `timeOfFlight` vector 长度相同，
+相同索引的元素共同描述一次 detection；零 detection 的 event 不产生记录。
 
 ## 架构
 
