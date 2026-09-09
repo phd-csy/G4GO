@@ -13,11 +13,11 @@ public:
 
     auto Construct() -> G4VPhysicalVolume* override;
     auto ConstructSDandField() -> void override;
-    auto ModuleID() const -> const auto& { return fModuleID; }
+    auto ModuleID() const -> const auto& { return fCopyNo; }
 
 private:
     G4bool fCheckOverlap;
-    G4int fModuleID;
+    G4int fCopyNo;
 };
 
 } // namespace G4GO::Detector

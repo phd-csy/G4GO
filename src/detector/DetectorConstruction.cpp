@@ -21,10 +21,10 @@ namespace G4GO::Detector {
 
 DetectorConstruction::DetectorConstruction() :
     fCheckOverlap{},
-    fModuleID{} {}
+    fCopyNo{} {}
 
 auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
-    fModuleID = 0;
+    fCopyNo = 0;
     const auto nist{G4NistManager::Instance()};
 
     const auto hydrogenElement{nist->FindOrBuildElement("H")};
@@ -167,7 +167,7 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     cathodeSurface->SetMaterialPropertiesTable(cathodeSurfacePropertiesTable);
     new G4LogicalSkinSurface("cathodeSkinSurface", logicalSiPM, cathodeSurface);
 
-    ++fModuleID;
+    ++fCopyNo;
 
     return physicalWorld;
 }

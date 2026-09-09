@@ -16,7 +16,7 @@ public:
     auto GlobalTime(G4double time) -> void { fGlobalTime = time; }
     auto GlobalTime() const -> G4double { return fGlobalTime; }
 
-    auto CopyNo(G4int copyNumber) -> void { fCopyNo = copyNumber; }
+    auto CopyNo(G4int copyNo) -> void { fCopyNo = copyNo; }
     auto CopyNo() const -> G4int { return fCopyNo; }
 
 private:
