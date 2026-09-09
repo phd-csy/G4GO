@@ -15,29 +15,16 @@ constexpr auto InvalidID{std::numeric_limits<std::uint32_t>::max()};
 enum class SurfaceType : std::uint8_t {
     DielectricDielectric,
     DielectricMetal,
-    DielectricLut,
-    DielectricLutDavis,
-    DielectricDichroic,
-    Coated,
 };
 
 enum class SurfaceModel : std::uint8_t {
     Glisur,
     Unified,
-    Lut,
-    Davis,
-    Dichroic,
 };
 
 enum class SurfaceFinish : std::uint8_t {
     Polished,
-    PolishedFrontPainted,
-    PolishedBackPainted,
     Ground,
-    GroundFrontPainted,
-    GroundBackPainted,
-    Lut,
-    Davis,
 };
 
 struct Rotation {

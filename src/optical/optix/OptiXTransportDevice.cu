@@ -19,9 +19,7 @@ constexpr auto dielectricDielectricType{std::uint32_t{}};
 constexpr auto glisurModel{std::uint32_t{}};
 constexpr auto unifiedModel{1U};
 constexpr auto polishedFinish{std::uint32_t{}};
-constexpr auto groundFinish{3U};
-constexpr auto groundFrontPaintedFinish{4U};
-constexpr auto groundBackPaintedFinish{5U};
+constexpr auto groundFinish{1U};
 constexpr auto speedOfLightMmPerNs{299.792458F};
 constexpr auto coincidentTriangleFlag{1U};
 
@@ -563,8 +561,7 @@ __device__ auto SampleFacetNormal(const DeviceSurface& surface, DeviceVector3 no
 __device__ auto SampleUnifiedReflection(const DeviceSurface& surface, DeviceVector3 direction, DeviceVector3 normal,
                                         float energyEv, std::uint64_t seed, std::uint64_t photonKey,
                                         std::uint32_t bounce) -> DeviceVector3 {
-    const auto isGround{surface.finish == groundFinish || surface.finish == groundFrontPaintedFinish ||
-                        surface.finish == groundBackPaintedFinish};
+    const auto isGround{surface.finish == groundFinish};
     const auto facetNormal{SampleFacetNormal(surface, normal, direction, seed, photonKey, bounce)};
 
     const auto spike{fminf(fmaxf(SampleProperty(surface.specularSpike, energyEv, isGround ? 0.0F : 1.0F), 0.0F), 1.0F)};
