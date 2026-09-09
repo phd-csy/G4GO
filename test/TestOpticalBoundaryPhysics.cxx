@@ -178,7 +178,7 @@ auto main() -> int {
             };
             geometry.mesh.triangleFlags = {1U};
             const auto geometryID{scene.AddGeometry(std::move(geometry))};
-            for (auto volumeID{std::uint32_t{}}; volumeID < 3U; ++volumeID) {
+            for (std::uint32_t volumeID {}; volumeID < 3U; volumeID++) {
                 Volume volume{};
                 volume.volumeID = volumeID;
                 volume.geometryID = geometryID;

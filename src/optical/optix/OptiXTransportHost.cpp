@@ -379,14 +379,14 @@ auto UploadSpectrumProperty(const PropertyTable& property, DeviceAllocations& al
     }
 
     std::vector<float> cdf(property.values.size());
-    for (auto index{std::size_t{1}}; index < property.values.size(); ++index) {
-        const auto energyDelta{property.energyEv.at(index) - property.energyEv.at(index - 1U)};
-        const auto value0{std::max(property.values.at(index - 1U), 0.0F)};
-        const auto value1{std::max(property.values.at(index), 0.0F)};
+    for (std::size_t i{1}; i < property.values.size(); i++) {
+        const auto energyDelta{property.energyEv.at(i) - property.energyEv.at(i - 1U)};
+        const auto value0{std::max(property.values.at(i - 1U), 0.0F)};
+        const auto value1{std::max(property.values.at(i), 0.0F)};
         if (!(energyDelta >= 0.0F) || !std::isfinite(energyDelta) || !std::isfinite(value0) || !std::isfinite(value1)) {
             return {};
         }
-        cdf[index] = cdf.at(index - 1U) + 0.5F * energyDelta * (value0 + value1);
+        cdf[i] = cdf.at(i - 1U) + 0.5F * energyDelta * (value0 + value1);
     }
     const auto integral{cdf.at(cdf.size() - 1U)};
     if (!(integral > 0.0F) || !std::isfinite(integral)) {
@@ -574,19 +574,19 @@ public:
         }
         std::unordered_map<std::uint32_t, std::uint32_t> eventIndices{};
         eventIndices.reserve(batch.eventIDs.size());
-        for (auto index{std::size_t{}}; index < batch.eventIDs.size(); ++index) {
-            if (!eventIndices.emplace(batch.eventIDs[index], static_cast<std::uint32_t>(index)).second) {
+        for (std::size_t i {}; i < batch.eventIDs.size(); i++) {
+            if (!eventIndices.emplace(batch.eventIDs[i], static_cast<std::uint32_t>(i)).second) {
                 throw std::invalid_argument("OptiX event batch contains duplicate event IDs");
             }
-            output.eventStatistics.emplace_back(PhotonTransportEventStatistics{batch.eventIDs[index], {}});
+            output.eventStatistics.emplace_back(PhotonTransportEventStatistics{batch.eventIDs[i], {}});
         }
-        for (auto index{std::size_t{}}; index < emissions.size(); ++index) {
-            const auto eventIndex{batch.emissionEventIndices[index]};
-            if (eventIndex >= batch.eventIDs.size() || emissions[index].eventID != batch.eventIDs[eventIndex]) {
+        for (std::size_t i {}; i < emissions.size(); i++) {
+            const auto eventIndex{batch.emissionEventIndices[i]};
+            if (eventIndex >= batch.eventIDs.size() || emissions[i].eventID != batch.eventIDs[eventIndex]) {
                 throw std::invalid_argument("OptiX emission event index does not match event ID");
             }
             auto& eventStatistics{output.eventStatistics.at(eventIndex).statistics};
-            eventStatistics.capturedCount += emissions[index].photonCount;
+            eventStatistics.capturedCount += emissions[i].photonCount;
             eventStatistics.validFields |= StatisticFieldBit(PhotonTransportStatisticField::Captured);
         }
         if (emissions.empty()) {
@@ -637,8 +637,8 @@ public:
                                "cudaMallocHost emission event indices");
         fHostEmissionOffsets[0] = 0;
         std::uint64_t offset{};
-        for (auto index{std::size_t{}}; index < emissions.size(); ++index) {
-            const auto& emission{emissions[index]};
+        for (std::size_t i {}; i < emissions.size(); i++) {
+            const auto& emission{emissions[i]};
             auto deviceEmission{std::bit_cast<DeviceOpticalEmission>(emission)};
             auto deviceVolumeID{InvalidID};
             if (emission.volumeID < fVolumeIndicesByID.size()) {
@@ -654,10 +654,10 @@ public:
                 throw std::invalid_argument("emission references an unknown scene material ID");
             }
             deviceEmission.volumeID = deviceVolumeID;
-            fHostEmissions[index] = deviceEmission;
-            fHostEmissionEventIndices[index] = batch.emissionEventIndices[index];
+            fHostEmissions[i] = deviceEmission;
+            fHostEmissionEventIndices[i] = batch.emissionEventIndices[i];
             offset += emission.photonCount;
-            fHostEmissionOffsets[index + 1U] = static_cast<std::uint32_t>(offset);
+            fHostEmissionOffsets[i + 1U] = static_cast<std::uint32_t>(offset);
         }
 
         EnsureAllocation(fEmissionAllocation, fEmissionCapacity, emissions.size(), sizeof(DeviceOpticalEmission));
@@ -819,9 +819,9 @@ public:
                                          StatisticFieldBit(PhotonTransportStatisticField::InvalidState) |
                                          StatisticFieldBit(PhotonTransportStatisticField::ZeroStep) |
                                          StatisticFieldBit(PhotonTransportStatisticField::TransportTime);
-        for (auto index{std::size_t{}}; index < output.eventStatistics.size(); ++index) {
-            auto& eventStatistics{output.eventStatistics.at(index).statistics};
-            const auto& deviceEventStatistics{slot.hostEventStats[index]};
+        for (std::size_t i {}; i < output.eventStatistics.size(); i++) {
+            auto& eventStatistics{output.eventStatistics.at(i).statistics};
+            const auto& deviceEventStatistics{slot.hostEventStats[i]};
             eventStatistics.detectedCount = deviceEventStatistics.detectedCount;
             eventStatistics.absorbedCount = deviceEventStatistics.absorbedCount;
             eventStatistics.escapedCount = deviceEventStatistics.escapedCount;
@@ -855,8 +855,8 @@ public:
         output.performance.coincidentCandidateHitCount = deviceStats.coincidentCandidateHitCount;
         const auto hostCompactionStart{std::chrono::steady_clock::now()};
         output.detections.reserve(compactHitCount);
-        for (auto index{std::size_t{}}; index < compactHitCount; ++index) {
-            const auto& hit{slot.hostCompactHits[index]};
+        for (std::size_t i {}; i < compactHitCount; i++) {
+            const auto& hit{slot.hostCompactHits[i]};
             output.detections.emplace_back(PhotonDetection{
                 {hit.positionMm.at(0), hit.positionMm.at(1), hit.positionMm.at(2)},
                 hit.timeNs,
@@ -988,9 +988,9 @@ private:
 
         std::unordered_map<std::uint32_t, std::uint32_t> volumeIndices{};
         volumeIndices.reserve(scene.Volumes().size());
-        for (auto index{std::size_t{}}; index < scene.Volumes().size(); ++index) {
-            const auto volumeID{scene.Volumes().at(index).volumeID};
-            if (volumeID == InvalidID || !volumeIndices.emplace(volumeID, static_cast<std::uint32_t>(index)).second) {
+        for (std::size_t i {}; i < scene.Volumes().size(); i++) {
+            const auto volumeID{scene.Volumes().at(i).volumeID};
+            if (volumeID == InvalidID || !volumeIndices.emplace(volumeID, static_cast<std::uint32_t>(i)).second) {
                 throw std::invalid_argument("OptiX scene volume IDs must be unique and valid");
             }
         }
@@ -1069,8 +1069,8 @@ private:
             std::vector<G4ThreeVector> triangleNormals{};
             if (mesh.triangleNormals.empty()) {
                 triangleNormals.reserve(triangleCount);
-                for (auto triangle{std::size_t{}}; triangle < triangleCount; ++triangle) {
-                    const auto base{3 * triangle};
+                for (std::size_t i {}; i < triangleCount; i++) {
+                    const auto base{3 * i};
                     const auto& first{mesh.verticesMm.at(mesh.indices.at(base))};
                     const auto& second{mesh.verticesMm.at(mesh.indices.at(base + 1))};
                     const auto& third{mesh.verticesMm.at(mesh.indices.at(base + 2))};
@@ -1155,13 +1155,13 @@ private:
         volumes.reserve(scene.Volumes().size());
         std::vector<OptixInstance> instances{};
         instances.reserve(scene.Volumes().size());
-        for (auto index{std::size_t{}}; index < scene.Volumes().size(); ++index) {
-            const auto& volume{scene.Volumes().at(index)};
+        for (std::size_t i {}; i < scene.Volumes().size(); i++) {
+            const auto& volume{scene.Volumes().at(i)};
             if (volume.geometryID >= geometryHandles.size()) {
                 throw std::invalid_argument("volume references invalid geometry");
             }
             volumes.emplace_back(DeviceVolume{
-                static_cast<std::uint32_t>(index),
+                static_cast<std::uint32_t>(i),
                 volume.physicalVolumeID,
                 volume.copyNo,
                 volume.geometryID,
@@ -1188,7 +1188,7 @@ private:
             instance.transform[9] = rotation.zy;
             instance.transform[10] = rotation.zz;
             instance.transform[11] = static_cast<float>(translation.z());
-            instance.instanceId = static_cast<unsigned int>(index);
+            instance.instanceId = static_cast<unsigned int>(i);
             instance.visibilityMask = 255;
             instance.flags = OPTIX_INSTANCE_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
             instance.traversableHandle = geometryHandles.at(volume.geometryID);

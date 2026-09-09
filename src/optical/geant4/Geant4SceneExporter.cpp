@@ -88,7 +88,7 @@ private:
             G4ReplicaNavigation replicaNavigation{};
             auto* parameterisation{physicalVolume->IsParameterised() ? physicalVolume->GetParameterisation() : nullptr};
             std::uint32_t firstVolumeID{InvalidID};
-            for (auto copyNo{int{}}; copyNo < multiplicity; ++copyNo) {
+            for (int copyNo {}; copyNo < multiplicity; copyNo++) {
                 mutableVolume->SetCopyNo(copyNo);
                 if (parameterisation != nullptr) {
                     parameterisation->ComputeTransformation(copyNo, mutableVolume);
@@ -176,8 +176,8 @@ private:
         fVolumeBounds.emplace(volume.volumeID, MakeBounds(fScene.FindGeometry(geometryID), transform));
         fScene.AddVolume(std::move(volume));
 
-        for (auto index{std::size_t{}}; index < logicalVolume->GetNoDaughters(); ++index) {
-            AddVolume(logicalVolume->GetDaughter(index), transform, volume.volumeID, depth + 1);
+        for (std::size_t i {}; i < logicalVolume->GetNoDaughters(); i++) {
+            AddVolume(logicalVolume->GetDaughter(i), transform, volume.volumeID, depth + 1);
         }
         return volume.volumeID;
     }
@@ -201,7 +201,7 @@ private:
         geometry.name = solid->GetName();
         geometry.mesh.name = solid->GetName();
         const auto facetCount{polyhedron->GetNoFacets()};
-        for (auto face{1}; face <= facetCount; ++face) {
+        for (int face{1}; face <= facetCount; face++) {
             G4int count{};
             std::array<G4Point3D, 16> points{};
             polyhedron->GetFacet(face, count, points.data());
@@ -211,7 +211,7 @@ private:
             }
 
             const auto faceNormal{polyhedron->GetUnitNormal(face)};
-            for (auto point{1}; point + 1 < count; ++point) {
+            for (int point{1}; point + 1 < count; point++) {
                 const auto first{points.at(0)};
                 auto second{points.at(point)};
                 auto third{points.at(point + 1)};
@@ -323,9 +323,9 @@ private:
             return 0.0;
         }
         auto area{double{}};
-        for (auto index{std::size_t{}}; index < polygon.size(); ++index) {
-            const auto next{(index + 1U) % polygon.size()};
-            area += Cross2(polygon.at(index), polygon.at(next));
+        for (std::size_t i {}; i < polygon.size(); i++) {
+            const auto next{(i + 1U) % polygon.size()};
+            area += Cross2(polygon.at(i), polygon.at(next));
         }
         return 0.5 * area;
     }
@@ -336,12 +336,12 @@ private:
             std::reverse(clipPolygon.begin(), clipPolygon.end());
         }
         std::vector<Point2> polygon{subject.begin(), subject.end()};
-        for (auto edge{std::size_t{}}; edge < clipPolygon.size(); ++edge) {
+        for (std::size_t i {}; i < clipPolygon.size(); i++) {
             if (polygon.empty()) {
                 return 0.0;
             }
-            const auto edgeEnd{(edge + 1U) % clipPolygon.size()};
-            const auto& edgeStart{clipPolygon.at(edge)};
+            const auto edgeEnd{(i + 1U) % clipPolygon.size()};
+            const auto& edgeStart{clipPolygon.at(i)};
             const auto& edgeStop{clipPolygon.at(edgeEnd)};
             const auto edgeVector{Subtract(edgeStop, edgeStart)};
             const auto input{std::move(polygon)};
@@ -423,16 +423,16 @@ private:
         }
         const auto parentChild{first.parentVolumeID == second.volumeID || second.parentVolumeID == first.volumeID};
         std::vector<std::pair<std::size_t, std::size_t>> contacts{};
-        for (auto firstTriangle{std::size_t{}}; firstTriangle < firstTriangleCount; ++firstTriangle) {
-            const auto firstPoints{TrianglePoints(*firstGeometry, first, firstTriangle)};
+        for (std::size_t i {}; i < firstTriangleCount; i++) {
+            const auto firstPoints{TrianglePoints(*firstGeometry, first, i)};
             const auto firstTriangleBounds{TriangleBounds(firstPoints)};
-            for (auto secondTriangle{std::size_t{}}; secondTriangle < secondTriangleCount; ++secondTriangle) {
+            for (std::size_t secondTriangle {}; secondTriangle < secondTriangleCount; secondTriangle++) {
                 const auto secondPoints{TrianglePoints(*secondGeometry, second, secondTriangle)};
                 if (!BoundsOverlap(firstTriangleBounds, TriangleBounds(secondPoints), tolerance) ||
                     !TrianglesCoincident(firstPoints, secondPoints, parentChild, tolerance)) {
                     continue;
                 }
-                contacts.emplace_back(firstTriangle, secondTriangle);
+                contacts.emplace_back(i, secondTriangle);
             }
         }
         if (contacts.empty()) {
@@ -457,8 +457,8 @@ private:
         const auto tolerance{static_cast<double>(G4GeometryTolerance::GetInstance()->GetSurfaceTolerance() / mm)};
         const auto triangleTolerance{tolerance};
         const auto& volumes{fScene.Volumes()};
-        for (auto first{std::size_t{}}; first < volumes.size(); ++first) {
-            for (auto second{first + 1}; second < volumes.size(); ++second) {
+        for (std::size_t first {}; first < volumes.size(); first++) {
+            for (std::size_t second{first + 1}; second < volumes.size(); second++) {
                 const auto sameParent{volumes.at(first).parentVolumeID != InvalidID &&
                                       volumes.at(first).parentVolumeID == volumes.at(second).parentVolumeID};
                 const auto parentChild{volumes.at(first).parentVolumeID == volumes.at(second).volumeID ||
@@ -659,9 +659,9 @@ private:
         const auto length{vector->GetVectorLength()};
         property.energyEv.reserve(length);
         property.values.reserve(length);
-        for (auto index{std::size_t{}}; index < length; ++index) {
-            property.energyEv.emplace_back(static_cast<float>(vector->Energy(index) / eV));
-            property.values.emplace_back(static_cast<float>((*vector)[index] / unit));
+        for (std::size_t i {}; i < length; i++) {
+            property.energyEv.emplace_back(static_cast<float>(vector->Energy(i) / eV));
+            property.values.emplace_back(static_cast<float>((*vector)[i] / unit));
         }
         return property;
     }

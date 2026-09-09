@@ -251,15 +251,15 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
                               StatisticFieldBit(PhotonTransportStatisticField::ZeroStep)};
     const auto elapsed{transportOutput.statistics.transportTimeMs};
     std::vector<PhotonTransportOutput> eventOutputs(requests.size());
-    for (auto index{std::size_t{}}; index < requests.size(); ++index) {
-        eventOutputs.at(index).statistics = requests.at(index).submission.sourceStatistics;
-        eventOutputs.at(index).performance = requests.at(index).submission.sourcePerformance;
+    for (std::size_t i {}; i < requests.size(); i++) {
+        eventOutputs.at(i).statistics = requests.at(i).submission.sourceStatistics;
+        eventOutputs.at(i).performance = requests.at(i).submission.sourcePerformance;
     }
 
     std::unordered_map<std::uint32_t, std::size_t> eventToRequest{};
     eventToRequest.reserve(requests.size());
-    for (auto index{std::size_t{}}; index < requests.size(); ++index) {
-        eventToRequest.emplace(requests.at(index).submission.eventID, index);
+    for (std::size_t i {}; i < requests.size(); i++) {
+        eventToRequest.emplace(requests.at(i).submission.eventID, i);
     }
     if (transportOutput.eventStatistics.size() != requests.size()) {
         throw std::runtime_error("OptiX output event statistics count does not match the batch");
@@ -402,16 +402,16 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
         eventOutputs.at(requestIndex).detections.emplace_back(detection);
         ++detectionCounts.at(requestIndex);
     }
-    for (auto index{std::size_t{}}; index < requests.size(); ++index) {
-        if (!eventStatisticsSeen.at(index)) {
+    for (std::size_t i {}; i < requests.size(); i++) {
+        if (!eventStatisticsSeen.at(i)) {
             throw std::runtime_error("OptiX output is missing event statistics");
         }
-        const auto& eventStatistics{eventOutputs.at(index).statistics};
+        const auto& eventStatistics{eventOutputs.at(i).statistics};
         if ((eventStatistics.validFields & StatisticFieldBit(PhotonTransportStatisticField::Detected)) != 0U &&
-            eventStatistics.detectedCount != detectionCounts.at(index)) {
+            eventStatistics.detectedCount != detectionCounts.at(i)) {
             throw std::runtime_error("OptiX event detected count does not match compacted hits");
         }
-        requests.at(index).promise->set_value(std::move(eventOutputs.at(index)));
+        requests.at(i).promise->set_value(std::move(eventOutputs.at(i)));
     }
 
     {

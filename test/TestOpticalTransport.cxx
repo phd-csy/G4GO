@@ -78,7 +78,7 @@ auto DrawComparison(TH1D* cpuHistogram, TH1D* gpuHistogram, const char* canvasNa
 
     const auto binCount{cpuPlot.GetNbinsX()};
     TH1D pull{pullName, pullTitle, binCount, cpuPlot.GetXaxis()->GetXmin(), cpuPlot.GetXaxis()->GetXmax()};
-    for (auto i{1}; i <= binCount; ++i) {
+    for (int i{1}; i <= binCount; i++) {
         const auto difference{cpuPlot.GetBinContent(i) - gpuPlot.GetBinContent(i)};
         const auto error{std::hypot(cpuPlot.GetBinError(i), gpuPlot.GetBinError(i))};
         pull.SetBinContent(i, error == 0.0 ? 0.0 : difference / error);

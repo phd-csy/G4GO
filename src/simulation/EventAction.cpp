@@ -49,8 +49,8 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
     std::vector<SensorHitOutput> sensorHits{};
     if (!transportFuture.valid()) {
         sensorHits.reserve(sensorHC->entries());
-        for (auto index{std::size_t{}}; index < sensorHC->entries(); ++index) {
-            const auto* sensorHit{sensorHC->GetVector()->at(index)};
+        for (std::size_t i {}; i < sensorHC->entries(); i++) {
+            const auto* sensorHit{sensorHC->GetVector()->at(i)};
             sensorHits.emplace_back(SensorHitOutput{
                 eventID,
                 sensorHit->CopyNo(),
