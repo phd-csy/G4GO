@@ -8,10 +8,11 @@ auto G4GOQuasiScintillationTrackInfoAllocator() -> G4Allocator<G4GOQuasiScintill
     return allocator;
 }
 
-G4GOQuasiScintillationTrackInfo::G4GOQuasiScintillationTrackInfo(const G4QuasiOpticalData& data, G4double scintTime,
-                                                                 G4double riseTime, G4int componentIndex) :
+G4GOQuasiScintillationTrackInfo::G4GOQuasiScintillationTrackInfo(const G4QuasiOpticalData& data,
+                                                                 G4double scintillationTime, G4double riseTime,
+                                                                 G4int componentIndex) :
     fQuasiOpticalData{data},
-    fScintTime{scintTime},
+    fScintillationTime{scintillationTime},
     fRiseTime{riseTime},
     fComponentIndex{componentIndex} {}
 

@@ -21,7 +21,7 @@ public:
     auto Print() const -> void override;
 
     auto QuasiOpticalData() const -> G4QuasiOpticalData { return fQuasiOpticalData; }
-    auto ScintTime() const -> G4double { return fScintTime; }
+    auto ScintillationTime() const -> G4double { return fScintillationTime; }
     auto RiseTime() const -> G4double { return fRiseTime; }
     auto ComponentIndex() const -> G4int { return fComponentIndex; }
 
@@ -29,7 +29,7 @@ public:
 
 private:
     G4QuasiOpticalData fQuasiOpticalData;
-    G4double fScintTime;
+    G4double fScintillationTime;
     G4double fRiseTime;
     G4int fComponentIndex;
 };

@@ -376,7 +376,7 @@ auto Geant4EventAdapter::CaptureScintillation(const G4Track& track,
     emission.stepDeltaMm = VectorFromMm(data.delta_position);
     emission.preVelocityMmPerNs = static_cast<float>(data.pre_velocity / (mm / ns));
     emission.deltaVelocityMmPerNs = static_cast<float>(data.delta_velocity / (mm / ns));
-    emission.decayTimeNs = static_cast<float>(info.ScintTime() / ns);
+    emission.decayTimeNs = static_cast<float>(info.ScintillationTime() / ns);
     emission.riseTimeNs = static_cast<float>(info.RiseTime() / ns);
     emission.charge = static_cast<float>(data.charge);
     emission.spectrumID = static_cast<std::uint32_t>(componentIndex);
