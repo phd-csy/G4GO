@@ -11,7 +11,7 @@
   <a href="https://isocpp.org/"><img src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg" alt="C++20"></a>
   <a href="https://cmake.org/"><img src="https://img.shields.io/badge/CMake-3.24%2B-064F8C.svg" alt="CMake 3.24 or newer"></a>
   <a href="https://geant4.web.cern.ch/"><img src="https://img.shields.io/badge/Geant4-11.4.2-1F77B4.svg" alt="Geant4 11.4.2"></a>
-  <a href="https://developer.nvidia.com/cuda-toolkit"><img src="https://img.shields.io/badge/CUDA-12.0%2B-76B900.svg" alt="CUDA 12.0 or newer"></a>
+  <a href="https://developer.nvidia.com/cuda-toolkit"><img src="https://img.shields.io/badge/CUDA-12.8%2B-76B900.svg" alt="CUDA 12.8 or newer"></a>
   <a href="https://developer.nvidia.com/optix"><img src="https://img.shields.io/badge/OptiX-9.1-76B900.svg" alt="NVIDIA OptiX 9.1"></a>
 </p>
 
@@ -49,25 +49,51 @@ The project targets single-crystal optical detector cells. It provides unified C
 ### GPU backend
 
 - An NVIDIA GPU and an NVIDIA driver newer than R590. The OptiX runtime is provided by the NVIDIA driver.
-- CUDA Toolkit 12.0 or newer, including `nvcc` and `bin2c`.
+- CUDA Toolkit 12.8 or newer, including `nvcc` and `bin2c`.
 - OptiX 9.1 development headers fetched by CMake from `NVIDIA/optix-dev`; the full OptiX SDK is optional for G4GO.
 - `G4GO_CUDA_ARCHITECTURE` matching the target GPU compute capability.
 
 ### Testing and output inspection
 
 - Bash for CPU/GPU regression orchestration.
+- `test/environment.sh` for one-shot checks of CMake, Geant4, CUDA, nvcc, the GPU, the driver, OptiX, and ROOT.
 - ROOT command-line tools for regression comparison; `rootls` can inspect output files.
-- `clang-format` is optional; when detected, CMake creates formatting targets.
 
 ## Build
+
+### Check the build environment
+
+Run the environment check from the project root:
+
+~~~bash
+./test/environment.sh
+~~~
+
+The script prints the versions and GPU model detected on the current host and marks each project requirement as `OK` or `FAIL`. After configuring CMake, the copied script can also be run from `build` as `./test/environment.sh`.
+
+### Configure the CUDA compiler
+
+Set `CUDACXX` to the `nvcc` executable from the CUDA Toolkit that should be used by CMake. Add the same Toolkit's `bin` directory to `PATH` so that `nvcc` and `bin2c` are found consistently:
+
+~~~bash
+export CUDA_HOME=/usr/local/cuda
+export CUDACXX="${CUDA_HOME}/bin/nvcc"
+export PATH="${CUDA_HOME}/bin:${PATH}"
+nvcc --version
+~~~
+
+`CUDA_HOME` is a shell convenience variable; `CUDACXX` is the variable CMake uses to initialize `CMAKE_CUDA_COMPILER`. Set it before the first CMake configure step. When switching to another CUDA Toolkit, configure a fresh build directory so that CMake does not keep the previous compiler in its cache. To make the compiler selection explicit, pass `-DCMAKE_CUDA_COMPILER="${CUDACXX}"` to the configure command.
 
 ### Enable OptiX
 
 ~~~bash
-cmake -S . -B build \
+mkdir -p build
+cd build
+cmake .. \
   -DG4GO_BUILD_UIVIS=OFF \
-  -DG4GO_ENABLE_OPTIX=ON
-cmake --build build -j
+  -DG4GO_ENABLE_OPTIX=ON \
+  -DCMAKE_CUDA_COMPILER="${CUDACXX}"
+cmake --build . -j
 ~~~
 
 Set `G4GO_CUDA_ARCHITECTURE` to the target GPU's numeric compute capability, such as `89` for `compute_89`.
@@ -75,10 +101,11 @@ Set `G4GO_CUDA_ARCHITECTURE` to the target GPU's numeric compute capability, suc
 ### Geant4 backend only
 
 ~~~bash
-cmake -S . -B build \
+cd build
+cmake .. \
   -DG4GO_BUILD_UIVIS=OFF \
   -DG4GO_ENABLE_OPTIX=OFF
-cmake --build build -j
+cmake --build . -j
 ~~~
 
 ### Common CMake options
@@ -88,16 +115,16 @@ cmake --build build -j
 | `G4GO_BUILD_UIVIS` | `ON` | Build Geant4 UI and visualization support |
 | `G4GO_ENABLE_OPTIX` | `ON` | Try to build the CUDA/OptiX backend |
 | `G4GO_CUDA_ARCHITECTURE` | `120` | CUDA compute architecture for the OptiX device program |
-| `G4GO_ENABLE_FORMAT_TARGETS` | `ON` | Detect and create clang-format targets |
 | `G4GO_ENABLE_CLANG_TIDY` | `OFF` | Enable clang-tidy during compilation |
 | `BUILD_TESTING` | `ON` | Register CTest tests |
 
-During configuration, `scripts/` is copied to `build/scripts/` and test files are copied to `build/test/`. Re-run CMake after changing these files to synchronize the build directory.
+During configuration, `scripts/` is copied to `build/scripts/` and test files (including the environment check script) are copied to `build/test/`. Re-run CMake after changing these files to synchronize the build directory.
 
 Install the executable with:
 
 ~~~bash
-cmake --install build --prefix /path/to/prefix
+cd build
+cmake --install . --prefix /path/to/prefix
 ~~~
 
 ## Quick start
@@ -127,14 +154,14 @@ g4go [OPTIONS] [macro]
 | Option | Default | Description |
 | --- | --- | --- |
 | `-h, --help` | — | Show help |
-| `--backend auto\|cpu\|gpu` | `auto` | Select the optical-photon transport backend |
-| `--seed UINT64` | `42` | Set Geant4 and OptiX random seeds |
-| `--threads UINT32` | `0` | Number of Geant4 workers; `0` uses the detected CPU core count |
+| `-b, --backend auto\|cpu\|gpu` | `auto` | Select the optical-photon transport backend |
+| `-s, --seed UINT64` | `42` | Set Geant4 and OptiX random seeds |
+| `-t, --threads UINT32` | `0` | Number of Geant4 workers; `0` uses the detected CPU core count |
 | `--batch-photons UINT32` | `1000000` | Target photon count per GPU batch |
 | `--batch-timeout-ms UINT32` | `10` | Maximum wait for more events before emitting a GPU batch |
 | `--max-photons UINT32` | `5000000` | Maximum photons captured per event |
 | `--max-bounces UINT32` | `4096` | Maximum boundary interactions per photon |
-| `--perf-diagnostics` | disabled | Emit capture, scheduler, CUDA-stage, OptiX, and transport-counter diagnostics |
+| `-d, --diagnostics` | disabled | Emit capture, scheduler, CUDA-stage, OptiX, and transport-counter diagnostics |
 | `--mesh-rotation-steps UINT32` | `360` | Geant4 polyhedron rotation samples; valid range is 8 to 4096 |
 | `macro` | — | Geant4 macro file; required for a build without UI |
 
@@ -144,38 +171,45 @@ Built-in macros:
 | --- | --- | --- |
 | `scripts/run_optical_test.mac` | Emit one deterministic optical photon from inside the crystal | `run_optical_test.root` |
 | `scripts/run_eminus_regression.mac` | Emit a 5 MeV electron beam for the CPU/GPU regression (50000 events) | `run_eminus_regression.root` |
+| `scripts/run_cpu_scaling.mac` | Run the 1000-event CPU partial-scaling measurement | `run_cpu_scaling.root` |
 | `scripts/vis.mac` | Interactive geometry and track visualization | `vis.root` |
 
-ROOT files are written to the current working directory using each macro's `/analysis/setFileName` value.
+All runtime commands in this document are executed from `build`; therefore, `scripts/...` refers to `build/scripts/...`, and `test/...` refers to `build/test/...`. ROOT files are written to the current working directory using each macro's `/analysis/setFileName` value.
 
 ## Performance benchmark
 
-`test/regression_test.sh` is the single driver for performance measurement and CPU/GPU regression checks. For concise reference, it uses these configuration names:
-
-- `CPU-6T`: a CPU run with 6 Geant4 workers that produces the regression reference and the CPU performance baseline.
-- `GPU-1T`: a GPU/OptiX run with 1 Geant4 worker.
-- `GPU-6T`: a GPU/OptiX run with 6 Geant4 workers.
-
-The driver runs them in this order:
-
-1. Generate or load the cached `CPU-6T` reference.
-2. Measure wall time and save ROOT output for `GPU-1T` and `GPU-6T`.
-3. Compare both GPU outputs with the same `CPU-6T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy.
-4. Compare performance: `GPU-1T` against estimated `CPU-1T`, and `GPU-6T` against measured `CPU-6T`:
-
-   ```text
-   estimated CPU-1T time = CPU-6T wall time × 6
-   GPU-1T speedup = estimated CPU-1T time / GPU-1T wall time
-   GPU-6T speedup = CPU-6T wall time / GPU-6T wall time
-   ```
-
-Run the complete workflow directly with:
+`test/benchmark.sh` owns all performance measurements. It runs `CPU-1T-partial`, `CPU-NT-partial`, `CPU-NT-full`, `GPU-1T-full`, and `GPU-NT-full`, then reports the measured CPU scaling ratio and thread-matched GPU speedups. It does not invoke the ROOT regression comparator.
 
 ~~~bash
-test/regression_test.sh --build-dir build
+cd build
+./test/benchmark.sh --threads 6
 ~~~
 
-Summaries, reports, and comparison plots are written under `build/test/regression/`. Set `G4GO_PERF_DIAGNOSTICS=1` for detailed timings from both GPU runs.
+The default leaves CPU scheduling to the operating system. Use `--cpu-affinity auto` when GPU-local affinity is required; this invokes `test/cpu_affinity.sh` and selects one physical core per worker plus one reserved helper core while respecting GPU NUMA locality and the process cpuset. A manual taskset list is also accepted:
+
+~~~bash
+./test/benchmark.sh --threads 6 --cpu-affinity auto
+./test/benchmark.sh --threads 6 --cpu-affinity 0-6
+~~~
+
+The benchmark uses these calculations:
+
+  ```text
+   scaling ratio = CPU-1T-partial time / CPU-NT-partial time
+   estimated CPU-1T-full time = CPU-NT-full time × scaling ratio
+   GPU-1T speedup = estimated CPU-1T-full time / GPU-1T-full time
+   GPU-NT speedup = CPU-NT-full time / GPU-NT-full time
+  ```
+
+Each run writes its ROOT outputs and logs to a timestamped directory under `build/test/benchmark/`. `benchmark_summary.txt` records CPU scaling, end-to-end wall time, GPU transport time, ROOT output time, and speedups. Set `G4GO_PERF_DIAGNOSTICS=1` to also write `performance_summary.txt` with CUDA, scheduler, OptiX, and transport-counter details.
+
+The three GPU timing categories are:
+
+- `total_wall_time_s`: end-to-end process wall time measured by the benchmark driver.
+- `gpu_optical_transport_time_ms`: accumulated optical backend transport elapsed time reported as `transport_ms`; this includes the transport pipeline and is not an OptiX-kernel-only time.
+- `analysis_root_output_time_ms`: final ROOT `Write()` and `CloseFile()` time reported as `root_output_ms`.
+
+`taskset` restricts the CPUs available to the whole process; it does not reserve a core exclusively for scheduler, master, CUDA helper, or ROOT threads.
 
 ## Detector model
 
@@ -240,31 +274,44 @@ Scene export explicitly rejects currently unsupported Rayleigh, Mie, WLS, LUT, D
 Run the fast tests after building:
 
 ~~~bash
-ctest --test-dir build --output-on-failure -L 'unit|smoke'
+cd build
+ctest --output-on-failure -L 'unit|smoke'
 ~~~
 
 | CTest | Labels | Coverage |
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel, Brewster angle, total internal reflection, surface probabilities, and Lambertian directions |
 | `g4go_smoke_auto` | `smoke;integration;auto` | Single-photon end-to-end initialization and transport |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` and `GPU-6T` compared separately against a cached or newly generated `CPU-6T` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T-full` and the default `GPU-6T-full` compared separately against a cached or newly generated `CPU-6T-full` reference for `Edep`, `nOptPho`, TOF, and sensor occupancy |
 
 ### CPU/GPU regression
 
-The CTest test `g4go_noptpho_regression` is the project test entry point for the same `CPU-6T`, `GPU-1T`, and `GPU-6T` workflow:
+`test/regression.sh` owns correctness testing. It generates or reuses a cached `CPU-NT` ROOT reference, runs `GPU-1T` and `GPU-NT`, and compares `Edep`, `nOptPho`, TOF, and sensor occupancy. It does not calculate timings or speedups.
+
+Run it directly with the default six workers or select another matching worker count:
 
 ~~~bash
-ctest --test-dir build --output-on-failure \
+cd build
+./test/regression.sh
+./test/regression.sh --threads 4
+~~~
+
+CTest wraps the default workflow:
+
+~~~bash
+cd build
+ctest --output-on-failure \
   -R '^g4go_noptpho_regression$'
 ~~~
 
 The test requires both GPU comparisons and their ROOT reports, summaries, and plots to pass. To stream the complete log:
 
 ~~~bash
-bash build/test/regression_test.sh --build-dir build --verbose
+cd build
+./test/regression.sh --verbose
 ~~~
 
-Each run stores its artifacts in a timestamped directory under `build/test/regression/`; the two regression reports use the `gpu_1t` and `gpu_6t` filename prefixes, plots live in `figures/`, and logs live in `logs/`.
+Each run stores its artifacts in a timestamped directory under `build/test/regression/`; the regression reports use the `gpu_1t` and `gpu_Nt` filename prefixes, where `N` is the selected worker count, plots live in `figures/`, and logs live in `logs/`.
 
 ## WSL2 OptiX runtime troubleshooting
 
@@ -289,8 +336,9 @@ Update the Windows NVIDIA driver when the symbol is missing, run `wsl --shutdown
 When submitting an issue or pull request, include the problem context, reproduction steps, backend, Geant4/CUDA/OptiX versions, and validation output. Keep module boundaries intact, add tests directly related to the change, and run the following before committing:
 
 ~~~bash
-cmake --build build --target g4go-format-check
-ctest --test-dir build --output-on-failure -L 'unit|smoke'
+cd build
+git diff --check
+ctest --output-on-failure -L 'unit|smoke'
 ~~~
 
 Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/), for example:

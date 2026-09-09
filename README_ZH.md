@@ -11,7 +11,7 @@
   <a href="https://isocpp.org/"><img src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg" alt="C++20"></a>
   <a href="https://cmake.org/"><img src="https://img.shields.io/badge/CMake-3.24%2B-064F8C.svg" alt="CMake 3.24 or newer"></a>
   <a href="https://geant4.web.cern.ch/"><img src="https://img.shields.io/badge/Geant4-11.4.2-1F77B4.svg" alt="Geant4 11.4.2"></a>
-  <a href="https://developer.nvidia.com/cuda-toolkit"><img src="https://img.shields.io/badge/CUDA-12.0%2B-76B900.svg" alt="CUDA 12.0 or newer"></a>
+  <a href="https://developer.nvidia.com/cuda-toolkit"><img src="https://img.shields.io/badge/CUDA-12.8%2B-76B900.svg" alt="CUDA 12.8 or newer"></a>
   <a href="https://developer.nvidia.com/optix"><img src="https://img.shields.io/badge/OptiX-9.1-76B900.svg" alt="NVIDIA OptiX 9.1"></a>
 </p>
 
@@ -49,25 +49,51 @@ G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光�
 ### GPU backend
 
 - NVIDIA GPU 与版本号高于 R590 的 NVIDIA 驱动；OptiX runtime 由 NVIDIA 驱动提供。
-- CUDA Toolkit 12.0 或更高版本，包含 `nvcc` 和 `bin2c`。
+- CUDA Toolkit 12.8 或更高版本，包含 `nvcc` 和 `bin2c`。
 - OptiX 9.1 development headers 由 CMake 从 `NVIDIA/optix-dev` 获取；完整 OptiX SDK 对 G4GO 属于可选依赖。
 - `G4GO_CUDA_ARCHITECTURE` 与目标 GPU 的 compute capability 一致。
 
 ### 测试与输出检查
 
 - Bash 用于 CPU/GPU 回归测试编排。
+- `test/environment.sh` 用于一次检查 CMake、Geant4、CUDA、nvcc、GPU、驱动、OptiX 和 ROOT 环境。
 - ROOT 命令行程序用于回归比较，`rootls` 可用于检查输出文件。
-- `clang-format` 可选；检测到后会生成格式化相关目标。
 
 ## 构建
+
+### 检查构建环境
+
+在项目根目录执行环境检查：
+
+```bash
+./test/environment.sh
+```
+
+脚本显示当前主机探测到的实际版本和 GPU 型号，并以 `OK` 或 `FAIL` 标记项目要求是否满足。配置过 CMake 后，也可以从 `build` 目录执行复制到构建树中的 `./test/environment.sh`。
+
+### 配置 CUDA 编译器
+
+将 `CUDACXX` 设置为希望 CMake 使用的 CUDA Toolkit 中的 `nvcc`，并将同一 Toolkit 的 `bin` 目录加入 `PATH`，确保 `nvcc` 和 `bin2c` 来自同一套 CUDA 工具链：
+
+```bash
+export CUDA_HOME=/usr/local/cuda
+export CUDACXX="${CUDA_HOME}/bin/nvcc"
+export PATH="${CUDA_HOME}/bin:${PATH}"
+nvcc --version
+```
+
+`CUDA_HOME` 是便于 shell 使用的变量，CMake 用 `CUDACXX` 初始化 `CMAKE_CUDA_COMPILER`。请在第一次执行 CMake 配置前设置这些变量。切换 CUDA Toolkit 时，使用新的构建目录重新配置，避免 CMake 缓存继续使用之前的编译器；也可以在配置命令中显式传入 `-DCMAKE_CUDA_COMPILER="${CUDACXX}"`。
 
 ### 启用 OptiX
 
 ```bash
-cmake -S . -B build \
+mkdir -p build
+cd build
+cmake .. \
   -DG4GO_BUILD_UIVIS=OFF \
-  -DG4GO_ENABLE_OPTIX=ON
-cmake --build build -j
+  -DG4GO_ENABLE_OPTIX=ON \
+  -DCMAKE_CUDA_COMPILER="${CUDACXX}"
+cmake --build . -j
 ```
 
 `G4GO_CUDA_ARCHITECTURE` 使用目标 GPU 的 compute capability 数值，例如 `compute_89` 对应 `89`。
@@ -75,10 +101,11 @@ cmake --build build -j
 ### 仅使用 Geant4 backend
 
 ```bash
-cmake -S . -B build \
+cd build
+cmake .. \
   -DG4GO_BUILD_UIVIS=OFF \
   -DG4GO_ENABLE_OPTIX=OFF
-cmake --build build -j
+cmake --build . -j
 ```
 
 ### 常用 CMake 选项
@@ -88,16 +115,16 @@ cmake --build build -j
 | `G4GO_BUILD_UIVIS` | `ON` | 构建 Geant4 UI 与 visualization 支持 |
 | `G4GO_ENABLE_OPTIX` | `ON` | 尝试构建 CUDA/OptiX backend |
 | `G4GO_CUDA_ARCHITECTURE` | `120` | OptiX device program 的 CUDA compute architecture |
-| `G4GO_ENABLE_FORMAT_TARGETS` | `ON` | 检测并创建 clang-format 目标 |
 | `G4GO_ENABLE_CLANG_TIDY` | `OFF` | 编译时启用 clang-tidy |
 | `BUILD_TESTING` | `ON` | 注册 CTest 测试 |
 
-配置时，`scripts/` 会复制到 `build/scripts/`，测试运行文件会复制到 `build/test/`。修改相关文件后重新执行 CMake 配置即可同步构建目录。
+配置时，`scripts/` 会复制到 `build/scripts/`，测试运行文件（包括环境检查脚本）会复制到 `build/test/`。修改相关文件后重新执行 CMake 配置即可同步构建目录。
 
 安装可执行文件：
 
 ```bash
-cmake --install build --prefix /path/to/prefix
+cd build
+cmake --install . --prefix /path/to/prefix
 ```
 
 ## 快速开始
@@ -127,14 +154,14 @@ g4go [OPTIONS] [macro]
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `-h, --help` | — | 显示帮助信息 |
-| `--backend auto\|cpu\|gpu` | `auto` | 选择光学光子输运 backend |
-| `--seed UINT64` | `42` | 设置 Geant4 和 OptiX 随机种子 |
-| `--threads UINT32` | `0` | Geant4 worker 数量；`0` 表示使用检测到的 CPU core 数量 |
+| `-b, --backend auto\|cpu\|gpu` | `auto` | 选择光学光子输运 backend |
+| `-s, --seed UINT64` | `42` | 设置 Geant4 和 OptiX 随机种子 |
+| `-t, --threads UINT32` | `0` | Geant4 worker 数量；`0` 表示使用检测到的 CPU core 数量 |
 | `--batch-photons UINT32` | `1000000` | GPU batch 的目标光子数 |
 | `--batch-timeout-ms UINT32` | `10` | 发射 GPU batch 前等待更多 event 的最长时间 |
 | `--max-photons UINT32` | `5000000` | 单事件允许捕获的最大光子数 |
 | `--max-bounces UINT32` | `4096` | 单光子的最大边界交互次数 |
-| `--perf-diagnostics` | disabled | 输出 capture、scheduler、CUDA stage、OptiX 和 transport counter 诊断 |
+| `-d, --diagnostics` | disabled | 输出 capture、scheduler、CUDA stage、OptiX 和 transport counter 诊断 |
 | `--mesh-rotation-steps UINT32` | `360` | Geant4 polyhedron 旋转采样数，有效范围为 8 到 4096 |
 | `macro` | — | Geant4 macro 文件；无 UI 构建时必须提供 |
 
@@ -144,9 +171,10 @@ g4go [OPTIONS] [macro]
 | --- | --- | --- |
 | `scripts/run_optical_test.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_test.root` |
 | `scripts/run_eminus_regression.mac` | 5 MeV 电子束 CPU/GPU 回归，共 50000 个 event | `run_eminus_regression.root` |
+| `scripts/run_cpu_scaling.mac` | 1000-event CPU partial scaling 测量 | `run_cpu_scaling.root` |
 | `scripts/vis.mac` | 交互式几何与轨迹可视化 | `vis.root` |
 
-ROOT 文件写入当前工作目录，文件名由 macro 中的 `/analysis/setFileName` 确定。
+本文所有运行命令都在 `build` 目录执行，因此 `scripts/...` 指向 `build/scripts/...`，`test/...` 指向 `build/test/...`。ROOT 文件写入当前工作目录，文件名由 macro 中的 `/analysis/setFileName` 确定。
 
 
 
@@ -210,63 +238,82 @@ scene export 会显式拒绝当前未实现的 Rayleigh、Mie、WLS、LUT、DAVI
 
 ## 测试
 
-构建完成后运行快速测试：
+构建完成后，在 `build` 目录运行快速测试：
 
 ```bash
-ctest --test-dir build --output-on-failure -L 'unit|smoke'
+cd build
+ctest --output-on-failure -L 'unit|smoke'
 ```
 
 | CTest | 标签 | 内容 |
 | --- | --- | --- |
 | `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
 | `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T` 和 `GPU-6T` 分别与缓存或按需生成的 `CPU-6T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率 |
+| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T-full` 和默认的 `GPU-6T-full` 分别与缓存或按需生成的 `CPU-6T-full` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率 |
 
 ### 性能基准
 
-`test/regression_test.sh` 同时负责性能测量和 CPU/GPU 回归检验。为便于说明，本文统一使用以下配置名称：
-
-- `CPU-6T`：6 个 Geant4 worker 的 CPU 运行，生成回归 reference 和 CPU 性能基准。
-- `GPU-1T`：1 个 Geant4 worker 的 GPU/OptiX 运行。
-- `GPU-6T`：6 个 Geant4 worker 的 GPU/OptiX 运行。
-
-脚本按以下顺序执行：
-
-1. 运行或读取缓存的 `CPU-6T` reference。
-2. 测量 `GPU-1T` 和 `GPU-6T` 的墙钟时间并保存 ROOT 输出。
-3. 将两组 GPU 输出分别与同一个 `CPU-6T` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率。
-4. 比较性能：`GPU-1T` 对照估算的 `CPU-1T`，`GPU-6T` 对照实测的 `CPU-6T`：
-
-   ```text
-   估算的 CPU-1T 时间 = CPU-6T 墙钟时间 × 6
-   GPU-1T 加速比 = 估算的 CPU-1T 时间 / GPU-1T 墙钟时间
-   GPU-6T 加速比 = CPU-6T 墙钟时间 / GPU-6T 墙钟时间
-   ```
-
-直接运行完整流程：
+`test/benchmark.sh` 负责全部性能测量。它依次运行 `CPU-1T-partial`、`CPU-NT-partial`、`CPU-NT-full`、`GPU-1T-full` 和 `GPU-NT-full`，再输出实测 CPU scaling ratio 与线程数匹配的 GPU 加速比；脚本不会调用 ROOT 回归比较器。
 
 ```bash
-test/regression_test.sh --build-dir build
+cd build
+./test/benchmark.sh --threads 6
 ```
 
-汇总、比较报告和图片写入 `build/test/regression/`。设置 `G4GO_PERF_DIAGNOSTICS=1` 可输出两组 GPU 分阶段计时。
+默认由操作系统调度 CPU。需要 GPU-local 自动绑核时使用 `--cpu-affinity auto`；该模式调用 `test/cpu_affinity.sh`，按 GPU NUMA、cpuset 和 physical core topology 为 worker 加上默认预留的 1 个辅助核。也可以直接指定 taskset CPU list：
+
+```bash
+./test/benchmark.sh --threads 6 --cpu-affinity auto
+./test/benchmark.sh --threads 6 --cpu-affinity 0-6
+```
+
+benchmark 使用以下计算关系：
+
+  ```text
+   scaling ratio = CPU-1T-partial 时间 / CPU-NT-partial 时间
+   估算的 CPU-1T-full 时间 = CPU-NT-full 时间 × scaling ratio
+   GPU-1T 加速比 = 估算的 CPU-1T-full 时间 / GPU-1T-full 时间
+   GPU-NT 加速比 = CPU-NT-full 时间 / GPU-NT-full 时间
+  ```
+
+每次运行的 ROOT 输出和日志保存在 `build/test/benchmark/` 的时间戳目录中。`benchmark_summary.txt` 记录 CPU scaling、端到端 wall time、GPU transport time、ROOT output time 和加速比。设置 `G4GO_PERF_DIAGNOSTICS=1` 后还会生成 `performance_summary.txt`，记录 CUDA、scheduler、OptiX 阶段和 transport counter。
+
+GPU phase 包含三类计时：
+
+- `total_wall_time_s`：benchmark 驱动器测量的端到端进程 wall time。
+- `gpu_optical_transport_time_ms`：光学 backend 报告的累计 `transport_ms`，表示 transport pipeline 耗时，不等同于单独的 OptiX kernel 耗时。
+- `analysis_root_output_time_ms`：最终 ROOT `Write()` 和 `CloseFile()` 阶段的 `root_output_ms`。
+
+`taskset` 只限制整个进程可运行的 CPU，不保证某个核只运行 scheduler、master、CUDA helper 或 ROOT 线程。
 
 ### CPU/GPU 回归
 
-CTest 测试 `g4go_noptpho_regression` 是上述脚本的项目测试入口，使用相同的 `CPU-6T` reference、`GPU-1T` 和 `GPU-6T` 流程：
+`test/regression.sh` 负责正确性测试。它生成或复用缓存的 `CPU-NT` ROOT reference，运行 `GPU-1T` 和 `GPU-NT`，再比较 `Edep`、`nOptPho`、TOF 和传感器占用率；脚本不计算时间和加速比。
+
+使用默认 6 个 worker，或指定另一组匹配的 worker 数量：
 
 ```bash
-ctest --test-dir build --output-on-failure \
+cd build
+./test/regression.sh
+./test/regression.sh --threads 4
+```
+
+CTest 包装默认流程：
+
+```bash
+cd build
+ctest --output-on-failure \
   -R '^g4go_noptpho_regression$'
 ```
 
 该测试要求两组 GPU 比较均通过，并检查对应的 ROOT 报告、汇总文件和图片。需要查看完整日志时，可直接运行：
 
 ```bash
-bash build/test/regression_test.sh --build-dir build --verbose
+cd build
+./test/regression.sh --verbose
 ```
 
-每次运行的产物保存在 `build/test/regression/` 下的时间戳目录中；两组回归报告以 `gpu_1t` 和 `gpu_6t` 文件名前缀区分，图片保存在 `figures/`，日志保存在 `logs/`。
+每次运行的产物保存在 `build/test/regression/` 下的时间戳目录中；回归报告以 `gpu_1t` 和 `gpu_Nt` 文件名前缀区分，其中 `N` 是指定的 worker 数量，图片保存在 `figures/`，日志保存在 `logs/`。
 
 ## WSL2 OptiX runtime 排障
 
@@ -291,8 +338,9 @@ nm -D /usr/lib/wsl/lib/libnvoptix.so.1 | rg optixQueryFunctionTable
 提交 issue 或 pull request 时请说明问题背景、复现方式、backend、Geant4/CUDA/OptiX 版本和验证输出。代码改动应保持模块边界，补充与改动直接相关的测试，并在提交前运行：
 
 ```bash
-cmake --build build --target g4go-format-check
-ctest --test-dir build --output-on-failure -L 'unit|smoke'
+cd build
+git diff --check
+ctest --output-on-failure -L 'unit|smoke'
 ```
 
 提交信息遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)，例如：
