@@ -20,6 +20,7 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -150,15 +151,23 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, cons
         auto gpuNOptPhoValues{gpuData.Take<int>("nOptPho")};
         auto cpuEdepValues{cpuData.Take<double>("Edep")};
         auto gpuEdepValues{gpuData.Take<double>("Edep")};
-        auto cpuTofValues{cpuSensorData.Take<double>("timeOfFlight")};
-        auto gpuTofValues{gpuSensorData.Take<double>("timeOfFlight")};
+        auto cpuTofVectors{cpuSensorData.Take<ROOT::RVec<float>>("timeOfFlight")};
+        auto gpuTofVectors{gpuSensorData.Take<ROOT::RVec<float>>("timeOfFlight")};
+        std::vector<float> cpuTofValues{};
+        std::vector<float> gpuTofValues{};
+        for (const auto& values : *cpuTofVectors) {
+            cpuTofValues.insert(cpuTofValues.end(), values.begin(), values.end());
+        }
+        for (const auto& values : *gpuTofVectors) {
+            gpuTofValues.insert(gpuTofValues.end(), values.begin(), values.end());
+        }
         if (cpuNOptPhoValues->empty() || gpuNOptPhoValues->empty()) {
             throw std::runtime_error("CrystalHit contains no nOptPho values");
         }
         if (cpuEdepValues->empty() || gpuEdepValues->empty()) {
             throw std::runtime_error("CrystalHit contains no Edep values");
         }
-        if (cpuTofValues->empty() || gpuTofValues->empty()) {
+        if (cpuTofValues.empty() || gpuTofValues.empty()) {
             throw std::runtime_error("SensorHit contains no time-of-flight values");
         }
 
@@ -183,12 +192,12 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, cons
         auto gpuEdepHistogram{gpuData.Histo1D({"gpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
 
         // --- Sensor time of flight (SensorHit) ---
-        const auto tofValid{std::all_of(cpuTofValues->begin(), cpuTofValues->end(),
+        const auto tofValid{std::all_of(cpuTofValues.begin(), cpuTofValues.end(),
                                         [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
-                            std::all_of(gpuTofValues->begin(), gpuTofValues->end(),
+                            std::all_of(gpuTofValues.begin(), gpuTofValues.end(),
                                         [](const auto value) { return std::isfinite(value) && value >= 0.0; })};
-        const auto maximumTof{std::max(*std::max_element(cpuTofValues->begin(), cpuTofValues->end()),
-                                       *std::max_element(gpuTofValues->begin(), gpuTofValues->end()))};
+        const auto maximumTof{std::max(*std::max_element(cpuTofValues.begin(), cpuTofValues.end()),
+                                       *std::max_element(gpuTofValues.begin(), gpuTofValues.end()))};
         const auto tofMaximum{std::max(1000.0, std::ceil(maximumTof + 1.0))};
         auto cpuTofHistogram{cpuSensorData.Histo1D(
             {"cpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
