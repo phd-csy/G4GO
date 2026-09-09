@@ -25,7 +25,7 @@ constexpr auto ToString(PhotonTransportBackend backend) -> std::string_view {
 
 struct PhotonTransportConfig {
     PhotonTransportBackend backend{PhotonTransportBackend::Auto};
-    std::uint64_t seed{42};
+    std::uint64_t seed{};
     std::uint32_t maxPhotonsPerEvent{5'000'000};
     std::uint32_t maxBouncesPerPhoton{4096};
     float boundaryToleranceMm{1.0e-4F};

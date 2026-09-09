@@ -300,20 +300,20 @@ echo "[benchmark] cpu_affinity=${cpu_list:-none} gpu_index=${gpu_index}"
 
 run_timed_phase cpu-1t-partial "$cpu_1t_partial_log" run_cpu_scaling.root \
     cpu_1t_partial_elapsed_seconds "$partial_events" \
-    "$g4go" --backend cpu --threads 1 --seed 42 "$partial_macro"
+    "$g4go" --backend cpu --threads 1 "$partial_macro"
 mv -- run_cpu_scaling.root cpu_1t_partial.root || fail_benchmark 1
 
 run_timed_phase "cpu-${threads}t-partial" "$cpu_threads_partial_log" \
     run_cpu_scaling.root cpu_threads_partial_elapsed_seconds "$partial_events" \
-    "$g4go" --backend cpu --threads "$threads" --seed 42 "$partial_macro"
+    "$g4go" --backend cpu --threads "$threads" "$partial_macro"
 mv -- run_cpu_scaling.root "cpu_${threads}t_partial.root" || fail_benchmark 1
 
 run_timed_phase "cpu-${threads}t-full" "$cpu_threads_full_log" \
     run_beam_eminus.root cpu_threads_full_elapsed_seconds "$full_events" \
-    "$g4go" --backend cpu --threads "$threads" --seed 42 "$full_macro"
+    "$g4go" --backend cpu --threads "$threads" "$full_macro"
 mv -- run_beam_eminus.root "cpu_${threads}t_full.root" || fail_benchmark 1
 
-gpu_arguments=(--backend gpu --seed 42 --batch-timeout-ms "$batch_timeout_ms")
+gpu_arguments=(--backend gpu --batch-timeout-ms "$batch_timeout_ms")
 if ((perf_diagnostics)); then
     gpu_arguments+=(--diagnostics)
 fi

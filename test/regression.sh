@@ -150,7 +150,6 @@ read_cache_value() {
 
 write_cpu_cache() {
     {
-        echo "seed=42"
         echo "g4go_sha256=${g4go_sha256}"
         echo "regression_macro_sha256=${regression_macro_sha256}"
         echo "threads=${regression_threads}"
@@ -214,7 +213,7 @@ if [[ ! -s "$cpu_reference" ]] ||
    [[ "$(read_cache_value events)" != "$target_events" ]]; then
     run_phase "cpu-${regression_threads}t" "$cpu_log" "$cpu_reference" \
         "$g4go" --backend cpu --threads "$regression_threads" \
-        --seed 42 "$regression_macro"
+        "$regression_macro"
     write_cpu_cache
     cpu_reference_source=generated
 else
@@ -223,7 +222,6 @@ fi
 
 gpu_arguments=(
     --backend gpu
-    --seed 42
     --batch-timeout-ms "$batch_timeout_ms"
 )
 run_phase gpu-1t "$gpu_1t_log" "$gpu_1t_reference" \
