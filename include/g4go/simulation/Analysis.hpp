@@ -23,7 +23,7 @@ struct SensorHitOutput {
 
 class Analysis final {
 public:
-    auto Enqueue(std::vector<CrystalHitOutput> crystalHits, std::vector<SensorHitOutput> sensorHits,
+    auto Enqueue(std::vector<CrystalHitOutput> crystalHitOutput, std::vector<SensorHitOutput> sensorHitOutput,
                  G4GO::Optical::PhotonTransportFuture transportFuture) -> void;
     auto WriteReadyEvents() -> void;
     auto WaitAndWriteNextEvent() -> void;
@@ -32,8 +32,8 @@ public:
 
 private:
     struct PendingEvent {
-        std::vector<CrystalHitOutput> crystalHits{};
-        std::vector<SensorHitOutput> sensorHits{};
+        std::vector<CrystalHitOutput> crystalHitOutput{};
+        std::vector<SensorHitOutput> sensorHitOutput{};
         G4GO::Optical::PhotonTransportFuture transportFuture{};
     };
 

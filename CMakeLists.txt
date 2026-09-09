@@ -250,6 +250,7 @@ if(BUILD_TESTING)
         "${PROJECT_SOURCE_DIR}/test/benchmark.sh"
         "${PROJECT_SOURCE_DIR}/test/cpu_affinity.sh"
         "${PROJECT_SOURCE_DIR}/test/environment.sh"
+        "${PROJECT_SOURCE_DIR}/test/static_analysis.sh"
         "${PROJECT_SOURCE_DIR}/test/TestOpticalTransport.cxx"
         "${PROJECT_SOURCE_DIR}/test/regression.sh"
     )
@@ -263,7 +264,6 @@ if(BUILD_TESTING)
             "${PROJECT_BINARY_DIR}/test/${test_runtime_name}"
             COPYONLY)
     endforeach()
-    file(REMOVE "${PROJECT_BINARY_DIR}/test/regression_test.sh")
 
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>

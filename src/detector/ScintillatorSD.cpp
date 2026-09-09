@@ -10,8 +10,8 @@ namespace G4GO::Detector {
 
 ScintillatorSD::ScintillatorSD(const G4String& sdName, const G4String& hcName) :
     G4VSensitiveDetector{sdName},
-    fHC{nullptr},
-    fHCID{-1} {
+    fHitsCollection{nullptr},
+    fHitsCollectionID{-1} {
     collectionName.insert(hcName);
 }
 
@@ -20,13 +20,13 @@ auto ScintillatorSD::Initialize(G4HCofThisEvent* hcOfThisEvent) -> void {
         static_cast<const DetectorConstruction*>(G4RunManager::GetRunManager()->GetUserDetectorConstruction())};
     const auto moduleID{detectorConstruction->ModuleID()};
 
-    fHC = new ScintillatorHC(SensitiveDetectorName, collectionName.at(0));
-    if (fHCID < 0) {
-        fHCID = GetCollectionID(0);
+    fHitsCollection = new ScintillatorHC(SensitiveDetectorName, collectionName.at(0));
+    if (fHitsCollectionID < 0) {
+        fHitsCollectionID = GetCollectionID(0);
     }
-    hcOfThisEvent->AddHitsCollection(fHCID, fHC);
+    hcOfThisEvent->AddHitsCollection(fHitsCollectionID, fHitsCollection);
     for (int i{}; i < moduleID; ++i) {
-        fHC->insert(new ScintillatorHit());
+        fHitsCollection->insert(new ScintillatorHit());
     }
 }
 
@@ -35,7 +35,7 @@ auto ScintillatorSD::ProcessHits(G4Step* step, G4TouchableHistory*) -> G4bool {
     if (particleDefinition != G4OpticalPhoton::OpticalPhotonDefinition()) {
         const auto touchable{step->GetPreStepPoint()->GetTouchableHandle()};
         const auto copyNo{touchable->GetCopyNumber()};
-        fHC->GetVector()->at(copyNo)->AddEnergyDeposit(step->GetTotalEnergyDeposit());
+        fHitsCollection->GetVector()->at(copyNo)->AddEnergyDeposit(step->GetTotalEnergyDeposit());
     }
     return true;
 }

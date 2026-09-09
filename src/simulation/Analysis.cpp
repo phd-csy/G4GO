@@ -51,8 +51,8 @@ auto Analysis::WriteEvent(PendingEvent event) -> void {
     }
 
     auto analysisManager{G4AnalysisManager::Instance()};
-    const auto detectedCount{hasTransportOutput ? output.statistics.detectedCount : event.sensorHits.size()};
-    for (const auto& crystalHit : event.crystalHits) {
+    const auto detectedCount{hasTransportOutput ? output.statistics.detectedCount : event.sensorHitOutput.size()};
+    for (const auto& crystalHit : event.crystalHitOutput) {
         analysisManager->FillNtupleIColumn(0, 0, crystalHit.eventID);
         analysisManager->FillNtupleIColumn(0, 1, crystalHit.moduleID);
         analysisManager->FillNtupleDColumn(0, 2, crystalHit.energyDeposit);
@@ -71,7 +71,7 @@ auto Analysis::WriteEvent(PendingEvent event) -> void {
         return;
     }
 
-    for (const auto& sensorHit : event.sensorHits) {
+    for (const auto& sensorHit : event.sensorHitOutput) {
         analysisManager->FillNtupleIColumn(1, 0, sensorHit.eventID);
         analysisManager->FillNtupleIColumn(1, 1, sensorHit.sensorID);
         analysisManager->FillNtupleDColumn(1, 2, sensorHit.timeOfFlight);

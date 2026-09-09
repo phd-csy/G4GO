@@ -62,7 +62,7 @@ if [[ ! "$batch_timeout_ms" =~ ^[0-9]+$ ]] || ((batch_timeout_ms > 10000)); then
 fi
 
 g4go="${build_dir}/g4go"
-regression_macro="${build_dir}/scripts/run_eminus_regression.mac"
+regression_macro="${build_dir}/scripts/run_beam_eminus.mac"
 compare_macro="${build_dir}/test/TestOpticalTransport.cxx"
 root_executable="$(command -v root || true)"
 sha256sum_executable="$(command -v sha256sum || true)"
@@ -164,18 +164,18 @@ run_phase() {
     local destination="$3"
     shift 3
 
-    rm -f -- run_eminus_regression.root
+    rm -f -- run_beam_eminus.root
     run_logged "$log_file" "$@"
     local command_status="$?"
     if ((command_status != 0)); then
         echo "[${phase_name}] FAIL events=${target_events} exit_code=${command_status}"
         fail_test "$command_status"
     fi
-    if [[ ! -s run_eminus_regression.root ]]; then
+    if [[ ! -s run_beam_eminus.root ]]; then
         echo "[${phase_name}] ROOT output is missing"
         fail_test 1
     fi
-    mv -- run_eminus_regression.root "$destination" || fail_test 1
+    mv -- run_beam_eminus.root "$destination" || fail_test 1
     echo "[${phase_name}] PASS events=${target_events}"
 }
 

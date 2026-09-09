@@ -16,8 +16,8 @@ public:
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
 
 private:
-    SensorHC* fHC;
-    G4int fHCID;
+    SensorHC* fHitsCollection;
+    G4int fHitsCollectionID;
 };
 
 } // namespace G4GO::Detector

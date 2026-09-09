@@ -8,17 +8,17 @@ namespace G4GO::Detector {
 
 SensorSD::SensorSD(const G4String& sdname, const G4String& hcName) :
     G4VSensitiveDetector{sdname},
-    fHC{nullptr},
-    fHCID{-1} {
+    fHitsCollection{nullptr},
+    fHitsCollectionID{-1} {
     collectionName.insert(hcName);
 }
 
 auto SensorSD::Initialize(G4HCofThisEvent* hcOfThisEvent) -> void {
-    fHC = new SensorHC(SensitiveDetectorName, collectionName.at(0));
-    if (fHCID < 0) {
-        fHCID = GetCollectionID(0);
+    fHitsCollection = new SensorHC(SensitiveDetectorName, collectionName.at(0));
+    if (fHitsCollectionID < 0) {
+        fHitsCollectionID = GetCollectionID(0);
     }
-    hcOfThisEvent->AddHitsCollection(fHCID, fHC);
+    hcOfThisEvent->AddHitsCollection(fHitsCollectionID, fHitsCollection);
 }
 
 auto SensorSD::ProcessHits(G4Step* theStep, G4TouchableHistory*) -> G4bool {
@@ -39,7 +39,7 @@ auto SensorSD::ProcessHits(G4Step* theStep, G4TouchableHistory*) -> G4bool {
     const auto copyNo{touchable->GetCopyNumber()};
     hit->GlobalTime(globalTime);
     hit->CopyNo(copyNo);
-    fHC->insert(hit);
+    fHitsCollection->insert(hit);
 
     return true;
 }

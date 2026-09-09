@@ -113,7 +113,7 @@ fi
 build_dir="$(cd -- "$build_dir" && pwd)"
 
 g4go="${build_dir}/g4go"
-full_macro="${build_dir}/scripts/run_eminus_regression.mac"
+full_macro="${build_dir}/scripts/run_beam_eminus.mac"
 partial_macro="${build_dir}/scripts/run_cpu_scaling.mac"
 affinity_helper="${script_dir}/cpu_affinity.sh"
 [[ -x "$g4go" ]] || die "g4go executable is missing: $g4go"
@@ -309,24 +309,24 @@ run_timed_phase "cpu-${threads}t-partial" "$cpu_threads_partial_log" \
 mv -- run_cpu_scaling.root "cpu_${threads}t_partial.root" || fail_benchmark 1
 
 run_timed_phase "cpu-${threads}t-full" "$cpu_threads_full_log" \
-    run_eminus_regression.root cpu_threads_full_elapsed_seconds "$full_events" \
+    run_beam_eminus.root cpu_threads_full_elapsed_seconds "$full_events" \
     "$g4go" --backend cpu --threads "$threads" --seed 42 "$full_macro"
-mv -- run_eminus_regression.root "cpu_${threads}t_full.root" || fail_benchmark 1
+mv -- run_beam_eminus.root "cpu_${threads}t_full.root" || fail_benchmark 1
 
 gpu_arguments=(--backend gpu --seed 42 --batch-timeout-ms "$batch_timeout_ms")
 if ((perf_diagnostics)); then
     gpu_arguments+=(--diagnostics)
 fi
-run_timed_phase gpu-1t-full "$gpu_1t_full_log" run_eminus_regression.root \
+run_timed_phase gpu-1t-full "$gpu_1t_full_log" run_beam_eminus.root \
     gpu_1t_full_elapsed_seconds "$full_events" env CUDA_VISIBLE_DEVICES="$gpu_index" \
     "$g4go" "${gpu_arguments[@]}" --threads 1 "$full_macro"
-mv -- run_eminus_regression.root gpu_1t_full.root || fail_benchmark 1
+mv -- run_beam_eminus.root gpu_1t_full.root || fail_benchmark 1
 
 run_timed_phase "gpu-${threads}t-full" "$gpu_threads_full_log" \
-    run_eminus_regression.root gpu_threads_full_elapsed_seconds "$full_events" \
+    run_beam_eminus.root gpu_threads_full_elapsed_seconds "$full_events" \
     env CUDA_VISIBLE_DEVICES="$gpu_index" "$g4go" "${gpu_arguments[@]}" \
     --threads "$threads" "$full_macro"
-mv -- run_eminus_regression.root "gpu_${threads}t_full.root" || fail_benchmark 1
+mv -- run_beam_eminus.root "gpu_${threads}t_full.root" || fail_benchmark 1
 
 for gpu_log in "$gpu_1t_full_log" "$gpu_threads_full_log"; do
     grep -F "[g4go] optical backend: gpu" "$gpu_log" >/dev/null 2>&1 || {

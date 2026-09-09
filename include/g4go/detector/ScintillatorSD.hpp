@@ -14,8 +14,8 @@ public:
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
 
 private:
-    ScintillatorHC* fHC;
-    G4int fHCID;
+    ScintillatorHC* fHitsCollection;
+    G4int fHitsCollectionID;
 };
 
 } // namespace G4GO::Detector
