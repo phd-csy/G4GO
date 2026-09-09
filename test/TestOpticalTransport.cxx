@@ -129,8 +129,7 @@ auto DrawComparison(TH1D* cpuHistogram, TH1D* gpuHistogram, const char* canvasNa
 
 } // namespace
 
-auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, double cpuElapsedSeconds = 0.0,
-                          double gpuElapsedSeconds = 0.0, const char* outputDirectory = ".") -> void {
+auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, const char* outputDirectory = ".") -> void {
     gROOT->SetBatch(kTRUE);
     gErrorIgnoreLevel = kWarning;
 
@@ -320,44 +319,61 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, doub
         const auto distributionsPassed{nOptPhoPassed && edepPassed && tofPassed && occupancyPassed};
         const auto regressionPassed{totalPassed && sensorTotalPassed && distributionsPassed};
         const auto regressionStatus{regressionPassed ? "PASSED" : "FAILED"};
-        const auto hasTiming{cpuElapsedSeconds > 0.0 && gpuElapsedSeconds > 0.0};
-        const auto gpuSpeedup{hasTiming ? cpuElapsedSeconds / gpuElapsedSeconds : 0.0};
-
         std::ostringstream summary{};
-        summary << std::fixed << std::setprecision(6) << "Status: " << regressionStatus << '\n'
-                << "EventDetectedOpticalPhotonCount: cpu_total=" << cpuTotal << " gpu_total=" << gpuTotal
-                << " relative_difference=" << relativeTotalDifference << " p_value=" << nOptPhoPValue
-                << " z_score=" << nOptPhoZ << " status=" << (nOptPhoPassed ? "PASSED" : "FAILED") << '\n'
-                << "EventEnergyDeposition: cpu_entries=" << cpuEdepEntries << " gpu_entries=" << gpuEdepEntries
-                << " cpu_mean=" << cpuEdepMean << " gpu_mean=" << gpuEdepMean << " cpu_rms=" << cpuEdepRms
-                << " gpu_rms=" << gpuEdepRms << " mean_relative_difference=" << edepMeanRelDiff
-                << " rms_relative_difference=" << edepRmsRelDiff << " p_value=" << edepPValue << " z_score=" << edepZ
-                << " status=" << edepStatus << '\n'
-                << "SensorDetectionCount: cpu_count=" << cpuSensorEntries << " gpu_count=" << gpuSensorEntries
-                << " relative_difference=" << relativeSensorDifference
-                << " status=" << (sensorTotalPassed ? "PASSED" : "FAILED") << '\n'
-                << "SensorTimeOfFlight: cpu_mean=" << cpuTofMean << " gpu_mean=" << gpuTofMean
-                << " cpu_rms=" << cpuTofRms << " gpu_rms=" << gpuTofRms << " p_value=" << tofPValue
-                << " z_score=" << tofZ << " shape_p_value=" << tofShapePValue << " status=" << tofStatus << '\n'
-                << "SensorPixelOccupancy: p_value=" << occupancyPValue << " z_score=" << occupancyZ
-                << " status=" << occupancyStatus << '\n';
-        if (hasTiming) {
-            summary << "Timing: cpu_reference=" << cpuElapsedSeconds << "s gpu=" << gpuElapsedSeconds
-                    << "s speedup=" << gpuSpeedup << "x\n";
-        } else {
-            summary << "Timing: unavailable\n";
-        }
+        summary << std::fixed << std::setprecision(6)
+                << "G4GO Optical Regression\n"
+                << "=======================\n\n"
+                << "Overall result\n"
+                << "--------------\n"
+                << "Status                 : " << regressionStatus << "\n\n"
+                << "Detected optical photons\n"
+                << "------------------------\n"
+                << "CPU total              : " << cpuTotal << '\n'
+                << "GPU total              : " << gpuTotal << '\n'
+                << "Relative difference    : " << relativeTotalDifference << '\n'
+                << "p-value                : " << nOptPhoPValue << '\n'
+                << "z-score                : " << nOptPhoZ << '\n'
+                << "Status                 : " << (nOptPhoPassed ? "PASSED" : "FAILED") << "\n\n"
+                << "Energy deposition\n"
+                << "-----------------\n"
+                << "CPU entries            : " << cpuEdepEntries << '\n'
+                << "GPU entries            : " << gpuEdepEntries << '\n'
+                << "CPU mean [MeV]         : " << cpuEdepMean << '\n'
+                << "GPU mean [MeV]         : " << gpuEdepMean << '\n'
+                << "CPU RMS [MeV]          : " << cpuEdepRms << '\n'
+                << "GPU RMS [MeV]          : " << gpuEdepRms << '\n'
+                << "Mean relative diff.    : " << edepMeanRelDiff << '\n'
+                << "RMS relative diff.     : " << edepRmsRelDiff << '\n'
+                << "p-value                : " << edepPValue << '\n'
+                << "z-score                : " << edepZ << '\n'
+                << "Status                 : " << edepStatus << "\n\n"
+                << "Sensor detection count\n"
+                << "----------------------\n"
+                << "CPU count              : " << cpuSensorEntries << '\n'
+                << "GPU count              : " << gpuSensorEntries << '\n'
+                << "Relative difference    : " << relativeSensorDifference << '\n'
+                << "Status                 : " << (sensorTotalPassed ? "PASSED" : "FAILED") << "\n\n"
+                << "Sensor time of flight\n"
+                << "---------------------\n"
+                << "CPU mean [ns]          : " << cpuTofMean << '\n'
+                << "GPU mean [ns]          : " << gpuTofMean << '\n'
+                << "CPU RMS [ns]           : " << cpuTofRms << '\n'
+                << "GPU RMS [ns]           : " << gpuTofRms << '\n'
+                << "Mean relative diff.    : " << tofMeanRelDiff << '\n'
+                << "RMS relative diff.     : " << tofRmsRelDiff << '\n'
+                << "p-value                : " << tofPValue << '\n'
+                << "z-score                : " << tofZ << '\n'
+                << "Shape p-value          : " << tofShapePValue << '\n'
+                << "Status                 : " << tofStatus << "\n\n"
+                << "Sensor pixel occupancy\n"
+                << "----------------------\n"
+                << "p-value                : " << occupancyPValue << '\n'
+                << "z-score                : " << occupancyZ << '\n'
+                << "Status                 : " << occupancyStatus << '\n';
         std::cout << summary.str();
 
-        std::ostringstream gpuLegendText{};
-        gpuLegendText << "GPU / OptiX";
-        if (hasTiming) {
-            gpuLegendText << " (" << std::fixed << std::setprecision(2) << gpuSpeedup << "x vs CPU reference)";
-        }
-        const auto gpuLegendLabel{gpuLegendText.str()};
-
         DrawComparison(cpuNOptPho, gpuNOptPho, "noptpho_comparison", "nOptPho CPU/GPU comparison", "nOptPho_pull",
-                       ";nOptPho;Pull", figuresPath / "noptpho_comparison.png", false, 0.14, gpuLegendLabel.c_str());
+                       ";nOptPho;Pull", figuresPath / "noptpho_comparison.png", false, 0.14, "GPU / OptiX");
         DrawComparison(cpuEdep, gpuEdep, "edep_comparison", "Event total energy deposition CPU/GPU comparison",
                        "event_total_Edep_pull", ";Edep [MeV];Pull", figuresPath / "edep_comparison.png", false, 0.14,
                        "GPU / OptiX");

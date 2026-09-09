@@ -247,8 +247,11 @@ if(BUILD_TESTING)
         TIMEOUT 30)
 
     set(G4GO_TEST_RUNTIME_FILES
+        "${PROJECT_SOURCE_DIR}/test/benchmark.sh"
+        "${PROJECT_SOURCE_DIR}/test/cpu_affinity.sh"
+        "${PROJECT_SOURCE_DIR}/test/environment.sh"
         "${PROJECT_SOURCE_DIR}/test/TestOpticalTransport.cxx"
-        "${PROJECT_SOURCE_DIR}/test/regression_test.sh"
+        "${PROJECT_SOURCE_DIR}/test/regression.sh"
     )
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         ${G4GO_TEST_RUNTIME_FILES}
@@ -260,6 +263,7 @@ if(BUILD_TESTING)
             "${PROJECT_BINARY_DIR}/test/${test_runtime_name}"
             COPYONLY)
     endforeach()
+    file(REMOVE "${PROJECT_BINARY_DIR}/test/regression_test.sh")
 
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
@@ -272,8 +276,7 @@ if(BUILD_TESTING)
     find_program(G4GO_BASH_EXECUTABLE NAMES bash REQUIRED)
     add_test(NAME g4go_noptpho_regression
              COMMAND ${G4GO_BASH_EXECUTABLE}
-                     ${PROJECT_BINARY_DIR}/test/regression_test.sh
-                     --build-dir ${PROJECT_BINARY_DIR})
+                     ${PROJECT_BINARY_DIR}/test/regression.sh)
     set_tests_properties(g4go_noptpho_regression PROPERTIES
         LABELS "regression;gpu;slow"
         RUN_SERIAL TRUE
