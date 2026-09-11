@@ -113,7 +113,7 @@ fi
 build_dir="$(cd -- "$build_dir" && pwd)"
 
 g4go="${build_dir}/g4go"
-full_macro="${build_dir}/scripts/run_beam_eminus.mac"
+full_macro="${build_dir}/scripts/run_benchmark_eminus.mac"
 partial_macro="${build_dir}/scripts/run_cpu_scaling.mac"
 affinity_helper="${script_dir}/cpu_affinity.sh"
 [[ -x "$g4go" ]] || die "g4go executable is missing: $g4go"
@@ -186,7 +186,7 @@ run_logged() {
         "$@" 2>&1 | tee "$log_file"
         return "${PIPESTATUS[0]}"
     fi
-    "$@" >"$log_file" 2>&1
+    "$@" > >(tee "$log_file" | awk '/G4WT/ { print; fflush() }') 2>&1
 }
 
 run_with_affinity() {
@@ -197,6 +197,12 @@ run_with_affinity() {
     fi
 }
 
+has_root_worker_output() {
+    local output_directory="$1"
+    local output_stem="$2"
+    compgen -G "${output_directory}/${output_stem}_t*.root" >/dev/null
+}
+
 now_ns() {
     date +%s%N
 }
@@ -205,16 +211,31 @@ seconds_from_ns() {
     awk -v nanoseconds="$1" 'BEGIN {printf "%.6f", nanoseconds / 1000000000.0}'
 }
 
+format_duration() {
+    awk -v seconds="$1" 'BEGIN {
+        if (seconds >= 60.0) {
+            printf "%dm %.1fs", int(seconds / 60.0), seconds - 60.0 * int(seconds / 60.0)
+        } else if (seconds >= 1.0) {
+            printf "%.2fs", seconds
+        } else {
+            printf "%dms", int(seconds * 1000.0 + 0.5)
+        }
+    }'
+}
+
 run_timed_phase() {
     local phase_name="$1"
     local log_file="$2"
-    local output_file="$3"
-    local elapsed_variable="$4"
-    local event_count="$5"
-    shift 5
+    local output_directory="$3"
+    local output_stem="$4"
+    local destination_directory="$5"
+    local elapsed_variable="$6"
+    local event_count="$7"
+    shift 7
     local start_ns elapsed_seconds command_status
 
-    rm -f -- "$output_file"
+    rm -rf -- "$output_directory" "$destination_directory"
+    echo "[${phase_name}] RUN events=${event_count}"
     start_ns="$(now_ns)"
     run_logged "$log_file" run_with_affinity "$@"
     command_status="$?"
@@ -223,12 +244,14 @@ run_timed_phase() {
         fail_benchmark "$command_status"
     fi
     elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - start_ns ))")"
-    [[ -s "$output_file" ]] || {
-        echo "[${phase_name}] ROOT output is missing"
+    if ! has_root_worker_output "$output_directory" "$output_stem"; then
+        echo "[${phase_name}] ROOT worker output is missing: ${output_directory}/${output_stem}_t*.root"
         fail_benchmark 1
-    }
+    fi
+    mv -- "$output_directory" "$destination_directory" || fail_benchmark 1
     printf -v "$elapsed_variable" '%s' "$elapsed_seconds"
-    echo "[${phase_name}] PASS events=${event_count} wall_time=${elapsed_seconds}s"
+    echo "[${phase_name}] PASS events=${event_count} wall time: $(format_duration "$elapsed_seconds") " \
+        "dataset=${destination_directory}/${output_stem}_t*.root"
 }
 
 is_positive_number() {
@@ -245,23 +268,12 @@ read_last_transport_time_ms() {
     awk '
         index($0, "[g4go] optical backend:") > 0 {
             for (field = 1; field <= NF; ++field) {
-                if ($field == "transport_ms:") {
-                    value = $(field + 1)
+                if ($field == "transport" && $(field + 1) == "time:") {
+                    value = $(field + 2)
                     gsub(/,/, "", value)
                     last = value
                 }
             }
-        }
-        END {if (last != "") print last}
-    ' "$1"
-}
-
-read_last_root_output_time_ms() {
-    awk -F= '
-        index($0, "performance_output: root_output_ms=") > 0 {
-            value = $2
-            gsub(/[[:space:]]/, "", value)
-            last = value
         }
         END {if (last != "") print last}
     ' "$1"
@@ -298,35 +310,33 @@ write_performance_row() {
 echo "[benchmark] full_events=${full_events} partial_events=${partial_events} threads=${threads}"
 echo "[benchmark] cpu_affinity=${cpu_list:-none} gpu_index=${gpu_index}"
 
-run_timed_phase cpu-1t-partial "$cpu_1t_partial_log" run_cpu_scaling.root \
-    cpu_1t_partial_elapsed_seconds "$partial_events" \
+run_timed_phase cpu-1t-partial "$cpu_1t_partial_log" run_cpu_scaling run_cpu_scaling \
+    cpu_1t_partial cpu_1t_partial_elapsed_seconds "$partial_events" \
     "$g4go" --backend cpu --threads 1 "$partial_macro"
-mv -- run_cpu_scaling.root cpu_1t_partial.root || fail_benchmark 1
 
 run_timed_phase "cpu-${threads}t-partial" "$cpu_threads_partial_log" \
-    run_cpu_scaling.root cpu_threads_partial_elapsed_seconds "$partial_events" \
+    run_cpu_scaling run_cpu_scaling "cpu_${threads}t_partial" \
+    cpu_threads_partial_elapsed_seconds "$partial_events" \
     "$g4go" --backend cpu --threads "$threads" "$partial_macro"
-mv -- run_cpu_scaling.root "cpu_${threads}t_partial.root" || fail_benchmark 1
 
 run_timed_phase "cpu-${threads}t-full" "$cpu_threads_full_log" \
-    run_beam_eminus.root cpu_threads_full_elapsed_seconds "$full_events" \
+    run_benchmark_eminus run_benchmark_eminus "cpu_${threads}t_full" \
+    cpu_threads_full_elapsed_seconds "$full_events" \
     "$g4go" --backend cpu --threads "$threads" "$full_macro"
-mv -- run_beam_eminus.root "cpu_${threads}t_full.root" || fail_benchmark 1
 
 gpu_arguments=(--backend gpu --batch-timeout-ms "$batch_timeout_ms")
 if ((perf_diagnostics)); then
     gpu_arguments+=(--diagnostics)
 fi
-run_timed_phase gpu-1t-full "$gpu_1t_full_log" run_beam_eminus.root \
+run_timed_phase gpu-1t-full "$gpu_1t_full_log" run_benchmark_eminus run_benchmark_eminus gpu_1t_full \
     gpu_1t_full_elapsed_seconds "$full_events" env CUDA_VISIBLE_DEVICES="$gpu_index" \
     "$g4go" "${gpu_arguments[@]}" --threads 1 "$full_macro"
-mv -- run_beam_eminus.root gpu_1t_full.root || fail_benchmark 1
 
 run_timed_phase "gpu-${threads}t-full" "$gpu_threads_full_log" \
-    run_beam_eminus.root gpu_threads_full_elapsed_seconds "$full_events" \
+    run_benchmark_eminus run_benchmark_eminus "gpu_${threads}t_full" \
+    gpu_threads_full_elapsed_seconds "$full_events" \
     env CUDA_VISIBLE_DEVICES="$gpu_index" "$g4go" "${gpu_arguments[@]}" \
     --threads "$threads" "$full_macro"
-mv -- run_beam_eminus.root "gpu_${threads}t_full.root" || fail_benchmark 1
 
 for gpu_log in "$gpu_1t_full_log" "$gpu_threads_full_log"; do
     grep -F "[g4go] optical backend: gpu" "$gpu_log" >/dev/null 2>&1 || {
@@ -351,11 +361,8 @@ fi
 
 gpu_1t_transport_ms="$(read_last_transport_time_ms "$gpu_1t_full_log")"
 gpu_threads_transport_ms="$(read_last_transport_time_ms "$gpu_threads_full_log")"
-gpu_1t_root_output_ms="$(read_last_root_output_time_ms "$gpu_1t_full_log")"
-gpu_threads_root_output_ms="$(read_last_root_output_time_ms "$gpu_threads_full_log")"
-if ! is_nonnegative_number "$gpu_1t_transport_ms" || ! is_nonnegative_number "$gpu_threads_transport_ms" ||
-   ! is_nonnegative_number "$gpu_1t_root_output_ms" || ! is_nonnegative_number "$gpu_threads_root_output_ms"; then
-    echo "GPU transport or ROOT output timing is missing"
+if ! is_nonnegative_number "$gpu_1t_transport_ms" || ! is_nonnegative_number "$gpu_threads_transport_ms"; then
+    echo "GPU transport timing is missing"
     fail_benchmark 1
 fi
 
@@ -390,11 +397,11 @@ fi
         '' \
         'GPU timing breakdown' \
         '--------------------'
-    printf '%-20s %18s %24s %22s\n' 'Phase' 'Total wall (s)' 'GPU transport (ms)' 'ROOT output (ms)'
-    printf '%-20s %18s %24s %22s\n' 'GPU-1T full' "$gpu_1t_full_elapsed_seconds" \
-        "$gpu_1t_transport_ms" "$gpu_1t_root_output_ms"
-    printf '%-20s %18s %24s %22s\n' "GPU-${threads}T full" "$gpu_threads_full_elapsed_seconds" \
-        "$gpu_threads_transport_ms" "$gpu_threads_root_output_ms"
+    printf '%-20s %18s %24s\n' 'Phase' 'Total wall (s)' 'GPU transport (ms)'
+    printf '%-20s %18s %24s\n' 'GPU-1T full' "$gpu_1t_full_elapsed_seconds" \
+        "$gpu_1t_transport_ms"
+    printf '%-20s %18s %24s\n' "GPU-${threads}T full" "$gpu_threads_full_elapsed_seconds" \
+        "$gpu_threads_transport_ms"
     printf '%s\n' \
         '' \
         'Performance comparison' \
@@ -411,7 +418,6 @@ if ((perf_diagnostics)); then
         printf '%-36s %18s %18s\n' 'Metric' 'GPU-1T' "GPU-${threads}T"
         printf '%-36s %18s %18s\n' 'Total wall (s)' "$gpu_1t_full_elapsed_seconds" "$gpu_threads_full_elapsed_seconds"
         printf '%-36s %18s %18s\n' 'GPU optical transport (ms)' "$gpu_1t_transport_ms" "$gpu_threads_transport_ms"
-        printf '%-36s %18s %18s\n' 'ROOT output (ms)' "$gpu_1t_root_output_ms" "$gpu_threads_root_output_ms"
         printf '%s\n' '' 'CUDA and scheduler stages (ms)' '-----------------------------'
         printf '%-36s %18s %18s\n' 'Metric' 'GPU-1T' "GPU-${threads}T"
         write_performance_row 'Capture total' capture_total_ms

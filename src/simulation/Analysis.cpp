@@ -8,10 +8,10 @@
 
 namespace G4GO::Simulation {
 
-auto Analysis::Enqueue(std::vector<CrystalHitOutput> crystalHits, std::vector<SensorHitOutput> sensorHits,
+auto Analysis::Enqueue(std::vector<CrystalHitOutput> crystalHitOutput, std::vector<SensorHitOutput> sensorHitOutput,
                        G4GO::Optical::PhotonTransportFuture transportFuture) -> void {
     fPendingEvents.emplace_back(
-        PendingEvent{std::move(crystalHits), std::move(sensorHits), std::move(transportFuture)});
+        PendingEvent{std::move(crystalHitOutput), std::move(sensorHitOutput), std::move(transportFuture)});
 }
 
 auto Analysis::WriteReadyEvents() -> void { ProcessReadyEvents(false); }
@@ -22,36 +22,33 @@ auto Analysis::ProcessReadyEvents(bool waitForFrontEvent) -> void {
     if (fPendingEvents.empty()) {
         return;
     }
-    if (waitForFrontEvent && fPendingEvents.at(0).transportFuture.valid()) {
-        const auto waitStart{std::chrono::steady_clock::now()};
+    if (waitForFrontEvent and fPendingEvents.at(0).transportFuture.valid()) {
         fPendingEvents.at(0).transportFuture.wait();
-        fPerformance.futureWaitMs +=
-            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - waitStart}.count();
     }
-    while (!fPendingEvents.empty()) {
+    while (not fPendingEvents.empty()) {
         auto& event{fPendingEvents.at(0)};
-        if (event.transportFuture.valid() &&
+        if (event.transportFuture.valid() and
             event.transportFuture.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
             break;
         }
         auto completedEvent{std::move(event)};
         fPendingEvents.pop_front();
-        WriteEvent(std::move(completedEvent));
+        WriteEvent(completedEvent);
     }
 }
 
 auto Analysis::Flush() -> void {
-    while (!fPendingEvents.empty()) {
+    while (not fPendingEvents.empty()) {
         WaitAndWriteNextEvent();
     }
 }
 
-auto Analysis::WriteEvent(PendingEvent event) -> void {
+auto Analysis::WriteEvent(const PendingEvent& event) -> void {
     const auto* transportOutput{event.transportFuture.valid() ? &event.transportFuture.get() : nullptr};
 
     auto analysisManager{G4AnalysisManager::Instance()};
-    const auto detectedCount{
-        transportOutput != nullptr ? transportOutput->statistics.detectedCount : event.sensorHitOutput.size()};
+    const auto detectedCount{transportOutput != nullptr ? transportOutput->statistics.detectedCount :
+                                                          event.sensorHitOutput.size()};
     for (const auto& crystalHit : event.crystalHitOutput) {
         analysisManager->FillNtupleIColumn(0, 0, crystalHit.eventID);
         analysisManager->FillNtupleIColumn(0, 1, crystalHit.moduleID);
@@ -61,13 +58,10 @@ auto Analysis::WriteEvent(PendingEvent event) -> void {
         analysisManager->AddNtupleRow(0);
     }
 
-    const auto writeSensorHits{[&](const auto& sensorHits, const auto& timeOfFlight) {
-        const auto packStart{std::chrono::steady_clock::now()};
+    const auto writeSensorHits{[&](const auto& sensorHits, const auto& timeOfFlight) -> void {
         fSensorIDs.clear();
         fSensorTimes.clear();
         if (sensorHits.empty()) {
-            fPerformance.sensorPackMs +=
-                std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - packStart}.count();
             return;
         }
 
@@ -77,20 +71,14 @@ auto Analysis::WriteEvent(PendingEvent event) -> void {
             fSensorIDs.emplace_back(static_cast<int>(sensorHit.sensorID));
             fSensorTimes.emplace_back(static_cast<float>(timeOfFlight(sensorHit)));
         }
-        fPerformance.sensorPackMs +=
-            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - packStart}.count();
-
-        const auto sensorNtupleStart{std::chrono::steady_clock::now()};
         analysisManager->FillNtupleIColumn(1, 0, static_cast<int>(sensorHits.front().eventID));
         analysisManager->AddNtupleRow(1);
-        fPerformance.sensorNtupleMs +=
-            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - sensorNtupleStart}.count();
     }};
 
     if (transportOutput != nullptr) {
-        writeSensorHits(transportOutput->detections, [](const auto& detection) { return detection.timeNs; });
+        writeSensorHits(transportOutput->detections, [](const auto& detection) -> auto { return detection.timeNs; });
     } else {
-        writeSensorHits(event.sensorHitOutput, [](const auto& sensorHit) { return sensorHit.timeOfFlight; });
+        writeSensorHits(event.sensorHitOutput, [](const auto& sensorHit) -> auto { return sensorHit.timeOfFlight; });
     }
 }
 

@@ -1,3 +1,4 @@
+#include "ROOT/RDFHelpers.hxx"
 #include "ROOT/RDataFrame.hxx"
 #include "TCanvas.h"
 #include "TError.h"
@@ -9,7 +10,6 @@
 #include "TROOT.h"
 #include "TSystem.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -17,10 +17,8 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <numeric>
 #include <sstream>
 #include <stdexcept>
-#include <vector>
 
 namespace {
 
@@ -29,8 +27,8 @@ auto ZScore(double pValue) -> double {
 }
 
 auto ComparisonStatus(double pValue, bool rangeValid = true) -> const char* {
-    const auto valid{std::isfinite(pValue) && pValue >= 0.0 && pValue <= 1.0};
-    if (!rangeValid || !valid) {
+    const auto valid{std::isfinite(pValue) and pValue >= 0.0 and pValue <= 1.0};
+    if (not rangeValid or not valid) {
         return "INVALID";
     }
     const auto z{ZScore(pValue)};
@@ -47,19 +45,19 @@ auto ComparisonStatus(double pValue, bool rangeValid = true) -> const char* {
 }
 
 auto ComparisonPassed(double pValue, bool rangeValid = true) -> bool {
-    const auto valid{std::isfinite(pValue) && pValue >= 0.0 && pValue <= 1.0};
-    return rangeValid && valid && ZScore(pValue) <= 5.0;
+    const auto valid{std::isfinite(pValue) and pValue >= 0.0 and pValue <= 1.0};
+    return rangeValid and valid and ZScore(pValue) <= 5.0;
 }
 
 auto HasOutOfRange(const TH1D& histogram) -> bool {
-    return histogram.GetBinContent(0) != 0.0 || histogram.GetBinContent(histogram.GetNbinsX() + 1) != 0.0;
+    return histogram.GetBinContent(0) != 0.0 or histogram.GetBinContent(histogram.GetNbinsX() + 1) != 0.0;
 }
 
-auto DrawComparison(TH1D* cpuHistogram, TH1D* gpuHistogram, const char* canvasName, const char* canvasTitle,
+auto DrawComparison(const TH1D& cpuHistogram, const TH1D& gpuHistogram, const char* canvasName, const char* canvasTitle,
                     const char* pullName, const char* pullTitle, const std::filesystem::path& imagePath, bool logY,
                     double cpuLegendX, const char* gpuLegendLabel) -> void {
-    TH1D cpuPlot{*cpuHistogram};
-    TH1D gpuPlot{*gpuHistogram};
+    TH1D cpuPlot{cpuHistogram};
+    TH1D gpuPlot{gpuHistogram};
     cpuPlot.SetDirectory(nullptr);
     gpuPlot.SetDirectory(nullptr);
     // Keep one x-axis title in the combined figure. The lower pull panel
@@ -130,7 +128,7 @@ auto DrawComparison(TH1D* cpuHistogram, TH1D* gpuHistogram, const char* canvasNa
 
 } // namespace
 
-auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, const char* outputDirectory = ".") -> void {
+auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const char* outputDirectory = ".") -> void {
     gROOT->SetBatch(kTRUE);
     gErrorIgnoreLevel = kWarning;
 
@@ -139,44 +137,25 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, cons
         const auto figuresPath{outputPath / "figures"};
         std::filesystem::create_directories(figuresPath);
 
-        ROOT::RDataFrame cpuData{"CrystalHit", cpuFileName};
-        ROOT::RDataFrame gpuData{"CrystalHit", gpuFileName};
-        ROOT::RDataFrame cpuSensorData{"SensorHit", cpuFileName};
-        ROOT::RDataFrame gpuSensorData{"SensorHit", gpuFileName};
-
-        // One equal-width histogram per column, shared between the
-        // statistical tests and the plot. Pull the raw values once for range
-        // validation only.
-        auto cpuNOptPhoValues{cpuData.Take<int>("nOptPho")};
-        auto gpuNOptPhoValues{gpuData.Take<int>("nOptPho")};
-        auto cpuEdepValues{cpuData.Take<double>("Edep")};
-        auto gpuEdepValues{gpuData.Take<double>("Edep")};
-        auto cpuTofVectors{cpuSensorData.Take<ROOT::RVec<float>>("timeOfFlight")};
-        auto gpuTofVectors{gpuSensorData.Take<ROOT::RVec<float>>("timeOfFlight")};
-        std::vector<float> cpuTofValues{};
-        std::vector<float> gpuTofValues{};
-        for (const auto& values : *cpuTofVectors) {
-            cpuTofValues.insert(cpuTofValues.end(), values.begin(), values.end());
-        }
-        for (const auto& values : *gpuTofVectors) {
-            gpuTofValues.insert(gpuTofValues.end(), values.begin(), values.end());
-        }
-        if (cpuNOptPhoValues->empty() || gpuNOptPhoValues->empty()) {
-            throw std::runtime_error("CrystalHit contains no nOptPho values");
-        }
-        if (cpuEdepValues->empty() || gpuEdepValues->empty()) {
-            throw std::runtime_error("CrystalHit contains no Edep values");
-        }
-        if (cpuTofValues.empty() || gpuTofValues.empty()) {
-            throw std::runtime_error("SensorHit contains no time-of-flight values");
-        }
+        ROOT::RDataFrame cpuData{"CrystalHit", cpuDataset};
+        ROOT::RDataFrame gpuData{"CrystalHit", gpuDataset};
+        ROOT::RDataFrame cpuSensorData{"SensorHit", cpuDataset};
+        ROOT::RDataFrame gpuSensorData{"SensorHit", gpuDataset};
 
         // --- nOptPho spectrum (CrystalHit) ---
         constexpr auto nOptPhoBins{100};
-        const auto maximumNOptPho{std::max(*std::max_element(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end()),
-                                           *std::max_element(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end()))};
-        const auto nOptPhoMaximum{static_cast<double>(maximumNOptPho) + 100.0};
+        constexpr auto nOptPhoMaximum{2000.0};
         const auto nOptPhoTitle{"nOptPho spectrum;nOptPho;Entries"};
+        auto cpuNOptPhoStats{cpuData.Stats<int>("nOptPho")};
+        auto gpuNOptPhoStats{gpuData.Stats<int>("nOptPho")};
+        auto cpuNOptPhoTotal{
+            cpuData.Define("nOptPho64", [](int value) { return static_cast<std::uint64_t>(value); }, {"nOptPho"})
+                .Sum<std::uint64_t>("nOptPho64")};
+        auto gpuNOptPhoTotal{
+            gpuData.Define("nOptPho64", [](int value) { return static_cast<std::uint64_t>(value); }, {"nOptPho"})
+                .Sum<std::uint64_t>("nOptPho64")};
+        auto cpuInvalidNOptPho{cpuData.Filter([](int value) { return value < 0; }, {"nOptPho"}).Count()};
+        auto gpuInvalidNOptPho{gpuData.Filter([](int value) { return value < 0; }, {"nOptPho"}).Count()};
         auto cpuNOptPhoHistogram{
             cpuData.Histo1D({"cpu_nOptPho", nOptPhoTitle, nOptPhoBins, 0.0, nOptPhoMaximum}, "nOptPho")};
         auto gpuNOptPhoHistogram{
@@ -184,94 +163,128 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, cons
 
         // --- Event energy deposition (CrystalHit) ---
         constexpr auto edepBins{50};
-        const auto maximumEdep{std::max(*std::max_element(cpuEdepValues->begin(), cpuEdepValues->end()),
-                                        *std::max_element(gpuEdepValues->begin(), gpuEdepValues->end()))};
-        const auto edepMaximum{std::max(1.0, maximumEdep * 1.05)};
+        constexpr auto edepMaximum{6.0};
         const auto edepTitle{"event total energy deposition;Edep [MeV];Events"};
+        auto cpuEdepStats{cpuData.Stats<double>("Edep")};
+        auto gpuEdepStats{gpuData.Stats<double>("Edep")};
+        auto cpuInvalidEdep{
+            cpuData.Filter([](double value) { return not std::isfinite(value) or value < 0.0; }, {"Edep"}).Count()};
+        auto gpuInvalidEdep{
+            gpuData.Filter([](double value) { return not std::isfinite(value) or value < 0.0; }, {"Edep"}).Count()};
         auto cpuEdepHistogram{cpuData.Histo1D({"cpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
         auto gpuEdepHistogram{gpuData.Histo1D({"gpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
 
         // --- Sensor time of flight (SensorHit) ---
-        const auto tofValid{std::all_of(cpuTofValues.begin(), cpuTofValues.end(),
-                                        [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
-                            std::all_of(gpuTofValues.begin(), gpuTofValues.end(),
-                                        [](const auto value) { return std::isfinite(value) && value >= 0.0; })};
-        const auto maximumTof{std::max(*std::max_element(cpuTofValues.begin(), cpuTofValues.end()),
-                                       *std::max_element(gpuTofValues.begin(), gpuTofValues.end()))};
-        const auto tofMaximum{std::max(1000.0, std::ceil(maximumTof + 1.0))};
-        auto cpuTofHistogram{cpuSensorData.Histo1D(
-            {"cpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
-        auto gpuTofHistogram{gpuSensorData.Histo1D(
-            {"gpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
+        constexpr auto tofMaximum{1000.0};
+        const auto addSensorColumns{[](ROOT::RDF::RNode data) {
+            return data
+                .Define("sensorCount",
+                        [](const ROOT::RVec<int>& sensorIDs) { return static_cast<std::uint64_t>(sensorIDs.size()); },
+                        {"sensorID"})
+                .Define("tofSum",
+                        [](const ROOT::RVec<float>& times) {
+                            double sum{};
+                            for (const auto time : times) {
+                                sum += time;
+                            }
+                            return sum;
+                        },
+                        {"timeOfFlight"})
+                .Define("tofSquaredSum",
+                        [](const ROOT::RVec<float>& times) {
+                            double sum{};
+                            for (const auto time : times) {
+                                sum += static_cast<double>(time) * time;
+                            }
+                            return sum;
+                        },
+                        {"timeOfFlight"})
+                .Define("sensorValid",
+                        [](const ROOT::RVec<int>& sensorIDs, const ROOT::RVec<float>& times) {
+                            if (sensorIDs.empty() or sensorIDs.size() != times.size()) {
+                                return false;
+                            }
+                            for (std::size_t i{}; i < times.size(); i++) {
+                                if (sensorIDs[i] < 0 or sensorIDs[i] >= 64 or not std::isfinite(times[i]) or
+                                    times[i] < 0.0F) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        },
+                        {"sensorID", "timeOfFlight"});
+        }};
+        auto cpuSensor{addSensorColumns(cpuSensorData)};
+        auto gpuSensor{addSensorColumns(gpuSensorData)};
+        auto cpuSensorCount{cpuSensor.Sum<std::uint64_t>("sensorCount")};
+        auto gpuSensorCount{gpuSensor.Sum<std::uint64_t>("sensorCount")};
+        auto cpuTofSum{cpuSensor.Sum<double>("tofSum")};
+        auto gpuTofSum{gpuSensor.Sum<double>("tofSum")};
+        auto cpuTofSquaredSum{cpuSensor.Sum<double>("tofSquaredSum")};
+        auto gpuTofSquaredSum{gpuSensor.Sum<double>("tofSquaredSum")};
+        auto cpuInvalidSensorRows{cpuSensor.Filter([](bool valid) { return not valid; }, {"sensorValid"}).Count()};
+        auto gpuInvalidSensorRows{gpuSensor.Filter([](bool valid) { return not valid; }, {"sensorValid"}).Count()};
+        auto cpuTofHistogram{
+            cpuSensor.Histo1D({"cpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
+        auto gpuTofHistogram{
+            gpuSensor.Histo1D({"gpu_timeOfFlight", "time of flight;ns;Entries", 100, 0.0, tofMaximum}, "timeOfFlight")};
 
         // --- Sensor pixel occupancy (SensorHit) ---
-        auto cpuOccupancyHistogram{cpuSensorData.Histo1D(
+        auto cpuOccupancyHistogram{cpuSensor.Histo1D(
             {"cpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64, 0.0, 64.0}, "sensorID")};
-        auto gpuOccupancyHistogram{gpuSensorData.Histo1D(
+        auto gpuOccupancyHistogram{gpuSensor.Histo1D(
             {"gpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64, 0.0, 64.0}, "sensorID")};
 
-        // Materialise all booked histograms.
-        auto* cpuNOptPho{cpuNOptPhoHistogram.GetPtr()};
-        auto* gpuNOptPho{gpuNOptPhoHistogram.GetPtr()};
-        auto* cpuEdep{cpuEdepHistogram.GetPtr()};
-        auto* gpuEdep{gpuEdepHistogram.GetPtr()};
-        auto* cpuTof{cpuTofHistogram.GetPtr()};
-        auto* gpuTof{gpuTofHistogram.GetPtr()};
-        auto* cpuOccupancy{cpuOccupancyHistogram.GetPtr()};
-        auto* gpuOccupancy{gpuOccupancyHistogram.GetPtr()};
+        ROOT::RDF::RunGraphs({cpuNOptPhoHistogram, gpuNOptPhoHistogram, cpuTofHistogram, gpuTofHistogram});
 
-        // Derive counts and moments from the materialised histograms instead
-        // of re-running dataframe aggregations.
-        const auto cpuEntries{static_cast<std::uint64_t>(cpuNOptPho->GetEntries())};
-        const auto gpuEntries{static_cast<std::uint64_t>(gpuNOptPho->GetEntries())};
-        const auto cpuTotal{
-            static_cast<std::uint64_t>(std::accumulate(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end(), 0LL))};
-        const auto gpuTotal{
-            static_cast<std::uint64_t>(std::accumulate(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end(), 0LL))};
-        const auto cpuMean{cpuNOptPho->GetMean()};
-        const auto gpuMean{gpuNOptPho->GetMean()};
-        const auto cpuRms{cpuNOptPho->GetStdDev()};
-        const auto gpuRms{gpuNOptPho->GetStdDev()};
-        const auto cpuEdepEntries{cpuEdepValues->size()};
-        const auto gpuEdepEntries{gpuEdepValues->size()};
-        const auto cpuEdepMean{cpuEdep->GetMean()};
-        const auto gpuEdepMean{gpuEdep->GetMean()};
-        const auto cpuEdepRms{cpuEdep->GetStdDev()};
-        const auto gpuEdepRms{gpuEdep->GetStdDev()};
-        const auto cpuSensorEntries{static_cast<std::uint64_t>(cpuTof->GetEntries())};
-        const auto gpuSensorEntries{static_cast<std::uint64_t>(gpuTof->GetEntries())};
-        const auto cpuTofMean{cpuTof->GetMean()};
-        const auto gpuTofMean{gpuTof->GetMean()};
-        const auto cpuTofRms{cpuTof->GetStdDev()};
-        const auto gpuTofRms{gpuTof->GetStdDev()};
-
-        if (cpuEntries < 500U || gpuEntries < 500U) {
-            throw std::runtime_error("CrystalHit contains too few entries");
-        }
-        if (cpuTotal == 0U || gpuTotal == 0U) {
-            throw std::runtime_error("nOptPho total is zero");
-        }
-        if (cpuSensorEntries == 0U || gpuSensorEntries == 0U) {
+        const auto cpuEntries{static_cast<std::uint64_t>(cpuNOptPhoStats->GetN())};
+        const auto gpuEntries{static_cast<std::uint64_t>(gpuNOptPhoStats->GetN())};
+        const auto cpuTotal{*cpuNOptPhoTotal};
+        const auto gpuTotal{*gpuNOptPhoTotal};
+        const auto cpuMean{cpuNOptPhoStats->GetMean()};
+        const auto gpuMean{gpuNOptPhoStats->GetMean()};
+        const auto cpuRms{cpuNOptPhoStats->GetRMS()};
+        const auto gpuRms{gpuNOptPhoStats->GetRMS()};
+        const auto cpuEdepEntries{static_cast<std::uint64_t>(cpuEdepStats->GetN())};
+        const auto gpuEdepEntries{static_cast<std::uint64_t>(gpuEdepStats->GetN())};
+        const auto cpuEdepMean{cpuEdepStats->GetMean()};
+        const auto gpuEdepMean{gpuEdepStats->GetMean()};
+        const auto cpuEdepRms{cpuEdepStats->GetRMS()};
+        const auto gpuEdepRms{gpuEdepStats->GetRMS()};
+        const auto cpuSensorEntries{*cpuSensorCount};
+        const auto gpuSensorEntries{*gpuSensorCount};
+        if (cpuSensorEntries == 0U or gpuSensorEntries == 0U) {
             throw std::runtime_error("SensorHit contains no detections");
         }
-        const auto nOptPhoRangeValid{std::all_of(cpuNOptPhoValues->begin(), cpuNOptPhoValues->end(),
-                                                 [](const auto value) { return value >= 0; }) &&
-                                     std::all_of(gpuNOptPhoValues->begin(), gpuNOptPhoValues->end(),
-                                                 [](const auto value) { return value >= 0; }) &&
-                                     !HasOutOfRange(*cpuNOptPho) && !HasOutOfRange(*gpuNOptPho)};
-        const auto edepRangeValid{std::all_of(cpuEdepValues->begin(), cpuEdepValues->end(),
-                                              [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
-                                  std::all_of(gpuEdepValues->begin(), gpuEdepValues->end(),
-                                              [](const auto value) { return std::isfinite(value) && value >= 0.0; }) &&
-                                  !HasOutOfRange(*cpuEdep) && !HasOutOfRange(*gpuEdep)};
-        const auto tofRangeValid{tofValid && !HasOutOfRange(*cpuTof) && !HasOutOfRange(*gpuTof)};
-        const auto occupancyRangeValid{!HasOutOfRange(*cpuOccupancy) && !HasOutOfRange(*gpuOccupancy)};
+        const auto cpuTofMean{*cpuTofSum / static_cast<double>(cpuSensorEntries)};
+        const auto gpuTofMean{*gpuTofSum / static_cast<double>(gpuSensorEntries)};
+        const auto cpuTofRms{
+            std::sqrt(*cpuTofSquaredSum / static_cast<double>(cpuSensorEntries) - cpuTofMean * cpuTofMean)};
+        const auto gpuTofRms{
+            std::sqrt(*gpuTofSquaredSum / static_cast<double>(gpuSensorEntries) - gpuTofMean * gpuTofMean)};
 
-        const auto nOptPhoPValue{cpuNOptPho->Chi2Test(gpuNOptPho, "UU P OF")};
-        const auto tofPValue{cpuTof->Chi2Test(gpuTof, "UU P OF")};
-        const auto tofShapePValue{cpuTof->KolmogorovTest(gpuTof)};
-        const auto occupancyPValue{cpuOccupancy->Chi2Test(gpuOccupancy, "UU P OF")};
-        const auto edepPValue{cpuEdep->Chi2Test(gpuEdep, "UU P OF")};
+        if (cpuEntries < 500U or gpuEntries < 500U) {
+            throw std::runtime_error("CrystalHit contains too few entries");
+        }
+        if (cpuTotal == 0U or gpuTotal == 0U) {
+            throw std::runtime_error("nOptPho total is zero");
+        }
+        const auto nOptPhoRangeValid{*cpuInvalidNOptPho == 0U and *gpuInvalidNOptPho == 0U and
+                                     not HasOutOfRange(*cpuNOptPhoHistogram) and
+                                     not HasOutOfRange(*gpuNOptPhoHistogram)};
+        const auto edepRangeValid{*cpuInvalidEdep == 0U and *gpuInvalidEdep == 0U and
+                                  not HasOutOfRange(*cpuEdepHistogram) and not HasOutOfRange(*gpuEdepHistogram)};
+        const auto tofRangeValid{*cpuInvalidSensorRows == 0U and *gpuInvalidSensorRows == 0U and
+                                 not HasOutOfRange(*cpuTofHistogram) and not HasOutOfRange(*gpuTofHistogram)};
+        const auto occupancyRangeValid{*cpuInvalidSensorRows == 0U and *gpuInvalidSensorRows == 0U and
+                                       not HasOutOfRange(*cpuOccupancyHistogram) and
+                                       not HasOutOfRange(*gpuOccupancyHistogram)};
+
+        const auto nOptPhoPValue{cpuNOptPhoHistogram->Chi2Test(&*gpuNOptPhoHistogram, "UU P OF")};
+        const auto tofPValue{cpuTofHistogram->Chi2Test(&*gpuTofHistogram, "UU P OF")};
+        const auto tofShapePValue{cpuTofHistogram->KolmogorovTest(&*gpuTofHistogram)};
+        const auto occupancyPValue{cpuOccupancyHistogram->Chi2Test(&*gpuOccupancyHistogram, "UU P OF")};
+        const auto edepPValue{cpuEdepHistogram->Chi2Test(&*gpuEdepHistogram, "UU P OF")};
 
         const auto nOptPhoZ{ZScore(nOptPhoPValue)};
         const auto tofZ{ZScore(tofPValue)};
@@ -314,23 +327,32 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, cons
         constexpr auto edepRmsRelativeTolerance{0.05};
 
         const auto totalPassed{relativeTotalDifference <= 0.10};
-        const auto nOptPhoPassed{nOptPhoRangeValid && nOptPhoMeanRelDiff <= nOptPhoMeanRelativeTolerance &&
+        const auto nOptPhoPassed{nOptPhoRangeValid and nOptPhoMeanRelDiff <= nOptPhoMeanRelativeTolerance and
                                  nOptPhoRmsRelDiff <= nOptPhoRmsRelativeTolerance};
         const auto edepPassed{
-            ComparisonPassed(edepPValue, edepRangeValid) && edepEntryRelDiff <= edepEntryRelativeTolerance &&
-            edepMeanRelDiff <= edepMeanRelativeTolerance && edepRmsRelDiff <= edepRmsRelativeTolerance};
-        const auto edepStatus{!edepRangeValid ? "INVALID" : edepPassed ? "PASSED" : "FAILED"};
-        const auto tofPassed{tofRangeValid && tofShapePValue >= tofShapePValueMinimum &&
-                             tofMeanRelDiff <= tofMeanRelativeTolerance && tofRmsRelDiff <= tofRmsRelativeTolerance};
+            ComparisonPassed(edepPValue, edepRangeValid) and edepEntryRelDiff <= edepEntryRelativeTolerance and
+            edepMeanRelDiff <= edepMeanRelativeTolerance and edepRmsRelDiff <= edepRmsRelativeTolerance};
+        const auto* edepStatus{"FAILED"};
+        if (not edepRangeValid) {
+            edepStatus = "INVALID";
+        } else if (edepPassed) {
+            edepStatus = "PASSED";
+        }
+        const auto tofPassed{tofRangeValid and tofShapePValue >= tofShapePValueMinimum and
+                             tofMeanRelDiff <= tofMeanRelativeTolerance and tofRmsRelDiff <= tofRmsRelativeTolerance};
         const auto occupancyPassed{ComparisonPassed(occupancyPValue, occupancyRangeValid)};
-        const auto tofStatus{!tofRangeValid ? "INVALID" : tofPassed ? "PASSED" : "FAILED"};
+        const auto* tofStatus{"FAILED"};
+        if (not tofRangeValid) {
+            tofStatus = "INVALID";
+        } else if (tofPassed) {
+            tofStatus = "PASSED";
+        }
         const auto occupancyStatus{ComparisonStatus(occupancyPValue, occupancyRangeValid)};
-        const auto distributionsPassed{nOptPhoPassed && edepPassed && tofPassed && occupancyPassed};
-        const auto regressionPassed{totalPassed && sensorTotalPassed && distributionsPassed};
+        const auto distributionsPassed{nOptPhoPassed and edepPassed and tofPassed and occupancyPassed};
+        const auto regressionPassed{totalPassed and sensorTotalPassed and distributionsPassed};
         const auto regressionStatus{regressionPassed ? "PASSED" : "FAILED"};
         std::ostringstream summary{};
-        summary << std::fixed << std::setprecision(6)
-                << "G4GO Optical Regression\n"
+        summary << std::fixed << std::setprecision(6) << "G4GO Optical Regression\n"
                 << "=======================\n\n"
                 << "Overall result\n"
                 << "--------------\n"
@@ -381,23 +403,25 @@ auto TestOpticalTransport(const char* cpuFileName, const char* gpuFileName, cons
                 << "Status                 : " << occupancyStatus << '\n';
         std::cout << summary.str();
 
-        DrawComparison(cpuNOptPho, gpuNOptPho, "noptpho_comparison", "nOptPho CPU/GPU comparison", "nOptPho_pull",
-                       ";nOptPho;Pull", figuresPath / "noptpho_comparison.png", false, 0.14, "GPU / OptiX");
-        DrawComparison(cpuEdep, gpuEdep, "edep_comparison", "Event total energy deposition CPU/GPU comparison",
-                       "event_total_Edep_pull", ";Edep [MeV];Pull", figuresPath / "edep_comparison.png", false, 0.14,
+        DrawComparison(*cpuNOptPhoHistogram, *gpuNOptPhoHistogram, "noptpho_comparison", "nOptPho CPU/GPU comparison",
+                       "nOptPho_pull", ";nOptPho;Pull", figuresPath / "noptpho_comparison.png", false, 0.14,
                        "GPU / OptiX");
-        DrawComparison(cpuTof, gpuTof, "tof_comparison", "TOF CPU/GPU comparison", "timeOfFlight_pull",
-                       ";time of flight [ns];Pull", figuresPath / "tof_comparison.png", true, 0.64, "GPU / OptiX");
+        DrawComparison(*cpuEdepHistogram, *gpuEdepHistogram, "edep_comparison",
+                       "Event total energy deposition CPU/GPU comparison", "event_total_Edep_pull", ";Edep [MeV];Pull",
+                       figuresPath / "edep_comparison.png", false, 0.14, "GPU / OptiX");
+        DrawComparison(*cpuTofHistogram, *gpuTofHistogram, "tof_comparison", "TOF CPU/GPU comparison",
+                       "timeOfFlight_pull", ";time of flight [ns];Pull", figuresPath / "tof_comparison.png", true, 0.64,
+                       "GPU / OptiX");
 
         const auto textOutputPath{outputPath / "regression_summary.txt"};
         std::ofstream outputFile{textOutputPath};
-        if (!outputFile) {
+        if (not outputFile) {
             throw std::runtime_error("unable to create regression output");
         }
         outputFile << summary.str();
         outputFile.close();
 
-        if (!regressionPassed) {
+        if (not regressionPassed) {
             std::cerr << "FAILED: optical regression criteria were not met\n";
             gSystem->Exit(1);
         }

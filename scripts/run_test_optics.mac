@@ -12,5 +12,4 @@
 /gps/direction 0 0 1
 /gps/polarization 1 0 0
 
-/analysis/setFileName run_optical_test
 /run/beamOn 1

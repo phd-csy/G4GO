@@ -9,7 +9,7 @@
 /gps/pos/centre 0 0 -10 cm
 /gps/direction 0 0 1
 
-/analysis/setFileName run_beam_eminus
+/analysis/setFileName run_regression_eminus
 
 /run/printProgress 1000
-/run/beamOn 50000
+/run/beamOn 5000

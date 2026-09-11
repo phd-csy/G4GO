@@ -62,7 +62,7 @@ if [[ ! "$batch_timeout_ms" =~ ^[0-9]+$ ]] || ((batch_timeout_ms > 10000)); then
 fi
 
 g4go="${build_dir}/g4go"
-regression_macro="${build_dir}/scripts/run_beam_eminus.mac"
+regression_macro="${build_dir}/scripts/run_regression_eminus.mac"
 compare_macro="${build_dir}/test/TestOpticalTransport.cxx"
 root_executable="$(command -v root || true)"
 sha256sum_executable="$(command -v sha256sum || true)"
@@ -71,10 +71,13 @@ run_timestamp="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)-$$"
 run_dir="${regression_dir}/${run_timestamp}"
 logs_dir="${run_dir}/logs"
 figures_dir="${run_dir}/figures"
-cpu_reference="${regression_dir}/cpu_${regression_threads}t.root"
+cpu_reference_dir="${regression_dir}/cpu_${regression_threads}t"
+cpu_reference_dataset="${cpu_reference_dir}/run_regression_eminus_t*.root"
 cpu_cache_file="${regression_dir}/cpu_${regression_threads}t.cache"
-gpu_1t_reference="${run_dir}/gpu_1t.root"
-gpu_threads_reference="${run_dir}/gpu_${regression_threads}t.root"
+gpu_1t_reference_dir="${run_dir}/gpu_1t"
+gpu_1t_reference_dataset="${gpu_1t_reference_dir}/run_regression_eminus_t*.root"
+gpu_threads_reference_dir="${run_dir}/gpu_${regression_threads}t"
+gpu_threads_reference_dataset="${gpu_threads_reference_dir}/run_regression_eminus_t*.root"
 cpu_log="${logs_dir}/cpu_${regression_threads}t.log"
 gpu_1t_log="${logs_dir}/gpu_1t.log"
 gpu_threads_log="${logs_dir}/gpu_${regression_threads}t.log"
@@ -136,7 +139,26 @@ run_logged() {
         "$@" 2>&1 | tee "$log_file"
         return "${PIPESTATUS[0]}"
     fi
-    "$@" >"$log_file" 2>&1
+    "$@" > >(tee "$log_file" | awk '/G4WT/ { print; fflush() }') 2>&1
+}
+
+has_root_worker_output() {
+    local output_directory="$1"
+    local output_stem="$2"
+    compgen -G "${output_directory}/${output_stem}_t*.root" >/dev/null
+}
+
+format_duration() {
+    awk -v nanoseconds="$1" 'BEGIN {
+        seconds = nanoseconds / 1000000000.0
+        if (seconds >= 60.0) {
+            printf "%dm %.1fs", int(seconds / 60.0), seconds - 60.0 * int(seconds / 60.0)
+        } else if (seconds >= 1.0) {
+            printf "%.2fs", seconds
+        } else {
+            printf "%dms", int(seconds * 1000.0 + 0.5)
+        }
+    }'
 }
 
 read_cache_value() {
@@ -160,32 +182,40 @@ write_cpu_cache() {
 run_phase() {
     local phase_name="$1"
     local log_file="$2"
-    local destination="$3"
-    shift 3
+    local output_directory="$3"
+    local output_stem="$4"
+    local destination_directory="$5"
+    local event_count="$6"
+    shift 6
 
-    rm -f -- run_beam_eminus.root
+    rm -rf -- "$output_directory" "$destination_directory"
+    echo "[${phase_name}] RUN events=${event_count}"
+    local start_ns elapsed_seconds
+    start_ns="$(date +%s%N)"
     run_logged "$log_file" "$@"
     local command_status="$?"
     if ((command_status != 0)); then
-        echo "[${phase_name}] FAIL events=${target_events} exit_code=${command_status}"
+        echo "[${phase_name}] FAIL events=${event_count} exit_code=${command_status}"
         fail_test "$command_status"
     fi
-    if [[ ! -s run_beam_eminus.root ]]; then
-        echo "[${phase_name}] ROOT output is missing"
+    elapsed_seconds="$(format_duration "$(( $(date +%s%N) - start_ns ))")"
+    if ! has_root_worker_output "$output_directory" "$output_stem"; then
+        echo "[${phase_name}] ROOT worker output is missing: ${output_directory}/${output_stem}_t*.root"
         fail_test 1
     fi
-    mv -- run_beam_eminus.root "$destination" || fail_test 1
-    echo "[${phase_name}] PASS events=${target_events}"
+    mv -- "$output_directory" "$destination_directory" || fail_test 1
+    echo "[${phase_name}] PASS events=${event_count} wall time: ${elapsed_seconds} " \
+        "dataset=${destination_directory}/${output_stem}_t*.root"
 }
 
 run_comparison() {
     local phase_name="$1"
     local log_file="$2"
     local label="$3"
-    local gpu_file="$4"
+    local gpu_dataset="$4"
     local compare_call summary_file figure_name
 
-    compare_call="${compare_macro}(\"${cpu_reference}\",\"${gpu_file}\",\"${run_dir}\")"
+    compare_call="${compare_macro}(\"${cpu_reference_dataset}\",\"${gpu_dataset}\",\"${run_dir}\")"
     run_logged "$log_file" "$root_executable" -l -b -q "$compare_call"
     local command_status="$?"
     if ((command_status != 0)); then
@@ -206,12 +236,13 @@ run_comparison() {
 echo "[regression] target_events=${target_events} threads=${regression_threads}"
 
 cpu_reference_source=cached
-if [[ ! -s "$cpu_reference" ]] ||
+if ! has_root_worker_output "$cpu_reference_dir" run_regression_eminus ||
    [[ "$(read_cache_value g4go_sha256)" != "$g4go_sha256" ]] ||
    [[ "$(read_cache_value regression_macro_sha256)" != "$regression_macro_sha256" ]] ||
    [[ "$(read_cache_value threads)" != "$regression_threads" ]] ||
    [[ "$(read_cache_value events)" != "$target_events" ]]; then
-    run_phase "cpu-${regression_threads}t" "$cpu_log" "$cpu_reference" \
+    run_phase "cpu-${regression_threads}t" "$cpu_log" run_regression_eminus run_regression_eminus \
+        "$cpu_reference_dir" "$target_events" \
         "$g4go" --backend cpu --threads "$regression_threads" \
         "$regression_macro"
     write_cpu_cache
@@ -224,14 +255,16 @@ gpu_arguments=(
     --backend gpu
     --batch-timeout-ms "$batch_timeout_ms"
 )
-run_phase gpu-1t "$gpu_1t_log" "$gpu_1t_reference" \
+run_phase gpu-1t "$gpu_1t_log" run_regression_eminus run_regression_eminus \
+    "$gpu_1t_reference_dir" "$target_events" \
     "$g4go" "${gpu_arguments[@]}" --threads 1 "$regression_macro"
 if ! grep -F "[g4go] optical backend: gpu" "$gpu_1t_log" >/dev/null 2>&1; then
     echo "[gpu-1t] GPU backend marker is missing"
     fail_test 1
 fi
 
-run_phase "gpu-${regression_threads}t" "$gpu_threads_log" "$gpu_threads_reference" \
+run_phase "gpu-${regression_threads}t" "$gpu_threads_log" run_regression_eminus run_regression_eminus \
+    "$gpu_threads_reference_dir" "$target_events" \
     "$g4go" "${gpu_arguments[@]}" --threads "$regression_threads" \
     "$regression_macro"
 if ! grep -F "[g4go] optical backend: gpu" "$gpu_threads_log" >/dev/null 2>&1; then
@@ -241,10 +274,10 @@ fi
 
 comparison_failed=0
 run_comparison "comparison-gpu-1t-vs-cpu-${regression_threads}t" \
-    "$comparison_1t_log" gpu_1t "$gpu_1t_reference" || comparison_failed=1
+    "$comparison_1t_log" gpu_1t "$gpu_1t_reference_dataset" || comparison_failed=1
 run_comparison "comparison-gpu-${regression_threads}t-vs-cpu-${regression_threads}t" \
     "$comparison_threads_log" "gpu_${regression_threads}t" \
-    "$gpu_threads_reference" || comparison_failed=1
+    "$gpu_threads_reference_dataset" || comparison_failed=1
 if ((comparison_failed)); then
     fail_test 1
 fi
@@ -257,7 +290,7 @@ fi
         'Overall result' \
         '--------------' \
         'Status                 : PASSED' \
-        "Reference              : CPU-${regression_threads}T ROOT output (${cpu_reference_source})" \
+        "Reference              : CPU-${regression_threads}T ROOT worker dataset (${cpu_reference_source})" \
         "Regression events      : ${target_events}" \
         '' \
         "Optical comparison: GPU-1T vs CPU-${regression_threads}T" \

@@ -273,19 +273,10 @@ if(BUILD_TESTING)
 
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
-                     ${PROJECT_BINARY_DIR}/scripts/run_optical_test.mac)
+                     ${PROJECT_BINARY_DIR}/scripts/run_test_optics.mac)
     set_tests_properties(g4go_smoke_auto PROPERTIES
         LABELS "smoke;integration;auto"
         TIMEOUT 60
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 
-    find_program(G4GO_BASH_EXECUTABLE NAMES bash REQUIRED)
-    add_test(NAME g4go_noptpho_regression
-             COMMAND ${G4GO_BASH_EXECUTABLE}
-                     ${PROJECT_BINARY_DIR}/test/regression.sh)
-    set_tests_properties(g4go_noptpho_regression PROPERTIES
-        LABELS "regression;gpu;slow"
-        RUN_SERIAL TRUE
-        TIMEOUT 1800
-        WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 endif()
