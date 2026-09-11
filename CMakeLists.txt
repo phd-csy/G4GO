@@ -84,6 +84,12 @@ endif()
 
 if(G4GO_ENABLE_CLANG_TIDY)
     find_program(G4GO_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
+
+    set(G4GO_CLANG_TIDY
+        "${G4GO_CLANG_TIDY_EXECUTABLE}"
+        "--config-file=${PROJECT_SOURCE_DIR}/.clang-tidy"
+        "--header-filter=^${PROJECT_SOURCE_DIR}/(include|src|test)/"
+        "--exclude-header-filter=(^|.*/)_deps/")
 endif()
 
 function(g4go_configure_cpp_target target)
@@ -98,7 +104,7 @@ function(g4go_configure_cpp_target target)
 
     if(G4GO_ENABLE_CLANG_TIDY)
         set_target_properties(${target} PROPERTIES
-            CXX_CLANG_TIDY "${G4GO_CLANG_TIDY_EXECUTABLE}")
+            CXX_CLANG_TIDY "${G4GO_CLANG_TIDY}")
     endif()
 endfunction()
 

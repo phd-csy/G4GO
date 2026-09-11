@@ -91,13 +91,11 @@ fi
 jobs="${G4GO_CLANG_TIDY_JOBS:-$(command -v nproc >/dev/null 2>&1 && nproc || printf '1')}"
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || die "G4GO_CLANG_TIDY_JOBS must be a positive integer: $jobs"
 
-mkdir -p "$build_dir"
-if [[ ! -r "${build_dir}/compile_commands.json" ]]; then
-    say "configuring CMake in ${build_dir}"
-    cmake -S "$project_dir" -B "$build_dir" \
-        -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-fi
+[[ -r "${build_dir}/CMakeCache.txt" ]] ||
+    die "configured build directory is missing CMakeCache.txt: ${build_dir}/CMakeCache.txt"
+say "refreshing CMake configuration in ${build_dir}"
+cmake -S "$project_dir" -B "$build_dir" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 [[ -r "${build_dir}/compile_commands.json" ]] ||
     die "compile_commands.json is missing: ${build_dir}/compile_commands.json"
 
@@ -110,7 +108,7 @@ project_regex="$(printf '%s\n' "$project_dir" | escape_regex)"
 # clang-tidy-compatible compilation command. Audit C++ translation units here;
 # project headers are included through header-filter.
 source_filter="^${project_regex}/(src|test)/.*\\.(cc|cpp|cxx)$"
-header_filter="^${project_regex}/(include|src|test)/"
+header_filter="^${project_regex}/(include/g4go|src|test)/"
 
 common_arguments=(
     -p "$build_dir"
