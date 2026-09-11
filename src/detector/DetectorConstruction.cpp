@@ -94,7 +94,8 @@ auto DetectorConstruction::Construct() -> G4VPhysicalVolume* {
     const auto crystalWidth{3 * cm};
     const auto crystalLength{8 * cm};
 
-    const auto transform = [crystalTail = G4ThreeVector(0, 0, crystalLength / 2)](double transformDistance) {
+    const auto transform = [crystalTail =
+                                G4ThreeVector(0, 0, crystalLength / 2)](double transformDistance) -> G4Translate3D {
         return G4Translate3D{crystalTail + G4ThreeVector(0, 0, transformDistance)};
     };
 

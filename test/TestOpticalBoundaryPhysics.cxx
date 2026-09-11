@@ -22,22 +22,23 @@ auto main() -> int {
     using G4GO::Optical::Volume;
     namespace Physics = G4GO::Optical::BoundaryPhysics;
 
-    const auto require{[](bool condition, const std::string& message) {
-        if (!condition) {
+    const auto require{[](bool condition, const std::string& message) -> void {
+        if (not condition) {
             throw std::runtime_error(message);
         }
     }};
-    const auto requireNear{[&require](float actual, float expected, float tolerance, const std::string& message) {
-        require(std::abs(actual - expected) <= tolerance,
-                message + ": actual=" + std::to_string(actual) + ", expected=" + std::to_string(expected));
-    }};
+    const auto requireNear{
+        [&require](float actual, float expected, float tolerance, const std::string& message) -> void {
+            require(std::abs(actual - expected) <= tolerance,
+                    message + ": actual=" + std::to_string(actual) + ", expected=" + std::to_string(expected));
+        }};
 
     try {
         {
             const auto output{
                 Physics::ComputeFresnel({0.0F, 0.0F, 1.0F}, {1.0F, 0.0F, 0.0F}, {0.0F, 0.0F, -1.0F}, 1.0F, 1.5F)};
 
-            require(!output.totalInternalReflection, "normal incidence must transmit");
+            require(not output.totalInternalReflection, "normal incidence must transmit");
             requireNear(output.transmittance, 0.96F, 1.0e-5F, "normal-incidence transmittance");
             requireNear(output.reflectedDirection.at(2), -1.0F, 1.0e-6F, "normal-incidence reflected direction");
             requireNear(output.transmittedDirection.at(2), 1.0F, 1.0e-6F, "normal-incidence transmitted direction");
@@ -178,7 +179,7 @@ auto main() -> int {
             };
             geometry.mesh.triangleFlags = {1U};
             const auto geometryID{scene.AddGeometry(std::move(geometry))};
-            for (std::uint32_t volumeID {}; volumeID < 3U; volumeID++) {
+            for (std::uint32_t volumeID{}; volumeID < 3U; volumeID++) {
                 Volume volume{};
                 volume.volumeID = volumeID;
                 volume.geometryID = geometryID;

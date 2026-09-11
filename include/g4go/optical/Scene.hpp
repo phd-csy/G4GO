@@ -140,8 +140,8 @@ public:
     auto FindSurface(std::uint32_t surfaceID) const -> const Surface*;
     auto FindGeometry(std::uint32_t geometryID) const -> const Geometry*;
     auto FindVolume(std::uint32_t volumeID) const -> const Volume*;
-    auto FindVolume(std::uint32_t physicalVolumeID, std::uint32_t copyNo,
-                    std::uint32_t parentVolumeID) const -> const Volume*;
+    auto FindVolume(std::uint32_t physicalVolumeID, std::uint32_t copyNo, std::uint32_t parentVolumeID) const
+        -> const Volume*;
     auto FindBoundarySurface(std::uint32_t fromVolumeID, std::uint32_t toVolumeID) const -> const Surface*;
 
     auto Materials() const -> const std::vector<Material>& { return fMaterials; }

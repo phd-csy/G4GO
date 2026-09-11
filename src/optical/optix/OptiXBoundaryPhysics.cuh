@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-#if defined(__CUDACC__)
+#ifdef __CUDACC__
 #    define G4GO_OPTICAL_HD __host__ __device__
 #else
 #    define G4GO_OPTICAL_HD
@@ -54,7 +54,7 @@ G4GO_OPTICAL_HD inline auto Cross(DeviceVector3 left, DeviceVector3 right) -> De
 
 G4GO_OPTICAL_HD inline auto Normalize(DeviceVector3 vector) -> DeviceVector3 {
     const auto lengthSquared{Dot(vector, vector)};
-    if (!(lengthSquared > 0.0F)) {
+    if (not(lengthSquared > 0.0F)) {
         return {};
     }
     return Scale(vector, 1.0F / sqrtf(lengthSquared));
@@ -89,7 +89,7 @@ G4GO_OPTICAL_HD inline auto ClassifySurface(float reflectivity, float transmitta
     const auto normalizedSample{ClampProbability(sample)};
     const auto reflectionThreshold{hasReflectivity ? ClampProbability(reflectivity) : 0.0F};
     const auto transmissionThreshold{hasTransmittance ? ClampProbability(transmittance) : 0.0F};
-    if (!hasReflectivity && !hasTransmittance) {
+    if (not hasReflectivity and not hasTransmittance) {
         return SurfaceOutcome::SurfaceInteraction;
     }
     if (normalizedSample > reflectionThreshold + transmissionThreshold) {
@@ -102,7 +102,7 @@ G4GO_OPTICAL_HD inline auto ClassifySurface(float reflectivity, float transmitta
 }
 
 G4GO_OPTICAL_HD inline auto EvaluateAbsorption(float efficiency, bool sensor, float sample) -> SurfaceOutcome {
-    if (sensor && sample < ClampProbability(efficiency)) {
+    if (sensor and sample < ClampProbability(efficiency)) {
         return SurfaceOutcome::Detect;
     }
     return SurfaceOutcome::Absorb;

@@ -4,7 +4,8 @@
 
 namespace G4GO::Simulation {
 
-class PhysicsList final : public FTFP_BERT {
+// FTFP_BERT's Geant4-provided implementation uses multiple concrete base classes.
+class PhysicsList final : public FTFP_BERT { // NOLINT(misc-multiple-inheritance)
 public:
     explicit PhysicsList(G4bool useOpticalOffload);
 

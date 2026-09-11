@@ -57,8 +57,18 @@ namespace {
 
 constexpr std::size_t maxComponents{3};
 
-auto ComponentProperty(const G4MaterialPropertiesTable& properties,
-                       std::size_t componentIndex) -> const G4MaterialPropertyVector* {
+using Components = std::array<const G4MaterialPropertyVector*, maxComponents>;
+using ComponentPhotonCounts = std::array<G4int, maxComponents>;
+
+struct ScintillationYields {
+    G4double first{};
+    G4double second{};
+    G4double third{};
+    G4double meanPhotonCount{};
+};
+
+auto ComponentProperty(const G4MaterialPropertiesTable& properties, std::size_t componentIndex)
+    -> const G4MaterialPropertyVector* {
     switch (componentIndex) {
     case 0:
         return properties.GetProperty(kSCINTILLATIONCOMPONENT1);
@@ -97,12 +107,113 @@ auto ComponentRiseTime(const G4MaterialPropertiesTable& properties, std::size_t 
     }
 }
 
-auto RaiseSourceError(const char* method, const G4Track& track, const G4Material* material,
-                      const char* detail) -> void {
+auto RaiseSourceError(const char* method, const G4Track& track, const G4Material* material, const char* detail)
+    -> void {
     G4ExceptionDescription description{};
     description << detail << " for track " << track.GetTrackID() << ", material "
                 << (material == nullptr ? "<null>" : material->GetName());
     G4Exception(method, "G4GOScintillationSource", FatalException, description);
+}
+
+auto CountComponents(const G4MaterialPropertiesTable& properties, const G4Track& track, const G4Material* material)
+    -> std::size_t {
+    Components components{};
+    std::size_t componentCount{};
+    for (std::size_t i{}; i < components.size(); i++) {
+        components[i] = ComponentProperty(properties, i);
+        if (components.at(i) != nullptr) {
+            componentCount = i + 1U;
+        }
+    }
+    for (std::size_t i{}; i < componentCount; i++) {
+        if (components.at(i) == nullptr) {
+            RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material,
+                             "scintillation components must be contiguous");
+            return 0U;
+        }
+    }
+    return componentCount;
+}
+
+auto YieldsAreValid(const ScintillationYields& yields) -> bool {
+    const auto sumYields{yields.first + yields.second + yields.third};
+    return std::isfinite(yields.first) and yields.first >= 0.0 and std::isfinite(yields.second) and
+           yields.second >= 0.0 and std::isfinite(yields.third) and yields.third >= 0.0 and
+           std::isfinite(yields.meanPhotonCount) and yields.meanPhotonCount >= 0.0 and std::isfinite(sumYields) and
+           sumYields > 0.0;
+}
+
+auto SamplePhotonCount(G4double meanPhotonCount, G4double resolutionScale, const G4Track& track,
+                       const G4Material* material) -> G4int {
+    if (meanPhotonCount <= 10.0) {
+        return G4Poisson(meanPhotonCount);
+    }
+    const auto sigma{resolutionScale * std::sqrt(meanPhotonCount)};
+    const auto sampledCount{G4RandGauss::shoot(meanPhotonCount, sigma) + 0.5};
+    if (not std::isfinite(sampledCount) or sampledCount < static_cast<G4double>(std::numeric_limits<G4int>::min()) or
+        sampledCount > static_cast<G4double>(std::numeric_limits<G4int>::max())) {
+        RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material,
+                         "scintillation photon count overflow");
+        return 0;
+    }
+    return static_cast<G4int>(sampledCount);
+}
+
+auto AllocateComponentPhotons(G4int totalPhotonCount, std::size_t componentCount, const ScintillationYields& yields)
+    -> ComponentPhotonCounts {
+    ComponentPhotonCounts counts{};
+    if (componentCount == 1U) {
+        counts.at(0) = totalPhotonCount;
+        return counts;
+    }
+    const auto countFromYield{[totalPhotonCount](G4double yield) -> G4int {
+        const auto expected{yield * totalPhotonCount};
+        return static_cast<G4int>(std::clamp(expected, G4double{}, static_cast<G4double>(totalPhotonCount)));
+    }};
+    counts.at(0) = countFromYield(yields.first);
+    if (componentCount == 2U) {
+        counts.at(1) = totalPhotonCount - counts.at(0);
+        return counts;
+    }
+    counts.at(1) = countFromYield(yields.second);
+    counts.at(2) = countFromYield(yields.third);
+    return counts;
+}
+
+auto CountEmissions(const ComponentPhotonCounts& counts, std::size_t componentCount) -> std::size_t {
+    return static_cast<std::size_t>(std::count_if(counts.begin(),
+                                                  counts.begin() + static_cast<std::ptrdiff_t>(componentCount),
+                                                  [](G4int count) -> bool { return count > 0; }));
+}
+
+auto AddSecondaries(G4VParticleChange& particleChange, const G4Track& track, const G4Step& step,
+                    const G4MaterialPropertiesTable& properties, const G4DynamicParticle& particle,
+                    const G4QuasiOpticalData& sourceData, const ComponentPhotonCounts& counts,
+                    std::size_t componentCount, bool byParticleType, bool finiteRiseTime,
+                    const std::array<G4double, maxComponents>& timeConstants) -> void {
+    const auto* preStepPoint{step.GetPreStepPoint()};
+    const auto modelID{G4PhysicsModelCatalog::GetModelID("model_QuasiScintillation")};
+    for (std::size_t i{}; i < componentCount; i++) {
+        const auto photonCount{counts.at(i)};
+        if (photonCount <= 0) {
+            continue;
+        }
+        auto componentData{sourceData};
+        componentData.num_photons = photonCount;
+        const auto scintTime{byParticleType ? timeConstants.at(i) : ComponentTimeConstant(properties, i)};
+        const auto riseTime{finiteRiseTime ? ComponentRiseTime(properties, i) : G4double{}};
+        auto* quasiPhoton{
+            new G4DynamicParticle(G4QuasiOpticalPhoton::QuasiOpticalPhotonDefinition(), particle.GetMomentum())};
+        auto* secondary{
+            new G4Track{quasiPhoton, preStepPoint->GetGlobalTime(), preStepPoint->GetPosition()}
+        };
+        secondary->SetTouchableHandle(preStepPoint->GetTouchableHandle());
+        secondary->SetParentID(track.GetTrackID());
+        secondary->SetCreatorModelID(modelID);
+        secondary->SetAuxiliaryTrackInformation(
+            modelID, new G4GOQuasiScintillationTrackInfo{componentData, scintTime, riseTime, static_cast<G4int>(i)});
+        particleChange.AddSecondary(secondary);
+    }
 }
 
 } // namespace
@@ -110,146 +221,95 @@ auto RaiseSourceError(const char* method, const G4Track& track, const G4Material
 G4GOQuasiScintillation::G4GOQuasiScintillation(const G4String& processName, G4ProcessType type) :
     G4QuasiScintillation{processName, type} {}
 
+// This follows Geant4's scintillation source algorithm while emitting one metadata track per component.
+// Direct calls to G4VRestDiscreteProcess intentionally finalize aParticleChange without invoking
+// G4QuasiScintillation's separate photon-generation implementation.
 auto G4GOQuasiScintillation::PostStepDoIt(const G4Track& track, const G4Step& step) -> G4VParticleChange* {
     aParticleChange.Initialize(track);
 
     const auto* particle{track.GetDynamicParticle()};
     const auto* material{track.GetMaterial()};
-    if (particle == nullptr || material == nullptr) {
+    if (particle == nullptr or material == nullptr) {
         RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material,
                          "scintillation source has no particle or material");
         aParticleChange.SetNumberOfSecondaries(0);
+        // NOLINTNEXTLINE(bugprone-parent-virtual-call)
         return G4VRestDiscreteProcess::PostStepDoIt(track, step);
     }
 
     const auto* properties{material->GetMaterialPropertiesTable()};
     if (properties == nullptr) {
         aParticleChange.SetNumberOfSecondaries(0);
+        // NOLINTNEXTLINE(bugprone-parent-virtual-call)
         return G4VRestDiscreteProcess::PostStepDoIt(track, step);
     }
 
-    std::array<const G4MaterialPropertyVector*, maxComponents> components{};
-    std::size_t componentCount{};
-    for (std::size_t i {}; i < components.size(); i++) {
-        components[i] = ComponentProperty(*properties, i);
-        if (components.at(i) != nullptr) {
-            componentCount = i + 1U;
-        }
-    }
+    const auto componentCount{CountComponents(*properties, track, material)};
     if (componentCount == 0U) {
         aParticleChange.SetNumberOfSecondaries(0);
+        // NOLINTNEXTLINE(bugprone-parent-virtual-call)
         return G4VRestDiscreteProcess::PostStepDoIt(track, step);
-    }
-    for (std::size_t i {}; i < componentCount; i++) {
-        if (components.at(i) == nullptr) {
-            RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material,
-                             "scintillation components must be contiguous");
-            aParticleChange.SetNumberOfSecondaries(0);
-            return G4VRestDiscreteProcess::PostStepDoIt(track, step);
-        }
     }
 
     const auto resolutionScale{properties->ConstPropertyExists(kRESOLUTIONSCALE) ?
                                    properties->GetConstProperty(kRESOLUTIONSCALE) :
                                    G4double{1.0}};
-    if (!std::isfinite(resolutionScale) || resolutionScale < 0.0) {
+    if (not std::isfinite(resolutionScale) or resolutionScale < 0.0) {
         RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material,
                          "invalid scintillation resolution scale");
         aParticleChange.SetNumberOfSecondaries(0);
+        // NOLINTNEXTLINE(bugprone-parent-virtual-call)
         return G4VRestDiscreteProcess::PostStepDoIt(track, step);
     }
 
-    G4double yield1{};
-    G4double yield2{};
-    G4double yield3{};
+    ScintillationYields yields{};
     G4double timeConstant1{};
     G4double timeConstant2{};
     G4double timeConstant3{};
-    G4double meanNumberOfPhotons{};
     const auto totalEnergyDeposit{step.GetTotalEnergyDeposit()};
     if (GetScintillationByParticleType()) {
-        meanNumberOfPhotons = GetScintillationYieldByParticleType(track, step, yield1, yield2, yield3, timeConstant1,
-                                                                  timeConstant2, timeConstant3);
+        yields.meanPhotonCount = GetScintillationYieldByParticleType(
+            track, step, yields.first, yields.second, yields.third, timeConstant1, timeConstant2, timeConstant3);
     } else {
-        yield1 = properties->ConstPropertyExists(kSCINTILLATIONYIELD1) ?
-                     properties->GetConstProperty(kSCINTILLATIONYIELD1) :
-                     G4double{1.0};
-        yield2 = properties->ConstPropertyExists(kSCINTILLATIONYIELD2) ?
-                     properties->GetConstProperty(kSCINTILLATIONYIELD2) :
-                     G4double{};
-        yield3 = properties->ConstPropertyExists(kSCINTILLATIONYIELD3) ?
-                     properties->GetConstProperty(kSCINTILLATIONYIELD3) :
-                     G4double{};
-        meanNumberOfPhotons = properties->GetConstProperty(kSCINTILLATIONYIELD);
+        yields.first = properties->ConstPropertyExists(kSCINTILLATIONYIELD1) ?
+                           properties->GetConstProperty(kSCINTILLATIONYIELD1) :
+                           G4double{1.0};
+        yields.second = properties->ConstPropertyExists(kSCINTILLATIONYIELD2) ?
+                            properties->GetConstProperty(kSCINTILLATIONYIELD2) :
+                            G4double{};
+        yields.third = properties->ConstPropertyExists(kSCINTILLATIONYIELD3) ?
+                           properties->GetConstProperty(kSCINTILLATIONYIELD3) :
+                           G4double{};
+        yields.meanPhotonCount = properties->GetConstProperty(kSCINTILLATIONYIELD);
         if (GetSaturation() != nullptr) {
-            meanNumberOfPhotons *= GetSaturation()->VisibleEnergyDepositionAtAStep(&step);
+            yields.meanPhotonCount *= GetSaturation()->VisibleEnergyDepositionAtAStep(&step);
         } else {
-            meanNumberOfPhotons *= totalEnergyDeposit;
+            yields.meanPhotonCount *= totalEnergyDeposit;
         }
     }
 
-    const auto sumYields{yield1 + yield2 + yield3};
-    if (!std::isfinite(yield1) || yield1 < 0.0 || !std::isfinite(yield2) || yield2 < 0.0 || !std::isfinite(yield3) ||
-        yield3 < 0.0 || !std::isfinite(meanNumberOfPhotons) || meanNumberOfPhotons < 0.0 || !std::isfinite(sumYields) ||
-        sumYields <= 0.0) {
+    if (not YieldsAreValid(yields)) {
         RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material, "invalid scintillation yield");
         aParticleChange.SetNumberOfSecondaries(0);
+        // NOLINTNEXTLINE(bugprone-parent-virtual-call)
         return G4VRestDiscreteProcess::PostStepDoIt(track, step);
     }
 
-    G4int totalPhotonCount{};
-    if (meanNumberOfPhotons > 10.0) {
-        const auto sigma{resolutionScale * std::sqrt(meanNumberOfPhotons)};
-        const auto sampledCount{G4RandGauss::shoot(meanNumberOfPhotons, sigma) + 0.5};
-        if (!std::isfinite(sampledCount) || sampledCount < static_cast<G4double>(std::numeric_limits<G4int>::min()) ||
-            sampledCount > static_cast<G4double>(std::numeric_limits<G4int>::max())) {
-            RaiseSourceError("G4GOQuasiScintillation::PostStepDoIt", track, material,
-                             "scintillation photon count overflow");
-            aParticleChange.SetNumberOfSecondaries(0);
-            return G4VRestDiscreteProcess::PostStepDoIt(track, step);
-        }
-        totalPhotonCount = static_cast<G4int>(sampledCount);
-    } else {
-        totalPhotonCount = G4Poisson(meanNumberOfPhotons);
-    }
+    const auto totalPhotonCount{SamplePhotonCount(yields.meanPhotonCount, resolutionScale, track, material)};
     if (totalPhotonCount <= 0) {
         aParticleChange.SetNumberOfSecondaries(0);
+        // NOLINTNEXTLINE(bugprone-parent-virtual-call)
         return G4VRestDiscreteProcess::PostStepDoIt(track, step);
     }
 
-    std::array<G4int, maxComponents> componentPhotonCounts{};
-    if (componentCount == 1U) {
-        componentPhotonCounts.at(0) = totalPhotonCount;
-    } else {
-        const auto countFromYield{[&](G4double yield) {
-            const auto expected{yield * totalPhotonCount};
-            return static_cast<G4int>(std::clamp(expected, G4double{}, static_cast<G4double>(totalPhotonCount)));
-        }};
-        componentPhotonCounts.at(0) = countFromYield(yield1);
-        if (componentCount == 2U) {
-            componentPhotonCounts.at(1) = totalPhotonCount - componentPhotonCounts.at(0);
-        } else {
-            componentPhotonCounts.at(1) = countFromYield(yield2);
-            componentPhotonCounts.at(2) = countFromYield(yield3);
-        }
-    }
-
-    std::size_t emissionCount{};
-    for (std::size_t i {}; i < componentCount; i++) {
-        if (componentPhotonCounts.at(i) > 0) {
-            ++emissionCount;
-        }
-    }
+    const auto componentPhotonCounts{AllocateComponentPhotons(totalPhotonCount, componentCount, yields)};
+    const auto emissionCount{CountEmissions(componentPhotonCounts, componentCount)};
     aParticleChange.SetNumberOfSecondaries(static_cast<G4int>(emissionCount));
-    if (GetTrackSecondariesFirst() && track.GetTrackStatus() == fAlive) {
+    if (GetTrackSecondariesFirst() and track.GetTrackStatus() == fAlive) {
         aParticleChange.ProposeTrackStatus(fSuspend);
     }
 
-    const auto stepPosition{step.GetPreStepPoint()->GetPosition()};
-    const auto initialTime{step.GetPreStepPoint()->GetGlobalTime()};
     const auto deltaVelocity{step.GetPostStepPoint()->GetVelocity() - step.GetPreStepPoint()->GetVelocity()};
-    const auto touchableHandle{step.GetPreStepPoint()->GetTouchableHandle()};
-    const auto modelID{G4PhysicsModelCatalog::GetModelID("model_QuasiScintillation")};
     const G4QuasiOpticalData sourceData{material->GetIndex(),
                                         0,
                                         particle->GetDefinition()->GetPDGCharge(),
@@ -258,32 +318,11 @@ auto G4GOQuasiScintillation::PostStepDoIt(const G4Track& track, const G4Step& st
                                         deltaVelocity,
                                         step.GetDeltaPosition()};
 
-    for (std::size_t i {}; i < componentCount; i++) {
-        const auto photonCount{componentPhotonCounts.at(i)};
-        if (photonCount <= 0) {
-            continue;
-        }
-        auto componentData{sourceData};
-        componentData.num_photons = photonCount;
-        const auto scintTime{GetScintillationByParticleType() ? (i == 0U ? timeConstant1 :
-                                                                 i == 1U ? timeConstant2 :
-                                                                               timeConstant3) :
-                                                                ComponentTimeConstant(*properties, i)};
-        const auto riseTime{GetFiniteRiseTime() ? ComponentRiseTime(*properties, i) : G4double{}};
-        auto* quasiPhoton{
-            new G4DynamicParticle(G4QuasiOpticalPhoton::QuasiOpticalPhotonDefinition(), particle->GetMomentum())};
-        auto* secondary{
-            new G4Track{quasiPhoton, initialTime, stepPosition}
-        };
-        secondary->SetTouchableHandle(touchableHandle);
-        secondary->SetParentID(track.GetTrackID());
-        secondary->SetCreatorModelID(modelID);
-        secondary->SetAuxiliaryTrackInformation(
-            modelID,
-            new G4GOQuasiScintillationTrackInfo{componentData, scintTime, riseTime, static_cast<G4int>(i)});
-        aParticleChange.AddSecondary(secondary);
-    }
+    AddSecondaries(aParticleChange, track, step, *properties, *particle, sourceData, componentPhotonCounts,
+                   componentCount, GetScintillationByParticleType(), GetFiniteRiseTime(),
+                   {timeConstant1, timeConstant2, timeConstant3});
 
+    // NOLINTNEXTLINE(bugprone-parent-virtual-call)
     return G4VRestDiscreteProcess::PostStepDoIt(track, step);
 }
 

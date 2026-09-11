@@ -11,6 +11,8 @@ public:
     ~ScintillatorSD() override = default;
 
     auto Initialize(G4HCofThisEvent*) -> void override;
+
+protected:
     auto ProcessHits(G4Step*, G4TouchableHistory*) -> G4bool override;
 
 private:

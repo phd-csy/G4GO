@@ -59,9 +59,14 @@ private:
     };
 
     auto ProcessBatches() -> void;
+#ifdef G4GO_ENABLE_OPTIX
+    auto CompleteOldestBatch(std::vector<TransportRequest>& requests, std::size_t photonCount) -> void;
+    auto CollectRequests(std::vector<TransportRequest>& requests, std::size_t& photonCount) -> bool;
+    auto EnqueueRequests(const std::vector<TransportRequest>& requests) -> void;
+#endif
     auto CompleteBatch(std::vector<TransportRequest>& requests, std::size_t photonCount,
-                       PhotonTransportOutput transportOutput) -> void;
-    auto FailPendingRequests(std::exception_ptr error) -> void;
+                       const PhotonTransportOutput& transportOutput) -> void;
+    auto FailPendingRequests(const std::exception_ptr& error) -> void;
 
     PhotonTransportConfig fConfiguration;
     PhotonTransportBackend fBackend;

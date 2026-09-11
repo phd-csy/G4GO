@@ -15,7 +15,7 @@ namespace G4GO::Simulation {
 
 ActionInitialization::ActionInitialization(G4GO::Optical::PhotonTransportConfig configuration) :
     fConfiguration{configuration},
-    fBatchScheduler{std::make_shared<G4GO::Optical::OpticalBatchScheduler>(std::move(configuration))} {}
+    fBatchScheduler{std::make_shared<G4GO::Optical::OpticalBatchScheduler>(configuration)} {}
 
 auto ActionInitialization::BuildForMaster() const -> void {
     SetUserAction(new RunAction(fBatchScheduler, {}, {}, true));

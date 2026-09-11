@@ -12,14 +12,14 @@ namespace G4GO::Simulation {
 
 StackingAction::StackingAction(std::shared_ptr<G4GO::Optical::Geant4EventAdapter> adapter) :
     fAdapter{std::move(adapter)} {
-    if (!fAdapter) {
+    if (not fAdapter) {
         throw std::invalid_argument("StackingAction requires an event adapter");
     }
 }
 
 auto StackingAction::ClassifyNewTrack(const G4Track* track) -> G4ClassificationOfNewTrack {
     if (track->GetDefinition() != G4OpticalPhoton::OpticalPhotonDefinition()) {
-        if (track->GetDefinition() == G4QuasiOpticalPhoton::QuasiOpticalPhotonDefinition() &&
+        if (track->GetDefinition() == G4QuasiOpticalPhoton::QuasiOpticalPhotonDefinition() and
             fAdapter->SelectedBackend() == G4GO::Optical::PhotonTransportBackend::OptiX) {
             fAdapter->CaptureOffloaded(*track);
             return fKill;

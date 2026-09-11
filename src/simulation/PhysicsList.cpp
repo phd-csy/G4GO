@@ -38,7 +38,7 @@ auto PhysicsList::ConstructProcess() -> void {
         auto* parameters{G4OpticalParameters::Instance()};
 
         G4QuasiCerenkov* cerenkov{nullptr};
-        if (parameters->GetProcessActivation("QuasiCerenkov") || parameters->GetCerenkovOffloadPhotons()) {
+        if (parameters->GetProcessActivation("QuasiCerenkov") or parameters->GetCerenkovOffloadPhotons()) {
             cerenkov = new G4QuasiCerenkov{"QuasiCerenkov"};
             cerenkov->SetMaxNumPhotonsPerStep(parameters->GetCerenkovMaxPhotonsPerStep());
             cerenkov->SetMaxBetaChangePerStep(parameters->GetCerenkovMaxBetaChange());
@@ -48,7 +48,7 @@ auto PhysicsList::ConstructProcess() -> void {
         }
 
         G4GOQuasiScintillation* scintillation{nullptr};
-        if (parameters->GetProcessActivation("QuasiScintillation") || parameters->GetScintOffloadPhotons()) {
+        if (parameters->GetProcessActivation("QuasiScintillation") or parameters->GetScintOffloadPhotons()) {
             scintillation = new G4GOQuasiScintillation{"QuasiScintillation"};
             scintillation->AddSaturation(G4LossTableManager::Instance()->EmSaturation());
             scintillation->SetScintillationByParticleType(parameters->GetScintByParticleType());
@@ -74,10 +74,10 @@ auto PhysicsList::ConstructProcess() -> void {
                 G4Exception("G4GOPhysicsList", "G4GOProcessManager", FatalException, description);
                 return;
             }
-            if (cerenkov != nullptr && cerenkov->IsApplicable(*particle)) {
+            if (cerenkov != nullptr and cerenkov->IsApplicable(*particle)) {
                 processManager->AddDiscreteProcess(cerenkov);
             }
-            if (scintillation != nullptr && scintillation->IsApplicable(*particle)) {
+            if (scintillation != nullptr and scintillation->IsApplicable(*particle)) {
                 processManager->AddProcess(scintillation);
                 processManager->SetProcessOrderingToLast(scintillation, idxAtRest);
                 processManager->SetProcessOrderingToLast(scintillation, idxPostStep);
@@ -92,7 +92,7 @@ auto PhysicsList::ConstructProcess() -> void {
     auto* processes{processManager->GetProcessList()};
     for (auto index{processManager->GetProcessListLength() - 1}; index >= 0; --index) {
         auto* process{(*processes)[index]};
-        if (process != nullptr && process->GetProcessName() == "Scintillation") {
+        if (process != nullptr and process->GetProcessName() == "Scintillation") {
             processManager->RemoveProcess(process);
         }
     }

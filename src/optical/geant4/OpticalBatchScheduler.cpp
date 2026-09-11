@@ -18,7 +18,7 @@
 namespace G4GO::Optical {
 
 OpticalBatchScheduler::OpticalBatchScheduler(PhotonTransportConfig configuration) :
-    fConfiguration{std::move(configuration)},
+    fConfiguration{configuration},
     fBackend{fConfiguration.backend},
     fScene{},
 #ifdef G4GO_ENABLE_OPTIX
@@ -45,7 +45,7 @@ OpticalBatchScheduler::~OpticalBatchScheduler() { EndRun(); }
 auto OpticalBatchScheduler::BeginRun() -> void {
     std::unique_lock lock{fMutex};
     if (fStarted) {
-        fCondition.wait(lock, [this] { return fReady; });
+        fCondition.wait(lock, [this]() -> bool { return fReady; });
         if (fFailure != nullptr) {
             const auto error{fFailure};
             lock.unlock();
@@ -95,8 +95,8 @@ auto OpticalBatchScheduler::BeginRun() -> void {
         std::rethrow_exception(error);
     }
 
-    fGpuThread = std::thread([this] { ProcessBatches(); });
-    fCondition.wait(lock, [this] { return fReady; });
+    fGpuThread = std::thread([this]() -> void { ProcessBatches(); });
+    fCondition.wait(lock, [this]() -> bool { return fReady; });
     if (fFailure != nullptr) {
         const auto error{fFailure};
         lock.unlock();
@@ -117,8 +117,8 @@ auto OpticalBatchScheduler::BeginRun() -> void {
 
 auto OpticalBatchScheduler::EndRun() -> void {
     {
-        std::lock_guard lock{fMutex};
-        if (!fStarted) {
+        std::scoped_lock lock{fMutex};
+        if (not fStarted) {
             return;
         }
         fStopRequested = true;
@@ -130,7 +130,7 @@ auto OpticalBatchScheduler::EndRun() -> void {
 #ifdef G4GO_ENABLE_OPTIX
     fPhotonTransport.reset();
 #endif
-    std::lock_guard lock{fMutex};
+    std::scoped_lock lock{fMutex};
     fScene = {};
     fPendingRequests.clear();
     fQueuedPhotonCount = 0;
@@ -156,10 +156,10 @@ auto OpticalBatchScheduler::Submit(OpticalSubmission submission) -> PhotonTransp
     if (countedPhotons != submission.photonCount) {
         throw std::invalid_argument("optical submission photon count does not match its emissions");
     }
-    if (submission.photonCount == 0 && !submission.emissions.empty()) {
+    if (submission.photonCount == 0 and not submission.emissions.empty()) {
         throw std::invalid_argument("empty optical submissions cannot contain emissions");
     }
-    if (submission.photonCount != 0 && submission.emissions.empty()) {
+    if (submission.photonCount != 0 and submission.emissions.empty()) {
         throw std::invalid_argument("non-empty optical submissions require emissions");
     }
 
@@ -167,7 +167,7 @@ auto OpticalBatchScheduler::Submit(OpticalSubmission submission) -> PhotonTransp
     const auto maxQueuedPhotons{std::max<std::size_t>(1, fConfiguration.maxQueuedPhotons)};
     const auto maxQueuedSubmissions{std::max<std::size_t>(1, fConfiguration.maxQueuedSubmissions)};
     const auto photonCount{static_cast<std::size_t>(submission.photonCount)};
-    if (!fStarted || !fReady) {
+    if (not fStarted or not fReady) {
         throw std::runtime_error("optical submission queue is not ready");
     }
     if (fFailure != nullptr) {
@@ -201,11 +201,11 @@ auto OpticalBatchScheduler::Submit(OpticalSubmission submission) -> PhotonTransp
         return future;
     }
 
-    fCondition.wait(lock, [this, photonCount, maxQueuedPhotons, maxQueuedSubmissions] {
-        return fFailure != nullptr || fStopRequested ||
-               (fQueuedSubmissionCount < maxQueuedSubmissions &&
-                fQueuedPhotonCount + photonCount <= maxQueuedPhotons) ||
-               (fQueuedSubmissionCount == 0 && photonCount > maxQueuedPhotons);
+    fCondition.wait(lock, [this, photonCount, maxQueuedPhotons, maxQueuedSubmissions]() -> bool {
+        return fFailure != nullptr or fStopRequested or
+               (fQueuedSubmissionCount < maxQueuedSubmissions and
+                fQueuedPhotonCount + photonCount <= maxQueuedPhotons) or
+               (fQueuedSubmissionCount == 0 and photonCount > maxQueuedPhotons);
     });
     if (fFailure != nullptr) {
         std::rethrow_exception(fFailure);
@@ -230,7 +230,7 @@ auto OpticalBatchScheduler::Submit(OpticalSubmission submission) -> PhotonTransp
 }
 
 auto OpticalBatchScheduler::SelectedBackend() const -> PhotonTransportBackend {
-    std::lock_guard lock{fMutex};
+    std::scoped_lock lock{fMutex};
     return fBackend;
 }
 
@@ -241,7 +241,7 @@ auto OpticalBatchScheduler::BatchStatistics() const -> const PhotonBatchStatisti
 auto OpticalBatchScheduler::PerformanceStatistics() const -> const PhotonTransportPerformance& { return fPerformance; }
 
 auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& requests, std::size_t photonCount,
-                                          PhotonTransportOutput transportOutput) -> void {
+                                          const PhotonTransportOutput& transportOutput) -> void {
     const auto terminalFields{StatisticFieldBit(PhotonTransportStatisticField::Detected) |
                               StatisticFieldBit(PhotonTransportStatisticField::Absorbed) |
                               StatisticFieldBit(PhotonTransportStatisticField::Escaped) |
@@ -251,14 +251,14 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
                               StatisticFieldBit(PhotonTransportStatisticField::ZeroStep)};
     const auto elapsed{transportOutput.statistics.transportTimeMs};
     std::vector<PhotonTransportOutput> eventOutputs(requests.size());
-    for (std::size_t i {}; i < requests.size(); i++) {
+    for (std::size_t i{}; i < requests.size(); i++) {
         eventOutputs.at(i).statistics = requests.at(i).submission.sourceStatistics;
         eventOutputs.at(i).performance = requests.at(i).submission.sourcePerformance;
     }
 
     std::unordered_map<std::uint32_t, std::size_t> eventToRequest{};
     eventToRequest.reserve(requests.size());
-    for (std::size_t i {}; i < requests.size(); i++) {
+    for (std::size_t i{}; i < requests.size(); i++) {
         eventToRequest.emplace(requests.at(i).submission.eventID, i);
     }
     if (transportOutput.eventStatistics.size() != requests.size()) {
@@ -275,7 +275,7 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
     std::uint64_t eventZeroStepCount{};
     std::uint64_t eventMaxBounceCount{};
     auto commonEventFields{std::numeric_limits<std::uint32_t>::max()};
-    const auto accumulateEventCounter{[](std::uint64_t& total, std::uint64_t value) { total += value; }};
+    const auto accumulateEventCounter{[](std::uint64_t& total, std::uint64_t value) -> void { total += value; }};
     for (const auto& eventOutput : transportOutput.eventStatistics) {
         const auto iterator{eventToRequest.find(eventOutput.eventID)};
         if (iterator == eventToRequest.end()) {
@@ -319,12 +319,12 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
         auto& destination{eventOutputs.at(requestIndex).statistics};
         const auto destinationSourceFields{destination.validFields};
         const auto outputFields{eventOutput.statistics.validFields};
-        const auto assignIfValid{
-            [&](PhotonTransportStatisticField field, std::uint64_t& destinationValue, std::uint64_t sourceValue) {
-                if ((outputFields & StatisticFieldBit(field)) != 0U) {
-                    destinationValue = sourceValue;
-                }
-            }};
+        const auto assignIfValid{[&](PhotonTransportStatisticField field, std::uint64_t& destinationValue,
+                                     std::uint64_t sourceValue) -> void {
+            if ((outputFields & StatisticFieldBit(field)) != 0U) {
+                destinationValue = sourceValue;
+            }
+        }};
         assignIfValid(PhotonTransportStatisticField::Detected, destination.detectedCount,
                       eventOutput.statistics.detectedCount);
         assignIfValid(PhotonTransportStatisticField::Absorbed, destination.absorbedCount,
@@ -345,14 +345,16 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
             .eventStatistics.emplace_back(PhotonTransportEventStatistics{eventOutput.eventID, destination});
     }
     const auto& batchStatistics{transportOutput.statistics};
-    const auto requireEventField{[&](PhotonTransportStatisticField field, bool eventFieldPresent, const char* name) {
-        const auto bit{StatisticFieldBit(field)};
-        if ((batchStatistics.validFields & bit) != 0U && !eventFieldPresent) {
-            throw std::runtime_error(std::string{"OptiX batch statistics field is missing from event "} + name);
-        }
+    const auto requireEventField{
+        [&](PhotonTransportStatisticField field, bool eventFieldPresent, const char* name) -> void {
+            const auto bit{StatisticFieldBit(field)};
+            if ((batchStatistics.validFields & bit) != 0U and not eventFieldPresent) {
+                throw std::runtime_error(std::string{"OptiX batch statistics field is missing from event "} + name);
+            }
+        }};
+    const auto hasCommonEventField{[&](PhotonTransportStatisticField field) -> bool {
+        return (commonEventFields & StatisticFieldBit(field)) != 0U;
     }};
-    const auto hasCommonEventField{
-        [&](PhotonTransportStatisticField field) { return (commonEventFields & StatisticFieldBit(field)) != 0U; }};
     requireEventField(PhotonTransportStatisticField::Captured,
                       hasCommonEventField(PhotonTransportStatisticField::Captured), "captured count");
     requireEventField(PhotonTransportStatisticField::Detected,
@@ -369,12 +371,12 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
                       hasCommonEventField(PhotonTransportStatisticField::ZeroStep), "zero-step count");
     requireEventField(PhotonTransportStatisticField::MaxBounce,
                       hasCommonEventField(PhotonTransportStatisticField::MaxBounce), "maximum-bounce count");
-    const auto requireCounterSum{
-        [&](PhotonTransportStatisticField field, std::uint64_t eventValue, std::uint64_t batchValue, const char* name) {
-            if ((batchStatistics.validFields & StatisticFieldBit(field)) != 0U && eventValue != batchValue) {
-                throw std::runtime_error(std::string{"OptiX batch/event statistics mismatch in "} + name);
-            }
-        }};
+    const auto requireCounterSum{[&](PhotonTransportStatisticField field, std::uint64_t eventValue,
+                                     std::uint64_t batchValue, const char* name) -> void {
+        if ((batchStatistics.validFields & StatisticFieldBit(field)) != 0U and eventValue != batchValue) {
+            throw std::runtime_error(std::string{"OptiX batch/event statistics mismatch in "} + name);
+        }
+    }};
     requireCounterSum(PhotonTransportStatisticField::Captured, eventCapturedCount, batchStatistics.capturedCount,
                       "captured count");
     requireCounterSum(PhotonTransportStatisticField::Detected, eventDetectedCount, batchStatistics.detectedCount,
@@ -389,7 +391,7 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
                       batchStatistics.invalidStateCount, "invalid-state count");
     requireCounterSum(PhotonTransportStatisticField::ZeroStep, eventZeroStepCount, batchStatistics.zeroStepCount,
                       "zero-step count");
-    if ((batchStatistics.validFields & StatisticFieldBit(PhotonTransportStatisticField::MaxBounce)) != 0U &&
+    if ((batchStatistics.validFields & StatisticFieldBit(PhotonTransportStatisticField::MaxBounce)) != 0U and
         eventMaxBounceCount != batchStatistics.maxBounceCount) {
         throw std::runtime_error("OptiX batch/event statistics mismatch in maximum-bounce count");
     }
@@ -402,12 +404,12 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
         eventOutputs.at(requestIndex).detections.emplace_back(detection);
         ++detectionCounts.at(requestIndex);
     }
-    for (std::size_t i {}; i < requests.size(); i++) {
-        if (!eventStatisticsSeen.at(i)) {
+    for (std::size_t i{}; i < requests.size(); i++) {
+        if (not eventStatisticsSeen.at(i)) {
             throw std::runtime_error("OptiX output is missing event statistics");
         }
         const auto& eventStatistics{eventOutputs.at(i).statistics};
-        if ((eventStatistics.validFields & StatisticFieldBit(PhotonTransportStatisticField::Detected)) != 0U &&
+        if ((eventStatistics.validFields & StatisticFieldBit(PhotonTransportStatisticField::Detected)) != 0U and
             eventStatistics.detectedCount != detectionCounts.at(i)) {
             throw std::runtime_error("OptiX event detected count does not match compacted hits");
         }
@@ -415,7 +417,7 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
     }
 
     {
-        std::lock_guard lock{fMutex};
+        std::scoped_lock lock{fMutex};
         fRunStatistics.detectedCount += batchStatistics.detectedCount;
         fRunStatistics.absorbedCount += batchStatistics.absorbedCount;
         fRunStatistics.escapedCount += batchStatistics.escapedCount;
@@ -443,6 +445,114 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
     }
 }
 
+#ifdef G4GO_ENABLE_OPTIX
+auto OpticalBatchScheduler::CompleteOldestBatch(std::vector<TransportRequest>& requests, std::size_t photonCount)
+    -> void {
+    const auto waitStart{fConfiguration.enablePerformanceDiagnostics ? std::chrono::steady_clock::now() :
+                                                                       std::chrono::steady_clock::time_point{}};
+    auto output{fPhotonTransport->CompleteOldestBatch()};
+    if (fConfiguration.enablePerformanceDiagnostics) {
+        std::scoped_lock lock{fMutex};
+        fBatchStatistics.schedulerGpuWaitMs +=
+            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - waitStart}.count();
+    }
+    CompleteBatch(requests, photonCount, output);
+}
+
+auto OpticalBatchScheduler::CollectRequests(std::vector<TransportRequest>& requests, std::size_t& photonCount) -> bool {
+    requests.clear();
+    photonCount = 0;
+    std::unique_lock lock{fMutex};
+    if (fPendingRequests.empty() and not fStopRequested) {
+        const auto waitStart{fConfiguration.enablePerformanceDiagnostics ? std::chrono::steady_clock::now() :
+                                                                           std::chrono::steady_clock::time_point{}};
+        fCondition.wait(lock, [this]() -> bool { return fStopRequested or not fPendingRequests.empty(); });
+        if (fConfiguration.enablePerformanceDiagnostics) {
+            fBatchStatistics.schedulerInputWaitMs +=
+                std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - waitStart}.count();
+        }
+    }
+    if (fPendingRequests.empty() and fStopRequested) {
+        return false;
+    }
+
+    const auto deadline{fPendingRequests.at(0).queuedAt +
+                        std::chrono::milliseconds{fConfiguration.batchCollectionTimeoutMs}};
+    while (photonCount < fConfiguration.targetPhotonsPerBatch and requests.size() < fConfiguration.maxEventsPerBatch) {
+        if (fPendingRequests.empty()) {
+            if (fStopRequested or photonCount == 0) {
+                break;
+            }
+            const auto waitStart{fConfiguration.enablePerformanceDiagnostics ? std::chrono::steady_clock::now() :
+                                                                               std::chrono::steady_clock::time_point{}};
+            const auto ready{fCondition.wait_until(
+                lock, deadline, [this]() -> bool { return fStopRequested or not fPendingRequests.empty(); })};
+            if (fConfiguration.enablePerformanceDiagnostics) {
+                fBatchStatistics.schedulerInputWaitMs +=
+                    std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - waitStart}.count();
+            }
+            if (not ready) {
+                break;
+            }
+        }
+        if (fPendingRequests.empty()) {
+            break;
+        }
+        auto request{std::move(fPendingRequests.at(0))};
+        fPendingRequests.pop_front();
+        photonCount += static_cast<std::size_t>(request.submission.photonCount);
+        fQueuedPhotonCount -= static_cast<std::size_t>(request.submission.photonCount);
+        --fQueuedSubmissionCount;
+        if (fConfiguration.enablePerformanceDiagnostics) {
+            fPerformance.schedulerQueueWaitMs +=
+                std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - request.queuedAt}.count();
+            ++fBatchStatistics.totalQueueWaitCount;
+        }
+        requests.emplace_back(std::move(request));
+    }
+    lock.unlock();
+    fCondition.notify_all();
+    return true;
+}
+
+auto OpticalBatchScheduler::EnqueueRequests(const std::vector<TransportRequest>& requests) -> void {
+    const auto flattenStart{fConfiguration.enablePerformanceDiagnostics ? std::chrono::steady_clock::now() :
+                                                                          std::chrono::steady_clock::time_point{}};
+    fBatchBuffer.clear();
+    std::vector<std::uint32_t> batchEventIDs{};
+    batchEventIDs.reserve(requests.size());
+    std::vector<std::uint32_t> emissionEventIndices{};
+    std::unordered_map<std::uint32_t, std::uint32_t> eventIndices{};
+    eventIndices.reserve(requests.size());
+    for (const auto& request : requests) {
+        const auto eventID{request.submission.eventID};
+        const auto eventIndex{static_cast<std::uint32_t>(batchEventIDs.size())};
+        if (not eventIndices.emplace(eventID, eventIndex).second) {
+            throw std::invalid_argument("optical batch contains duplicate event IDs");
+        }
+        batchEventIDs.emplace_back(eventID);
+        for (const auto& emission : request.submission.emissions) {
+            if (emission.eventID != eventID) {
+                throw std::invalid_argument("optical emission event ID does not match its submission");
+            }
+            fBatchBuffer.emplace_back(emission);
+            emissionEventIndices.emplace_back(eventIndex);
+        }
+    }
+    if (fConfiguration.enablePerformanceDiagnostics) {
+        const auto flattenMs{
+            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - flattenStart}.count()};
+        std::scoped_lock lock{fMutex};
+        fPerformance.schedulerBatchFlattenMs += flattenMs;
+        fPerformance.schedulerBatchFlattenBytes +=
+            static_cast<std::uint64_t>(fBatchBuffer.size() * sizeof(OpticalEmission));
+        fBatchStatistics.performance = fPerformance;
+    }
+    const PhotonTransportBatch batch{fBatchBuffer, batchEventIDs, emissionEventIndices};
+    fPhotonTransport->EnqueueEmissions(fScene, batch);
+}
+#endif
+
 auto OpticalBatchScheduler::ProcessBatches() -> void {
 #ifdef G4GO_ENABLE_OPTIX
     struct InFlightBatch {
@@ -451,133 +561,32 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
     };
 
     std::vector<TransportRequest> requests{};
+    std::size_t photonCount{};
     std::optional<InFlightBatch> inFlightBatch{};
     try {
         fPhotonTransport = std::make_unique<OptiXTransportHost>(fConfiguration);
         fPhotonTransport->PrepareScene(fScene);
         {
-            std::lock_guard lock{fMutex};
+            std::scoped_lock lock{fMutex};
             fReady = true;
         }
         fCondition.notify_all();
 
         for (;;) {
             if (inFlightBatch.has_value()) {
-                const auto waitStart{fConfiguration.enablePerformanceDiagnostics ?
-                                         std::chrono::steady_clock::now() :
-                                         std::chrono::steady_clock::time_point{}};
-                auto output{fPhotonTransport->CompleteOldestBatch()};
-                if (fConfiguration.enablePerformanceDiagnostics) {
-                    std::lock_guard lock{fMutex};
-                    fBatchStatistics.schedulerGpuWaitMs +=
-                        std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - waitStart}.count();
-                }
-                CompleteBatch(inFlightBatch->requests, inFlightBatch->photonCount, std::move(output));
+                CompleteOldestBatch(inFlightBatch->requests, inFlightBatch->photonCount);
                 inFlightBatch.reset();
                 continue;
             }
-
-            requests.clear();
-            std::size_t photonCount{};
-            {
-                std::unique_lock lock{fMutex};
-                if (fPendingRequests.empty() && !fStopRequested) {
-                    const auto waitStart{fConfiguration.enablePerformanceDiagnostics ?
-                                             std::chrono::steady_clock::now() :
-                                             std::chrono::steady_clock::time_point{}};
-                    fCondition.wait(lock, [this] { return fStopRequested || !fPendingRequests.empty(); });
-                    if (fConfiguration.enablePerformanceDiagnostics) {
-                        fBatchStatistics.schedulerInputWaitMs +=
-                            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - waitStart}
-                                .count();
-                    }
-                }
-                if (fPendingRequests.empty() && fStopRequested) {
-                    break;
-                }
-
-                const auto deadline{fPendingRequests.at(0).queuedAt +
-                                    std::chrono::milliseconds{fConfiguration.batchCollectionTimeoutMs}};
-                while (photonCount < fConfiguration.targetPhotonsPerBatch &&
-                       requests.size() < fConfiguration.maxEventsPerBatch) {
-                    if (fPendingRequests.empty()) {
-                        if (fStopRequested || photonCount == 0 || [&] {
-                                const auto waitStart{fConfiguration.enablePerformanceDiagnostics ?
-                                                         std::chrono::steady_clock::now() :
-                                                         std::chrono::steady_clock::time_point{}};
-                                const auto ready{fCondition.wait_until(
-                                    lock, deadline, [this] { return fStopRequested || !fPendingRequests.empty(); })};
-                                if (fConfiguration.enablePerformanceDiagnostics) {
-                                    fBatchStatistics.schedulerInputWaitMs +=
-                                        std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() -
-                                                                                  waitStart}
-                                            .count();
-                                }
-                                return !ready;
-                            }()) {
-                            break;
-                        }
-                    }
-                    if (fPendingRequests.empty()) {
-                        break;
-                    }
-                    auto request{std::move(fPendingRequests.at(0))};
-                    fPendingRequests.pop_front();
-                    photonCount += static_cast<std::size_t>(request.submission.photonCount);
-                    fQueuedPhotonCount -= static_cast<std::size_t>(request.submission.photonCount);
-                    --fQueuedSubmissionCount;
-                    if (fConfiguration.enablePerformanceDiagnostics) {
-                        fPerformance.schedulerQueueWaitMs +=
-                            std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() -
-                                                                      request.queuedAt}
-                                .count();
-                        ++fBatchStatistics.totalQueueWaitCount;
-                    }
-                    requests.emplace_back(std::move(request));
-                }
+            if (not CollectRequests(requests, photonCount)) {
+                break;
             }
-            fCondition.notify_all();
             if (requests.empty()) {
                 continue;
             }
-
-            const auto flattenStart{fConfiguration.enablePerformanceDiagnostics ?
-                                        std::chrono::steady_clock::now() :
-                                        std::chrono::steady_clock::time_point{}};
-            fBatchBuffer.clear();
-            std::vector<std::uint32_t> batchEventIDs{};
-            batchEventIDs.reserve(requests.size());
-            std::vector<std::uint32_t> emissionEventIndices{};
-            std::unordered_map<std::uint32_t, std::uint32_t> eventIndices{};
-            eventIndices.reserve(requests.size());
-            for (const auto& request : requests) {
-                const auto eventID{request.submission.eventID};
-                const auto eventIndex{static_cast<std::uint32_t>(batchEventIDs.size())};
-                if (!eventIndices.emplace(eventID, eventIndex).second) {
-                    throw std::invalid_argument("optical batch contains duplicate event IDs");
-                }
-                batchEventIDs.emplace_back(eventID);
-                for (const auto& emission : request.submission.emissions) {
-                    if (emission.eventID != eventID) {
-                        throw std::invalid_argument("optical emission event ID does not match its "
-                                                    "submission");
-                    }
-                    fBatchBuffer.emplace_back(emission);
-                    emissionEventIndices.emplace_back(eventIndex);
-                }
-            }
-            if (fConfiguration.enablePerformanceDiagnostics) {
-                const auto flattenMs{
-                    std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - flattenStart}.count()};
-                std::lock_guard lock{fMutex};
-                fPerformance.schedulerBatchFlattenMs += flattenMs;
-                fPerformance.schedulerBatchFlattenBytes +=
-                    static_cast<std::uint64_t>(fBatchBuffer.size() * sizeof(OpticalEmission));
-                fBatchStatistics.performance = fPerformance;
-            }
-            const PhotonTransportBatch batch{fBatchBuffer, batchEventIDs, emissionEventIndices};
-            fPhotonTransport->EnqueueEmissions(fScene, batch);
-            inFlightBatch.emplace(InFlightBatch{std::move(requests), photonCount});
+            EnqueueRequests(requests);
+            inFlightBatch.emplace(InFlightBatch{{}, photonCount});
+            inFlightBatch->requests.swap(requests);
         }
         fPhotonTransport.reset();
     } catch (...) {
@@ -585,17 +594,19 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
         for (auto& request : requests) {
             try {
                 request.promise->set_exception(error);
-            } catch (const std::future_error&) {}
+            } catch (const std::future_error&) { // @EXCEPTIONS_INTENTIONALLY_IGNORED
+            }
         }
         if (inFlightBatch.has_value()) {
             for (auto& request : inFlightBatch->requests) {
                 try {
                     request.promise->set_exception(error);
-                } catch (const std::future_error&) {}
+                } catch (const std::future_error&) { // @EXCEPTIONS_INTENTIONALLY_IGNORED
+                }
             }
         }
         {
-            std::lock_guard lock{fMutex};
+            std::scoped_lock lock{fMutex};
             fFailure = error;
             fReady = true;
             fStopRequested = true;
@@ -606,10 +617,10 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
 #endif
 }
 
-auto OpticalBatchScheduler::FailPendingRequests(std::exception_ptr error) -> void {
+auto OpticalBatchScheduler::FailPendingRequests(const std::exception_ptr& error) -> void {
     std::deque<TransportRequest> pending{};
     {
-        std::lock_guard lock{fMutex};
+        std::scoped_lock lock{fMutex};
         pending.swap(fPendingRequests);
         fQueuedPhotonCount = 0;
         fQueuedSubmissionCount = 0;
@@ -617,7 +628,8 @@ auto OpticalBatchScheduler::FailPendingRequests(std::exception_ptr error) -> voi
     for (auto& request : pending) {
         try {
             request.promise->set_exception(error);
-        } catch (const std::future_error&) {}
+        } catch (const std::future_error&) { // @EXCEPTIONS_INTENTIONALLY_IGNORED
+        }
     }
 }
 

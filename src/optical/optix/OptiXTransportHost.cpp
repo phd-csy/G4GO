@@ -14,10 +14,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -32,11 +33,14 @@ namespace {
 using DeviceAllocations = std::vector<std::unique_ptr<class DeviceAllocation>>;
 
 auto DevicePointer(CUdeviceptr pointer) -> void* {
+    // CUDA represents device addresses as integers while its runtime API accepts void pointers.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr)
     return reinterpret_cast<void*>(static_cast<std::uintptr_t>(pointer));
 }
 
 template<typename Type>
 auto DevicePointerAs(CUdeviceptr pointer) -> Type* {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr)
     return reinterpret_cast<Type*>(static_cast<std::uintptr_t>(pointer));
 }
 
@@ -87,7 +91,7 @@ auto RecordCudaTimerStop(const CudaTimerPair& timer, cudaStream_t stream) -> voi
 }
 
 auto ReadCudaTimerMs(const CudaTimerPair& timer) -> double {
-    if (timer.start == nullptr || timer.stop == nullptr) {
+    if (timer.start == nullptr or timer.stop == nullptr) {
         return 0.0;
     }
     float milliseconds{};
@@ -96,8 +100,8 @@ auto ReadCudaTimerMs(const CudaTimerPair& timer) -> double {
 }
 
 template<typename Type>
-auto EnsurePinnedAllocation(Type*& allocation, std::size_t& capacity, std::size_t count,
-                            const char* operation) -> void {
+auto EnsurePinnedAllocation(Type*& allocation, std::size_t& capacity, std::size_t count, const char* operation)
+    -> void {
     if (capacity >= count) {
         return;
     }
@@ -125,7 +129,7 @@ public:
         fPointer{} {
         void* rawPointer{nullptr};
         CudaError(cudaMalloc(&rawPointer, size), "cudaMalloc");
-        fPointer = reinterpret_cast<CUdeviceptr>(rawPointer);
+        fPointer = reinterpret_cast<CUdeviceptr>(rawPointer); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
     }
 
     ~DeviceAllocation() {
@@ -350,7 +354,7 @@ auto EnsureAllocation(std::unique_ptr<DeviceAllocation>& allocation, std::size_t
 }
 
 auto UploadProperty(const PropertyTable& property, DeviceAllocations& allocations) -> DeviceProperty {
-    if (property.energyEv.empty() || property.energyEv.size() != property.values.size()) {
+    if (property.energyEv.empty() or property.energyEv.size() != property.values.size()) {
         return {};
     }
 
@@ -365,7 +369,7 @@ auto UploadProperty(const PropertyTable& property, DeviceAllocations& allocation
 }
 
 auto UploadSpectrumProperty(const PropertyTable& property, DeviceAllocations& allocations) -> DeviceProperty {
-    if (property.energyEv.empty() || property.energyEv.size() != property.values.size()) {
+    if (property.energyEv.empty() or property.energyEv.size() != property.values.size()) {
         return {};
     }
     if (property.energyEv.size() == 1U) {
@@ -383,13 +387,14 @@ auto UploadSpectrumProperty(const PropertyTable& property, DeviceAllocations& al
         const auto energyDelta{property.energyEv.at(i) - property.energyEv.at(i - 1U)};
         const auto value0{std::max(property.values.at(i - 1U), 0.0F)};
         const auto value1{std::max(property.values.at(i), 0.0F)};
-        if (!(energyDelta >= 0.0F) || !std::isfinite(energyDelta) || !std::isfinite(value0) || !std::isfinite(value1)) {
+        if (not(energyDelta >= 0.0F) or not std::isfinite(energyDelta) or not std::isfinite(value0) or
+            not std::isfinite(value1)) {
             return {};
         }
         cdf[i] = cdf.at(i - 1U) + 0.5F * energyDelta * (value0 + value1);
     }
     const auto integral{cdf.at(cdf.size() - 1U)};
-    if (!(integral > 0.0F) || !std::isfinite(integral)) {
+    if (not(integral > 0.0F) or not std::isfinite(integral)) {
         return {};
     }
     for (auto& value : cdf) {
@@ -424,7 +429,7 @@ static_assert(sizeof(EmptySbtRecord) % OPTIX_SBT_RECORD_ALIGNMENT == 0);
 
 auto LogCallback(unsigned int level, const char* tag, const char* message, void*) -> void {
     if (level <= 2) {
-        std::fprintf(stderr, "[OptiX][%s] %s\n", tag, message);
+        std::cerr << "[OptiX][" << tag << "] " << message << '\n';
     }
 }
 
@@ -504,7 +509,7 @@ public:
     }
 
     auto PrepareScene(const Scene& scene) -> void {
-        std::lock_guard lock{fSceneMutex};
+        std::scoped_lock lock{fSceneMutex};
         if (fSceneAddress != &scene) {
             if (fSlot->busy) {
                 throw std::logic_error("OptiX scene cannot be rebuilt with pending batches");
@@ -574,15 +579,15 @@ public:
         }
         std::unordered_map<std::uint32_t, std::uint32_t> eventIndices{};
         eventIndices.reserve(batch.eventIDs.size());
-        for (std::size_t i {}; i < batch.eventIDs.size(); i++) {
-            if (!eventIndices.emplace(batch.eventIDs[i], static_cast<std::uint32_t>(i)).second) {
+        for (std::size_t i{}; i < batch.eventIDs.size(); i++) {
+            if (not eventIndices.emplace(batch.eventIDs[i], static_cast<std::uint32_t>(i)).second) {
                 throw std::invalid_argument("OptiX event batch contains duplicate event IDs");
             }
             output.eventStatistics.emplace_back(PhotonTransportEventStatistics{batch.eventIDs[i], {}});
         }
-        for (std::size_t i {}; i < emissions.size(); i++) {
+        for (std::size_t i{}; i < emissions.size(); i++) {
             const auto eventIndex{batch.emissionEventIndices[i]};
-            if (eventIndex >= batch.eventIDs.size() || emissions[i].eventID != batch.eventIDs[eventIndex]) {
+            if (eventIndex >= batch.eventIDs.size() or emissions[i].eventID != batch.eventIDs[eventIndex]) {
                 throw std::invalid_argument("OptiX emission event index does not match event ID");
             }
             auto& eventStatistics{output.eventStatistics.at(eventIndex).statistics};
@@ -637,7 +642,7 @@ public:
                                "cudaMallocHost emission event indices");
         fHostEmissionOffsets[0] = 0;
         std::uint64_t offset{};
-        for (std::size_t i {}; i < emissions.size(); i++) {
+        for (std::size_t i{}; i < emissions.size(); i++) {
             const auto& emission{emissions[i]};
             auto deviceEmission{std::bit_cast<DeviceOpticalEmission>(emission)};
             auto deviceVolumeID{InvalidID};
@@ -772,7 +777,7 @@ public:
     }
 
     auto CompleteOldestBatch() -> PhotonTransportOutput {
-        if (!fSlot->busy) {
+        if (not fSlot->busy) {
             throw std::logic_error("OptiX transport queue is empty");
         }
         auto& slot{*fSlot};
@@ -819,7 +824,7 @@ public:
                                          StatisticFieldBit(PhotonTransportStatisticField::InvalidState) |
                                          StatisticFieldBit(PhotonTransportStatisticField::ZeroStep) |
                                          StatisticFieldBit(PhotonTransportStatisticField::TransportTime);
-        for (std::size_t i {}; i < output.eventStatistics.size(); i++) {
+        for (std::size_t i{}; i < output.eventStatistics.size(); i++) {
             auto& eventStatistics{output.eventStatistics.at(i).statistics};
             const auto& deviceEventStatistics{slot.hostEventStats[i]};
             eventStatistics.detectedCount = deviceEventStatistics.detectedCount;
@@ -855,7 +860,7 @@ public:
         output.performance.coincidentCandidateHitCount = deviceStats.coincidentCandidateHitCount;
         const auto hostCompactionStart{std::chrono::steady_clock::now()};
         output.detections.reserve(compactHitCount);
-        for (std::size_t i {}; i < compactHitCount; i++) {
+        for (std::size_t i{}; i < compactHitCount; i++) {
             const auto& hit{slot.hostCompactHits[i]};
             output.detections.emplace_back(PhotonDetection{
                 {hit.positionMm.at(0), hit.positionMm.at(1), hit.positionMm.at(2)},
@@ -894,9 +899,10 @@ private:
 
         std::array<char, 8192> log{};
         auto logSize{log.size()};
-        const auto moduleStatus{
-            optixModuleCreate(fContext, &moduleOptions, &pipelineOptions, reinterpret_cast<const char*>(g4go_optix_ir),
-                              static_cast<std::size_t>(g4go_optix_irLength), log.data(), &logSize, &fModule)};
+        const auto moduleStatus{optixModuleCreate(
+            fContext, &moduleOptions, &pipelineOptions,
+            reinterpret_cast<const char*>(g4go_optix_ir), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+            static_cast<std::size_t>(g4go_optix_irLength), log.data(), &logSize, &fModule)};
         if (moduleStatus != OPTIX_SUCCESS) {
             throw std::runtime_error(std::string("optixModuleCreate failed: ") + optixGetErrorName(moduleStatus) +
                                      " (" + optixGetErrorString(moduleStatus) + ") " +
@@ -904,6 +910,8 @@ private:
         }
 
         OptixProgramGroupOptions programOptions{};
+        // OptiX descriptors are C tagged unions; setting kind selects the active union member.
+        // NOLINTBEGIN(cppcoreguidelines-pro-type-union-access,bugprone-invalid-enum-default-initialization)
         OptixProgramGroupDesc raygenDescription{};
         raygenDescription.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
         raygenDescription.raygen.module = fModule;
@@ -923,6 +931,7 @@ private:
         hitgroupDescription.hitgroup.moduleAH = fModule;
         hitgroupDescription.hitgroup.entryFunctionNameAH = "__anyhit__ah";
         fHitgroupProgram = CreateProgramGroup(hitgroupDescription, programOptions, "hitgroup program group");
+        // NOLINTEND(cppcoreguidelines-pro-type-union-access,bugprone-invalid-enum-default-initialization)
 
         const std::array programGroups{
             fRaygenProgram,
@@ -978,41 +987,59 @@ private:
         fSbt.hitgroupRecordCount = 1;
     }
 
-    auto BuildScene(const Scene& scene) -> void {
-        if (scene.Geometries().empty() || scene.Volumes().empty()) {
+    using VolumeIndexMap = std::unordered_map<std::uint32_t, std::uint32_t>;
+
+    struct GeometryBuildResult {
+        std::vector<DeviceGeometry> geometries;
+        std::vector<OptixTraversableHandle> handles;
+    };
+
+    struct VolumeBuildResult {
+        std::vector<DeviceVolume> volumes;
+        std::vector<OptixInstance> instances;
+    };
+
+    static auto CreateVolumeIndices(const Scene& scene) -> VolumeIndexMap {
+        if (scene.Geometries().empty() or scene.Volumes().empty()) {
             throw std::invalid_argument("OptiX scene cannot be empty");
         }
         if (scene.Volumes().size() >= InvalidID) {
             throw std::overflow_error("OptiX scene contains too many volumes");
         }
 
-        std::unordered_map<std::uint32_t, std::uint32_t> volumeIndices{};
+        VolumeIndexMap volumeIndices{};
         volumeIndices.reserve(scene.Volumes().size());
-        for (std::size_t i {}; i < scene.Volumes().size(); i++) {
+        for (std::size_t i{}; i < scene.Volumes().size(); i++) {
             const auto volumeID{scene.Volumes().at(i).volumeID};
-            if (volumeID == InvalidID || !volumeIndices.emplace(volumeID, static_cast<std::uint32_t>(i)).second) {
+            if (volumeID == InvalidID or not volumeIndices.emplace(volumeID, static_cast<std::uint32_t>(i)).second) {
                 throw std::invalid_argument("OptiX scene volume IDs must be unique and valid");
             }
         }
-        const auto mapVolumeID{[&](std::uint32_t volumeID, const char* relationship) {
-            if (volumeID == InvalidID) {
-                return InvalidID;
-            }
-            const auto volumeIndex{volumeIndices.find(volumeID)};
-            if (volumeIndex == volumeIndices.end()) {
-                throw std::invalid_argument(std::string("OptiX scene references an unknown ") + relationship +
-                                            " volume ID");
-            }
-            return volumeIndex->second;
-        }};
-        const auto mapRequiredVolumeID{[&](std::uint32_t volumeID, const char* relationship) {
-            if (volumeID == InvalidID) {
-                throw std::invalid_argument(std::string("OptiX scene has no ") + relationship + " volume ID");
-            }
-            return mapVolumeID(volumeID, relationship);
-        }};
-        fSceneAllocations.clear();
+        return volumeIndices;
+    }
 
+    static auto MapVolumeID(const VolumeIndexMap& volumeIndices, std::uint32_t volumeID, const char* relationship)
+        -> std::uint32_t {
+        if (volumeID == InvalidID) {
+            return InvalidID;
+        }
+        const auto volumeIndex{volumeIndices.find(volumeID)};
+        if (volumeIndex == volumeIndices.end()) {
+            throw std::invalid_argument(std::string("OptiX scene references an unknown ") + relationship +
+                                        " volume ID");
+        }
+        return volumeIndex->second;
+    }
+
+    static auto MapRequiredVolumeID(const VolumeIndexMap& volumeIndices, std::uint32_t volumeID,
+                                    const char* relationship) -> std::uint32_t {
+        if (volumeID == InvalidID) {
+            throw std::invalid_argument(std::string("OptiX scene has no ") + relationship + " volume ID");
+        }
+        return MapVolumeID(volumeIndices, volumeID, relationship);
+    }
+
+    auto UploadMaterials(const Scene& scene) -> std::vector<DeviceMaterial> {
         std::vector<DeviceMaterial> materials{};
         materials.reserve(scene.Materials().size());
         for (const auto& material : scene.Materials()) {
@@ -1028,7 +1055,10 @@ private:
                                                            },
             });
         }
+        return materials;
+    }
 
+    auto UploadSurfaces(const Scene& scene) -> std::vector<DeviceSurface> {
         std::vector<DeviceSurface> surfaces{};
         surfaces.reserve(scene.Surfaces().size());
         for (const auto& surface : scene.Surfaces()) {
@@ -1048,114 +1078,149 @@ private:
                 UploadProperty(surface.surfaceRoughness, fSceneAllocations),
             });
         }
+        return surfaces;
+    }
 
-        std::vector<DeviceGeometry> geometries{};
-        geometries.reserve(scene.Geometries().size());
-        std::vector<OptixTraversableHandle> geometryHandles{};
-        geometryHandles.reserve(scene.Geometries().size());
-        for (const auto& geometry : scene.Geometries()) {
-            const auto& mesh{geometry.mesh};
-            if (mesh.verticesMm.empty() || mesh.indices.empty() || mesh.indices.size() % 3 != 0) {
-                throw std::invalid_argument("OptiX scene contains invalid mesh " + geometry.name);
+    static auto CreateTriangleNormals(const Geometry& geometry) -> std::vector<G4ThreeVector> {
+        const auto& mesh{geometry.mesh};
+        const auto triangleCount{mesh.indices.size() / 3};
+        if (not mesh.triangleNormals.empty()) {
+            if (mesh.triangleNormals.size() != triangleCount) {
+                throw std::invalid_argument("OptiX scene triangle normal count mismatch: " + geometry.name);
             }
-            if (std::any_of(mesh.indices.begin(), mesh.indices.end(),
-                            [&](const auto index) { return index >= mesh.verticesMm.size(); })) {
-                throw std::invalid_argument("OptiX scene mesh index exceeds vertex count: " + geometry.name);
-            }
-            if (!mesh.triangleFlags.empty() && mesh.triangleFlags.size() != mesh.indices.size() / 3) {
-                throw std::invalid_argument("OptiX scene triangle flag count mismatch: " + geometry.name);
-            }
-            const auto triangleCount{mesh.indices.size() / 3};
             std::vector<G4ThreeVector> triangleNormals{};
-            if (mesh.triangleNormals.empty()) {
-                triangleNormals.reserve(triangleCount);
-                for (std::size_t i {}; i < triangleCount; i++) {
-                    const auto base{3 * i};
-                    const auto& first{mesh.verticesMm.at(mesh.indices.at(base))};
-                    const auto& second{mesh.verticesMm.at(mesh.indices.at(base + 1))};
-                    const auto& third{mesh.verticesMm.at(mesh.indices.at(base + 2))};
-                    const auto normal{(second - first).cross(third - first)};
-                    if (!(normal.mag2() > 0.0)) {
-                        throw std::invalid_argument("OptiX scene contains a degenerate triangle: " + geometry.name);
-                    }
-                    triangleNormals.emplace_back(normal.unit());
+            triangleNormals.reserve(triangleCount);
+            for (const auto& normal : mesh.triangleNormals) {
+                if (not(normal.mag2() > 0.0)) {
+                    throw std::invalid_argument("OptiX scene contains an invalid triangle normal: " + geometry.name);
                 }
-            } else {
-                if (mesh.triangleNormals.size() != triangleCount) {
-                    throw std::invalid_argument("OptiX scene triangle normal count mismatch: " + geometry.name);
-                }
-                triangleNormals.reserve(triangleCount);
-                for (const auto& normal : mesh.triangleNormals) {
-                    if (!(normal.mag2() > 0.0)) {
-                        throw std::invalid_argument("OptiX scene contains an invalid triangle normal: " +
-                                                    geometry.name);
-                    }
-                    triangleNormals.emplace_back(normal.unit());
-                }
+                triangleNormals.emplace_back(normal.unit());
             }
-            std::vector<DeviceVector3> vertices{};
-            vertices.reserve(mesh.verticesMm.size());
-            for (const auto& vertex : mesh.verticesMm) {
-                vertices.emplace_back(ToDevice(vertex));
-            }
-            const auto vertexPointer{Upload<DeviceVector3>(vertices, fSceneAllocations)};
-            const auto indexPointer{Upload<std::uint32_t>(mesh.indices, fSceneAllocations)};
-            std::vector<DeviceVector3> deviceNormals{};
-            deviceNormals.reserve(triangleNormals.size());
-            for (const auto& normal : triangleNormals) {
-                deviceNormals.emplace_back(ToDevice(normal));
-            }
-            const auto normalPointer{Upload<DeviceVector3>(deviceNormals, fSceneAllocations)};
-            const auto flagPointer{Upload<std::uint8_t>(mesh.triangleFlags, fSceneAllocations)};
-            geometries.emplace_back(DeviceGeometry{
-                {
-                 DevicePointerAs<const DeviceVector3>(vertexPointer),
-                 DevicePointerAs<const std::uint32_t>(indexPointer),
-                 DevicePointerAs<const DeviceVector3>(normalPointer),
-                 DevicePointerAs<const std::uint8_t>(flagPointer),
-                 static_cast<std::uint32_t>(mesh.verticesMm.size()),
-                 static_cast<std::uint32_t>(triangleCount),
-                 },
-            });
-
-            const CUdeviceptr vertexBuffers[]{vertexPointer};
-            const unsigned int geometryFlags[]{OPTIX_GEOMETRY_FLAG_NONE};
-            OptixBuildInput buildInput{};
-            buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-            buildInput.triangleArray.vertexBuffers = vertexBuffers;
-            buildInput.triangleArray.numVertices = static_cast<unsigned int>(mesh.verticesMm.size());
-            buildInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-            buildInput.triangleArray.indexBuffer = indexPointer;
-            buildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(mesh.indices.size() / 3);
-            buildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-            buildInput.triangleArray.flags = geometryFlags;
-            buildInput.triangleArray.numSbtRecords = 1;
-
-            OptixAccelBuildOptions buildOptions{};
-            buildOptions.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
-            buildOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
-            buildOptions.motionOptions.numKeys = 1;
-            OptixAccelBufferSizes bufferSizes{};
-            OptiXError(optixAccelComputeMemoryUsage(fContext, &buildOptions, &buildInput, 1, &bufferSizes),
-                       "optixAccelComputeMemoryUsage geometry");
-            auto temporary{std::make_unique<DeviceAllocation>(bufferSizes.tempSizeInBytes)};
-            auto output{std::make_unique<DeviceAllocation>(bufferSizes.outputSizeInBytes)};
-            OptixTraversableHandle geometryHandle{};
-            OptiXError(optixAccelBuild(fContext, fSceneBuildStream, &buildOptions, &buildInput, 1, temporary->Pointer(),
-                                       bufferSizes.tempSizeInBytes, output->Pointer(), bufferSizes.outputSizeInBytes,
-                                       &geometryHandle, nullptr, 0),
-                       "optixAccelBuild geometry");
-            CudaError(cudaStreamSynchronize(fSceneBuildStream), "cudaStreamSynchronize geometry GAS");
-            fSceneAllocations.emplace_back(std::move(temporary));
-            fSceneAllocations.emplace_back(std::move(output));
-            geometryHandles.emplace_back(geometryHandle);
+            return triangleNormals;
         }
+
+        std::vector<G4ThreeVector> triangleNormals{};
+        triangleNormals.reserve(triangleCount);
+        for (std::size_t i{}; i < triangleCount; i++) {
+            const auto base{3 * i};
+            const auto& first{mesh.verticesMm.at(mesh.indices.at(base))};
+            const auto& second{mesh.verticesMm.at(mesh.indices.at(base + 1))};
+            const auto& third{mesh.verticesMm.at(mesh.indices.at(base + 2))};
+            const auto normal{(second - first).cross(third - first)};
+            if (not(normal.mag2() > 0.0)) {
+                throw std::invalid_argument("OptiX scene contains a degenerate triangle: " + geometry.name);
+            }
+            triangleNormals.emplace_back(normal.unit());
+        }
+        return triangleNormals;
+    }
+
+    auto BuildGeometry(const Geometry& geometry) -> std::pair<DeviceGeometry, OptixTraversableHandle> {
+        const auto& mesh{geometry.mesh};
+        if (mesh.verticesMm.empty() or mesh.indices.empty() or mesh.indices.size() % 3 != 0) {
+            throw std::invalid_argument("OptiX scene contains invalid mesh " + geometry.name);
+        }
+        if (std::ranges::any_of(mesh.indices,
+                                [&](const auto index) -> bool { return index >= mesh.verticesMm.size(); })) {
+            throw std::invalid_argument("OptiX scene mesh index exceeds vertex count: " + geometry.name);
+        }
+        if (not mesh.triangleFlags.empty() and mesh.triangleFlags.size() != mesh.indices.size() / 3) {
+            throw std::invalid_argument("OptiX scene triangle flag count mismatch: " + geometry.name);
+        }
+        const auto triangleNormals{CreateTriangleNormals(geometry)};
+        std::vector<DeviceVector3> vertices{};
+        vertices.reserve(mesh.verticesMm.size());
+        for (const auto& vertex : mesh.verticesMm) {
+            vertices.emplace_back(ToDevice(vertex));
+        }
+        const auto vertexPointer{Upload<DeviceVector3>(vertices, fSceneAllocations)};
+        const auto indexPointer{Upload<std::uint32_t>(mesh.indices, fSceneAllocations)};
+        std::vector<DeviceVector3> deviceNormals{};
+        deviceNormals.reserve(triangleNormals.size());
+        for (const auto& normal : triangleNormals) {
+            deviceNormals.emplace_back(ToDevice(normal));
+        }
+        const auto normalPointer{Upload<DeviceVector3>(deviceNormals, fSceneAllocations)};
+        const auto flagPointer{Upload<std::uint8_t>(mesh.triangleFlags, fSceneAllocations)};
+        const DeviceGeometry deviceGeometry{
+            {
+             DevicePointerAs<const DeviceVector3>(vertexPointer),
+             DevicePointerAs<const std::uint32_t>(indexPointer),
+             DevicePointerAs<const DeviceVector3>(normalPointer),
+             DevicePointerAs<const std::uint8_t>(flagPointer),
+             static_cast<std::uint32_t>(mesh.verticesMm.size()),
+             static_cast<std::uint32_t>(mesh.indices.size() / 3),
+             }
+        };
+
+        const CUdeviceptr vertexBuffers[]{vertexPointer};
+        const unsigned int geometryFlags[]{OPTIX_GEOMETRY_FLAG_NONE};
+        // OptiX acceleration inputs are C tagged unions selected by their type field.
+        // NOLINTBEGIN(cppcoreguidelines-pro-type-union-access,bugprone-invalid-enum-default-initialization)
+        OptixBuildInput buildInput{};
+        buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+        buildInput.triangleArray.vertexBuffers = vertexBuffers;
+        buildInput.triangleArray.numVertices = static_cast<unsigned int>(mesh.verticesMm.size());
+        buildInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+        buildInput.triangleArray.indexBuffer = indexPointer;
+        buildInput.triangleArray.numIndexTriplets = static_cast<unsigned int>(mesh.indices.size() / 3);
+        buildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+        buildInput.triangleArray.flags = geometryFlags;
+        buildInput.triangleArray.numSbtRecords = 1;
+        // NOLINTEND(cppcoreguidelines-pro-type-union-access,bugprone-invalid-enum-default-initialization)
+
+        // OptiX defines enum fields whose documented zero values are valid defaults.
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+        OptixAccelBuildOptions buildOptions{};
+        buildOptions.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+        buildOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
+        buildOptions.motionOptions.numKeys = 1;
+        OptixAccelBufferSizes bufferSizes{};
+        OptiXError(optixAccelComputeMemoryUsage(fContext, &buildOptions, &buildInput, 1, &bufferSizes),
+                   "optixAccelComputeMemoryUsage geometry");
+        auto temporary{std::make_unique<DeviceAllocation>(bufferSizes.tempSizeInBytes)};
+        auto output{std::make_unique<DeviceAllocation>(bufferSizes.outputSizeInBytes)};
+        OptixTraversableHandle geometryHandle{};
+        OptiXError(optixAccelBuild(fContext, fSceneBuildStream, &buildOptions, &buildInput, 1, temporary->Pointer(),
+                                   bufferSizes.tempSizeInBytes, output->Pointer(), bufferSizes.outputSizeInBytes,
+                                   &geometryHandle, nullptr, 0),
+                   "optixAccelBuild geometry");
+        CudaError(cudaStreamSynchronize(fSceneBuildStream), "cudaStreamSynchronize geometry GAS");
+        fSceneAllocations.emplace_back(std::move(temporary));
+        fSceneAllocations.emplace_back(std::move(output));
+        return {deviceGeometry, geometryHandle};
+    }
+
+    auto BuildGeometries(const Scene& scene) -> GeometryBuildResult {
+        GeometryBuildResult result{};
+        result.geometries.reserve(scene.Geometries().size());
+        result.handles.reserve(scene.Geometries().size());
+        for (const auto& geometry : scene.Geometries()) {
+            auto [deviceGeometry, handle]{BuildGeometry(geometry)};
+            result.geometries.emplace_back(deviceGeometry);
+            result.handles.emplace_back(handle);
+        }
+        return result;
+    }
+
+    auto BuildSceneTransaction(const Scene& scene, VolumeIndexMap volumeIndices) -> void {
+        const auto mapVolumeID{[&](std::uint32_t volumeID, const char* relationship) -> std::uint32_t {
+            return MapVolumeID(volumeIndices, volumeID, relationship);
+        }};
+        const auto mapRequiredVolumeID{[&](std::uint32_t volumeID, const char* relationship) -> std::uint32_t {
+            return MapRequiredVolumeID(volumeIndices, volumeID, relationship);
+        }};
+        fSceneAllocations.clear();
+
+        const auto materials{UploadMaterials(scene)};
+        const auto surfaces{UploadSurfaces(scene)};
+        auto [geometries, geometryHandles]{BuildGeometries(scene)};
 
         std::vector<DeviceVolume> volumes{};
         volumes.reserve(scene.Volumes().size());
         std::vector<OptixInstance> instances{};
         instances.reserve(scene.Volumes().size());
-        for (std::size_t i {}; i < scene.Volumes().size(); i++) {
+        for (std::size_t i{}; i < scene.Volumes().size(); i++) {
             const auto& volume{scene.Volumes().at(i)};
             if (volume.geometryID >= geometryHandles.size()) {
                 throw std::invalid_argument("volume references invalid geometry");
@@ -1204,7 +1269,7 @@ private:
                 binding.surfaceID,
             });
         }
-        std::sort(deviceBindings.begin(), deviceBindings.end(), [](const auto& left, const auto& right) {
+        std::ranges::sort(deviceBindings, [](const auto& left, const auto& right) -> bool {
             if (left.fromVolumeID != right.fromVolumeID) {
                 return left.fromVolumeID < right.fromVolumeID;
             }
@@ -1232,10 +1297,15 @@ private:
             mapRequiredVolumeID(scene.WorldVolumeID(), "world"),
         };
 
+        // OptiX acceleration inputs are C tagged unions selected by their type field.
+        // NOLINTBEGIN(cppcoreguidelines-pro-type-union-access,bugprone-invalid-enum-default-initialization)
         OptixBuildInput instanceInput{};
         instanceInput.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
         instanceInput.instanceArray.instances = instancePointer;
         instanceInput.instanceArray.numInstances = static_cast<unsigned int>(instances.size());
+        // NOLINTEND(cppcoreguidelines-pro-type-union-access,bugprone-invalid-enum-default-initialization)
+        // OptiX defines enum fields whose documented zero values are valid defaults.
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         OptixAccelBuildOptions instanceOptions{};
         instanceOptions.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
         instanceOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
@@ -1252,8 +1322,8 @@ private:
         CudaError(cudaStreamSynchronize(fSceneBuildStream), "cudaStreamSynchronize scene IAS");
         fSceneAllocations.emplace_back(std::move(instanceTemporary));
         fSceneAllocations.emplace_back(std::move(instanceOutput));
-        if (std::all_of(volumeIndices.begin(), volumeIndices.end(),
-                        [&](const auto& entry) { return entry.first < scene.Volumes().size(); })) {
+        if (std::ranges::all_of(volumeIndices,
+                                [&](const auto& entry) -> bool { return entry.first < scene.Volumes().size(); })) {
             fVolumeIndicesByID.assign(scene.Volumes().size(), InvalidID);
             for (const auto& [volumeID, volumeIndex] : volumeIndices) {
                 fVolumeIndicesByID[volumeID] = volumeIndex;
@@ -1264,6 +1334,9 @@ private:
         fVolumeIndices = std::move(volumeIndices);
         fSceneAddress = &scene;
     }
+
+    // Scene validation, upload, and OptiX acceleration-structure construction form one ordered transaction.
+    auto BuildScene(const Scene& scene) -> void { BuildSceneTransaction(scene, CreateVolumeIndices(scene)); }
 
     PhotonTransportConfig fConfiguration;
     OptixDeviceContext fContext;

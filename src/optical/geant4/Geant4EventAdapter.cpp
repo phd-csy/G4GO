@@ -29,7 +29,7 @@ namespace {
 
 auto MaterialFromIndex(std::size_t materialIndex) -> const G4Material* {
     const auto* materialTable{G4Material::GetMaterialTable()};
-    if (materialTable == nullptr || materialIndex >= materialTable->size()) {
+    if (materialTable == nullptr or materialIndex >= materialTable->size()) {
         return nullptr;
     }
     return materialTable->at(materialIndex);
@@ -49,7 +49,7 @@ auto VectorFromMm(const G4ThreeVector& vector) -> std::array<float, 3> {
 Geant4EventAdapter::Geant4EventAdapter(PhotonTransportConfig configuration,
                                        std::shared_ptr<OpticalBatchScheduler> batchScheduler) :
     fRequestedBackend{configuration.backend},
-    fConfiguration{std::move(configuration)},
+    fConfiguration{configuration},
     fEmissions{},
     fVolumeIDCache{},
     fCachedLocatedVolume{nullptr},
@@ -63,7 +63,7 @@ Geant4EventAdapter::Geant4EventAdapter(PhotonTransportConfig configuration,
     fEventID{-1},
     fNextPhotonID{},
     fEventPhotonCount{} {
-    if (!fBatchScheduler) {
+    if (not fBatchScheduler) {
         throw std::invalid_argument("Geant4EventAdapter requires a batch scheduler");
     }
     fEmissions.reserve(std::min<std::size_t>(fConfiguration.maxPhotonsPerEvent, 1024));
@@ -133,7 +133,7 @@ auto Geant4EventAdapter::ObserveGenerated(const G4Track& track) -> void {
         return;
     }
     const auto& processName{creatorProcess->GetProcessName()};
-    if (processName == "Cerenkov" || processName == "Cherenkov") {
+    if (processName == "Cerenkov" or processName == "Cherenkov") {
         ++fEventPerformance.cerenkovPhotonCount;
     } else if (processName == "Scintillation") {
         ++fEventPerformance.scintillationPhotonCount;
@@ -144,9 +144,9 @@ auto Geant4EventAdapter::Capture(const G4Track& track) -> void {
     const auto diagnostics{fConfiguration.enablePerformanceDiagnostics};
     const auto captureStart{diagnostics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}};
 
-    const auto position{track.GetPosition()};
-    const auto direction{track.GetMomentumDirection()};
-    const auto polarization{track.GetPolarization()};
+    const auto& position{track.GetPosition()};
+    const auto& direction{track.GetMomentumDirection()};
+    const auto& polarization{track.GetPolarization()};
 
     OpticalEmission emission{};
     emission.positionMm = {
@@ -167,11 +167,11 @@ auto Geant4EventAdapter::Capture(const G4Track& track) -> void {
         static_cast<float>(polarization.z()),
     };
     emission.type = OpticalEmissionType::Direct;
-    AppendOffloadedEmission(track, std::move(emission), 1, captureStart, "Geant4EventAdapter::Capture", "the creation");
+    AppendOffloadedEmission(track, emission, 1, captureStart, "Geant4EventAdapter::Capture", "the creation");
 }
 
 auto Geant4EventAdapter::CaptureOffloaded(const G4Track& track) -> void {
-    const auto appendTrackContext = [this, &track](G4ExceptionDescription& description) {
+    const auto appendTrackContext = [this, &track](G4ExceptionDescription& description) -> void {
         const auto* material{track.GetMaterial()};
         description << "event " << fEventID << ", track " << track.GetTrackID() << ", material ";
         if (material == nullptr) {
@@ -226,7 +226,7 @@ auto Geant4EventAdapter::AppendOffloadedEmission(const G4Track& track, OpticalEm
                                                  std::chrono::steady_clock::time_point captureStart,
                                                  const char* operation, const char* volumeDescription) -> bool {
     const auto maxPhotons{static_cast<std::uint64_t>(fConfiguration.maxPhotonsPerEvent)};
-    if (photonCount > maxPhotons || fEventPhotonCount > maxPhotons - photonCount) {
+    if (photonCount > maxPhotons or fEventPhotonCount > maxPhotons - photonCount) {
         G4ExceptionDescription description{};
         description << "Optical photon limit reached in event " << fEventID
                     << ": limit=" << fConfiguration.maxPhotonsPerEvent;
@@ -254,7 +254,7 @@ auto Geant4EventAdapter::AppendOffloadedEmission(const G4Track& track, OpticalEm
         fEventPerformance.captureVolumeMappingMs +=
             std::chrono::duration<double, std::milli>{std::chrono::steady_clock::now() - mappingStart}.count();
     }
-    if (!fBatchScheduler->ExportedScene().Volumes().empty() && volumeID == InvalidID) {
+    if (not fBatchScheduler->ExportedScene().Volumes().empty() and volumeID == InvalidID) {
         G4ExceptionDescription description{};
         description << "Unable to map " << volumeDescription << " volume in event " << fEventID
                     << " to the exported scene";
@@ -269,7 +269,7 @@ auto Geant4EventAdapter::AppendOffloadedEmission(const G4Track& track, OpticalEm
     emission.materialID = MaterialIDFromVolume(volumeID);
     fNextPhotonID += static_cast<std::uint32_t>(photonCount);
     fEventPhotonCount += photonCount;
-    fEmissions.emplace_back(std::move(emission));
+    fEmissions.emplace_back(emission);
     fEventStatistics.generatedCount += photonCount;
     fEventStatistics.capturedCount += photonCount;
     if (diagnostics) {
@@ -306,14 +306,14 @@ auto Geant4EventAdapter::CaptureCerenkov(const G4Track& track, const G4CerenkovQ
     emission.preMeanPhotonCount = static_cast<float>(info.GetPreNumPhotons());
     emission.postMeanPhotonCount = static_cast<float>(info.GetPostNumPhotons());
     emission.type = OpticalEmissionType::Cerenkov;
-    if (AppendOffloadedEmission(track, std::move(emission), photonCount, captureStart,
-                                "Geant4EventAdapter::CaptureCerenkov", "Cerenkov offload")) {
+    if (AppendOffloadedEmission(track, emission, photonCount, captureStart, "Geant4EventAdapter::CaptureCerenkov",
+                                "Cerenkov offload")) {
         fEventPerformance.cerenkovPhotonCount += photonCount;
     }
 }
 
-auto Geant4EventAdapter::CaptureScintillation(const G4Track& track,
-                                              const G4GOQuasiScintillationTrackInfo& info) -> void {
+auto Geant4EventAdapter::CaptureScintillation(const G4Track& track, const G4GOQuasiScintillationTrackInfo& info)
+    -> void {
     const auto diagnostics{fConfiguration.enablePerformanceDiagnostics};
     const auto captureStart{diagnostics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}};
     const auto data{info.QuasiOpticalData()};
@@ -337,7 +337,7 @@ auto Geant4EventAdapter::CaptureScintillation(const G4Track& track,
     }
 
     const auto componentIndex{info.ComponentIndex()};
-    if (componentIndex < 0 || componentIndex > 2) {
+    if (componentIndex < 0 or componentIndex > 2) {
         G4ExceptionDescription description{};
         description << "invalid scintillation component index " << componentIndex << " for event " << fEventID
                     << ", track " << track.GetTrackID() << ", material ";
@@ -381,24 +381,24 @@ auto Geant4EventAdapter::CaptureScintillation(const G4Track& track,
     emission.charge = static_cast<float>(data.charge);
     emission.spectrumID = static_cast<std::uint32_t>(componentIndex);
     emission.type = OpticalEmissionType::Scintillation;
-    if (AppendOffloadedEmission(track, std::move(emission), photonCount, captureStart,
-                                "Geant4EventAdapter::CaptureScintillation", "scintillation offload")) {
+    if (AppendOffloadedEmission(track, emission, photonCount, captureStart, "Geant4EventAdapter::CaptureScintillation",
+                                "scintillation offload")) {
         fEventPerformance.scintillationPhotonCount += photonCount;
     }
 }
 
-auto Geant4EventAdapter::LocateVolume(const G4Track& track) const -> const G4VPhysicalVolume* {
+auto Geant4EventAdapter::LocateVolume(const G4Track& track) -> const G4VPhysicalVolume* {
     if (const auto* volume{track.GetVolume()}; volume != nullptr) {
         return volume;
     }
     auto* navigator{G4TransportationManager::GetTransportationManager()->GetNavigatorForTracking()};
-    auto position{track.GetPosition()};
-    auto direction{track.GetMomentumDirection()};
+    const auto& position{track.GetPosition()};
+    const auto& direction{track.GetMomentumDirection()};
     return navigator->LocateGlobalPointAndSetup(position, &direction, false);
 }
 
-auto Geant4EventAdapter::VolumeIDFromTrack(const G4Track& track,
-                                           const G4VPhysicalVolume* locatedVolume) const -> std::uint32_t {
+auto Geant4EventAdapter::VolumeIDFromTrack(const G4Track& track, const G4VPhysicalVolume* locatedVolume) const
+    -> std::uint32_t {
     const auto locatedID{static_cast<std::uint32_t>(std::max(locatedVolume->GetInstanceID(), 0))};
     if (fBatchScheduler->ExportedScene().Volumes().empty()) {
         return locatedID;
@@ -406,29 +406,30 @@ auto Geant4EventAdapter::VolumeIDFromTrack(const G4Track& track,
 
     const auto& scene{fBatchScheduler->ExportedScene()};
     const auto locatedCopyNo{static_cast<std::uint32_t>(std::max(locatedVolume->GetCopyNo(), 0))};
-    if (locatedVolume == fCachedLocatedVolume && locatedCopyNo == fCachedLocatedCopyNo &&
+    if (locatedVolume == fCachedLocatedVolume and locatedCopyNo == fCachedLocatedCopyNo and
         fCachedVolumeID != InvalidID) {
         return fCachedVolumeID;
     }
 
-    const auto findVolumeID{[&](std::uint32_t physicalVolumeID, std::uint32_t copyNo, std::uint32_t parentVolumeID) {
-        const VolumeLookupKey key{physicalVolumeID, copyNo, parentVolumeID};
-        if (const auto found{fVolumeIDCache.find(key)}; found != fVolumeIDCache.end()) {
-            return found->second;
-        }
-        const auto* sceneVolume{scene.FindVolume(physicalVolumeID, copyNo, parentVolumeID)};
-        const auto volumeID{sceneVolume == nullptr ? InvalidID : sceneVolume->volumeID};
-        fVolumeIDCache.emplace(key, volumeID);
-        return volumeID;
-    }};
-    const auto findUniqueVolumeID{[&](std::uint32_t physicalVolumeID, std::uint32_t copyNo) {
+    const auto findVolumeID{
+        [&](std::uint32_t physicalVolumeID, std::uint32_t copyNo, std::uint32_t parentVolumeID) -> std::uint32_t {
+            const VolumeLookupKey key{physicalVolumeID, copyNo, parentVolumeID};
+            if (const auto found{fVolumeIDCache.find(key)}; found != fVolumeIDCache.end()) {
+                return found->second;
+            }
+            const auto* sceneVolume{scene.FindVolume(physicalVolumeID, copyNo, parentVolumeID)};
+            const auto volumeID{sceneVolume == nullptr ? InvalidID : sceneVolume->volumeID};
+            fVolumeIDCache.emplace(key, volumeID);
+            return volumeID;
+        }};
+    const auto findUniqueVolumeID{[&](std::uint32_t physicalVolumeID, std::uint32_t copyNo) -> std::uint32_t {
         const VolumeLookupKey key{physicalVolumeID, copyNo, InvalidID};
         if (const auto found{fVolumeIDCache.find(key)}; found != fVolumeIDCache.end()) {
             return found->second;
         }
         std::uint32_t volumeID{InvalidID};
         for (const auto& candidate : scene.Volumes()) {
-            if (candidate.physicalVolumeID != physicalVolumeID || candidate.copyNo != copyNo) {
+            if (candidate.physicalVolumeID != physicalVolumeID or candidate.copyNo != copyNo) {
                 continue;
             }
             if (volumeID != InvalidID) {

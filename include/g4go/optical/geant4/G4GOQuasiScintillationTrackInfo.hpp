@@ -8,7 +8,7 @@
 
 class G4GOQuasiScintillationTrackInfo final : public G4VAuxiliaryTrackInformation {
 public:
-    G4GOQuasiScintillationTrackInfo(const G4QuasiOpticalData& data, G4double scintTime, G4double riseTime,
+    G4GOQuasiScintillationTrackInfo(G4QuasiOpticalData data, G4double scintillationTime, G4double riseTime,
                                     G4int componentIndex);
     ~G4GOQuasiScintillationTrackInfo() override = default;
 
@@ -16,7 +16,9 @@ public:
     auto operator delete(void* pointer) -> void;
 
     G4GOQuasiScintillationTrackInfo(const G4GOQuasiScintillationTrackInfo&) = default;
+    G4GOQuasiScintillationTrackInfo(G4GOQuasiScintillationTrackInfo&&) = default;
     auto operator=(const G4GOQuasiScintillationTrackInfo&) -> G4GOQuasiScintillationTrackInfo& = default;
+    auto operator=(G4GOQuasiScintillationTrackInfo&&) -> G4GOQuasiScintillationTrackInfo& = default;
 
     auto Print() const -> void override;
 
@@ -25,7 +27,7 @@ public:
     auto RiseTime() const -> G4double { return fRiseTime; }
     auto ComponentIndex() const -> G4int { return fComponentIndex; }
 
-    static auto Cast(const G4VAuxiliaryTrackInformation* information) -> G4GOQuasiScintillationTrackInfo*;
+    static auto Cast(const G4VAuxiliaryTrackInformation* information) -> const G4GOQuasiScintillationTrackInfo*;
 
 private:
     G4QuasiOpticalData fQuasiOpticalData;

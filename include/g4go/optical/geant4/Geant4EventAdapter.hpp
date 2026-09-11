@@ -50,7 +50,7 @@ private:
                                  const char* volumeDescription) -> bool;
     auto CaptureCerenkov(const G4Track& track, const G4CerenkovQuasiTrackInfo& info) -> void;
     auto CaptureScintillation(const G4Track& track, const G4GOQuasiScintillationTrackInfo& info) -> void;
-    auto LocateVolume(const G4Track& track) const -> const G4VPhysicalVolume*;
+    static auto LocateVolume(const G4Track& track) -> const G4VPhysicalVolume*;
     auto VolumeIDFromTrack(const G4Track& track, const G4VPhysicalVolume* locatedVolume) const -> std::uint32_t;
     auto MaterialIDFromVolume(std::uint32_t volumeID) const -> std::uint32_t;
     auto AccumulateEventStatistics() -> void;

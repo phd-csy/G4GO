@@ -35,7 +35,7 @@ struct CommandLineOptions {
 
 auto UseOpticalOffload(G4GO::Optical::PhotonTransportBackend backend) -> bool {
 #ifdef G4GO_ENABLE_OPTIX
-    return backend == G4GO::Optical::PhotonTransportBackend::OptiX ||
+    return backend == G4GO::Optical::PhotonTransportBackend::OptiX or
            backend == G4GO::Optical::PhotonTransportBackend::Auto;
 #else
     static_cast<void>(backend);
@@ -85,11 +85,15 @@ auto main(int argc, char** argv) -> int {
     try {
         app.parse(argc, argv);
 
-        options.photonTransportConfig.backend = backendName == "gpu" ? G4GO::Optical::PhotonTransportBackend::OptiX :
-                                                backendName == "cpu" ? G4GO::Optical::PhotonTransportBackend::Geant4 :
-                                                                       G4GO::Optical::PhotonTransportBackend::Auto;
+        if (backendName == "gpu") {
+            options.photonTransportConfig.backend = G4GO::Optical::PhotonTransportBackend::OptiX;
+        } else if (backendName == "cpu") {
+            options.photonTransportConfig.backend = G4GO::Optical::PhotonTransportBackend::Geant4;
+        } else {
+            options.photonTransportConfig.backend = G4GO::Optical::PhotonTransportBackend::Auto;
+        }
 
-        if (!macroFile.empty()) {
+        if (not macroFile.empty()) {
             options.macroFile = std::move(macroFile);
         }
 
@@ -111,13 +115,13 @@ auto main(int argc, char** argv) -> int {
 
 #ifdef G4GO_USE_UIVIS
     G4UIExecutive* ui{nullptr};
-    if (!options.macroFile) {
+    if (not options.macroFile) {
         G4int uiArgc{1};
         char* uiArgv[]{argv[0], nullptr};
         ui = new G4UIExecutive(uiArgc, uiArgv);
     }
 #else
-    if (!options.macroFile) {
+    if (not options.macroFile) {
         G4cout << app.help() << G4endl;
         delete timer;
         return 1;
@@ -170,7 +174,7 @@ auto main(int argc, char** argv) -> int {
     G4UImanager* uiManager{G4UImanager::GetUIpointer()};
 
 #ifdef G4GO_USE_UIVIS
-    if (!ui) {
+    if (not ui) {
         G4String command{"/control/execute "};
         G4String fileName{*options.macroFile};
         uiManager->ApplyCommand(command + fileName);
@@ -186,7 +190,7 @@ auto main(int argc, char** argv) -> int {
 #endif
 
     timer->Stop();
-    G4cout << "Time runs: " << *timer << G4endl;
+    G4cout << "Elapsed time: " << *timer << G4endl;
 
 #ifdef G4GO_USE_UIVIS
     delete visManager;

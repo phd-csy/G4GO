@@ -1,6 +1,7 @@
 #include "g4go/optical/Scene.hpp"
 
 #include <algorithm>
+#include <ranges>
 #include <stdexcept>
 #include <utility>
 
@@ -15,8 +16,9 @@ Scene::Scene() :
     fWorldVolumeID{InvalidID} {}
 
 auto PropertyTable::Constant() const -> bool {
-    return values.size() == 1 || (values.size() > 1 && std::all_of(values.begin() + 1, values.end(),
-                                                                   [&](auto value) { return value == values.at(0); }));
+    return values.size() == 1 or
+           (values.size() > 1 and std::ranges::all_of(values | std::views::drop(1),
+                                                      [&](auto value) -> bool { return value == values.at(0); }));
 }
 
 auto Scene::AddMaterial(Material material) -> std::uint32_t {
@@ -66,38 +68,38 @@ auto Scene::FindGeometry(std::uint32_t geometryID) const -> const Geometry* {
 }
 
 auto Scene::FindVolume(std::uint32_t volumeID) const -> const Volume* {
-    if (volumeID < fVolumes.size() && fVolumes.at(volumeID).volumeID == volumeID) {
+    if (volumeID < fVolumes.size() and fVolumes.at(volumeID).volumeID == volumeID) {
         return &fVolumes.at(volumeID);
     }
-    const auto volume{std::find_if(fVolumes.begin(), fVolumes.end(),
-                                   [&](const auto& candidate) { return candidate.volumeID == volumeID; })};
+    const auto volume{
+        std::ranges::find_if(fVolumes, [&](const auto& candidate) -> bool { return candidate.volumeID == volumeID; })};
     return volume == fVolumes.end() ? nullptr : &*volume;
 }
 
-auto Scene::FindVolume(std::uint32_t physicalVolumeID, std::uint32_t copyNo,
-                       std::uint32_t parentVolumeID) const -> const Volume* {
-    const auto volume{std::find_if(fVolumes.begin(), fVolumes.end(), [&](const auto& candidate) {
-        return candidate.physicalVolumeID == physicalVolumeID && candidate.copyNo == copyNo &&
+auto Scene::FindVolume(std::uint32_t physicalVolumeID, std::uint32_t copyNo, std::uint32_t parentVolumeID) const
+    -> const Volume* {
+    const auto volume{std::ranges::find_if(fVolumes, [&](const auto& candidate) -> bool {
+        return candidate.physicalVolumeID == physicalVolumeID and candidate.copyNo == copyNo and
                candidate.parentVolumeID == parentVolumeID;
     })};
     return volume == fVolumes.end() ? nullptr : &*volume;
 }
 
 auto Scene::VolumeMayHaveCoincidentBoundary(std::uint32_t volumeID, bool value) -> void {
-    if (volumeID < fVolumes.size() && fVolumes.at(volumeID).volumeID == volumeID) {
+    if (volumeID < fVolumes.size() and fVolumes.at(volumeID).volumeID == volumeID) {
         fVolumes[volumeID].mayHaveCoincidentBoundary = value;
         return;
     }
-    const auto volume{std::find_if(fVolumes.begin(), fVolumes.end(),
-                                   [&](const auto& candidate) { return candidate.volumeID == volumeID; })};
+    const auto volume{
+        std::ranges::find_if(fVolumes, [&](const auto& candidate) -> bool { return candidate.volumeID == volumeID; })};
     if (volume != fVolumes.end()) {
         volume->mayHaveCoincidentBoundary = value;
     }
 }
 
 auto Scene::EnsureUniqueGeometry(std::uint32_t volumeID) -> void {
-    auto volumeIterator{std::find_if(fVolumes.begin(), fVolumes.end(),
-                                     [&](const auto& candidate) { return candidate.volumeID == volumeID; })};
+    auto volumeIterator{
+        std::ranges::find_if(fVolumes, [&](const auto& candidate) -> bool { return candidate.volumeID == volumeID; })};
     if (volumeIterator == fVolumes.end()) {
         throw std::invalid_argument("cannot make geometry unique for an unknown volume");
     }
@@ -105,8 +107,8 @@ auto Scene::EnsureUniqueGeometry(std::uint32_t volumeID) -> void {
     if (geometryID >= fGeometries.size()) {
         throw std::invalid_argument("volume references an unknown geometry");
     }
-    const auto references{std::count_if(fVolumes.begin(), fVolumes.end(),
-                                        [&](const auto& candidate) { return candidate.geometryID == geometryID; })};
+    const auto references{std::ranges::count_if(
+        fVolumes, [&](const auto& candidate) -> bool { return candidate.geometryID == geometryID; })};
     if (references <= 1) {
         return;
     }
@@ -116,8 +118,8 @@ auto Scene::EnsureUniqueGeometry(std::uint32_t volumeID) -> void {
 }
 
 auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID, std::uint32_t toVolumeID) const -> const Surface* {
-    const auto binding{std::find_if(fSurfaceBindings.begin(), fSurfaceBindings.end(), [&](const auto& item) {
-        return item.fromVolumeID == fromVolumeID && item.toVolumeID == toVolumeID;
+    const auto binding{std::ranges::find_if(fSurfaceBindings, [&](const auto& item) -> bool {
+        return item.fromVolumeID == fromVolumeID and item.toVolumeID == toVolumeID;
     })};
     if (binding != fSurfaceBindings.end()) {
         return FindSurface(binding->surfaceID);
@@ -125,12 +127,12 @@ auto Scene::FindBoundarySurface(std::uint32_t fromVolumeID, std::uint32_t toVolu
 
     const auto* fromVolume{FindVolume(fromVolumeID)};
     const auto* toVolume{FindVolume(toVolumeID)};
-    if (fromVolume == nullptr || toVolume == nullptr) {
+    if (fromVolume == nullptr or toVolume == nullptr) {
         return nullptr;
     }
 
     const auto findSkinSurface{[&](const Volume* volume) -> const Surface* {
-        if (volume == nullptr || volume->skinSurfaceID == InvalidID) {
+        if (volume == nullptr or volume->skinSurfaceID == InvalidID) {
             return nullptr;
         }
         return FindSurface(volume->skinSurfaceID);

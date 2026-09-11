@@ -21,6 +21,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <limits>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -47,7 +48,7 @@ public:
         }
 
         const auto previousRotationSteps{G4Polyhedron::GetNumberOfRotationSteps()};
-        if (fMeshRotationSteps < 8 || fMeshRotationSteps > 4096) {
+        if (fMeshRotationSteps < 8 or fMeshRotationSteps > 4096) {
             throw std::invalid_argument("mesh rotation steps must be in [8, 4096]");
         }
         G4Polyhedron::SetNumberOfRotationSteps(static_cast<G4int>(fMeshRotationSteps));
@@ -65,22 +66,26 @@ public:
     }
 
 private:
-    auto AddVolume(const G4VPhysicalVolume* physicalVolume, Transform parentTransform, std::uint32_t parentVolumeID,
-                   std::uint32_t depth) -> std::uint32_t {
+    // Geant4 geometry is a physical-volume tree, so recursive traversal mirrors its ownership model.
+    // NOLINTBEGIN(misc-no-recursion)
+    auto AddVolume(const G4VPhysicalVolume* physicalVolume, const Transform& parentTransform,
+                   std::uint32_t parentVolumeID, std::uint32_t depth) -> std::uint32_t {
         if (physicalVolume == nullptr) {
             return InvalidID;
         }
         if (physicalVolume->GetLogicalVolume() == nullptr) {
             throw std::runtime_error("physical volume has no logical volume");
         }
-        if (physicalVolume->IsParameterised() || physicalVolume->IsReplicated()) {
+        if (physicalVolume->IsParameterised() or physicalVolume->IsReplicated()) {
             const auto multiplicity{physicalVolume->GetMultiplicity()};
             if (multiplicity <= 0) {
                 throw std::runtime_error("parameterised or replica volume has no copies: " +
                                          std::string{physicalVolume->GetName()});
             }
 
-            auto* mutableVolume{const_cast<G4VPhysicalVolume*>(physicalVolume)};
+            // Geant4 exposes replica transformations through a mutating API and requires restoring the volume.
+            auto* mutableVolume{
+                const_cast<G4VPhysicalVolume*>(physicalVolume)}; // NOLINT(cppcoreguidelines-pro-type-const-cast)
             const auto savedRotation{physicalVolume->GetObjectRotationValue()};
             const auto hadRotation{physicalVolume->GetObjectRotation() != nullptr};
             const auto savedTranslation{physicalVolume->GetObjectTranslation()};
@@ -88,7 +93,7 @@ private:
             G4ReplicaNavigation replicaNavigation{};
             auto* parameterisation{physicalVolume->IsParameterised() ? physicalVolume->GetParameterisation() : nullptr};
             std::uint32_t firstVolumeID{InvalidID};
-            for (int copyNo {}; copyNo < multiplicity; copyNo++) {
+            for (int copyNo{}; copyNo < multiplicity; copyNo++) {
                 mutableVolume->SetCopyNo(copyNo);
                 if (parameterisation != nullptr) {
                     parameterisation->ComputeTransformation(copyNo, mutableVolume);
@@ -135,7 +140,7 @@ private:
                                       const G4ThreeVector& translation, G4int copyNo, bool hadRotation) -> void {
         physicalVolume->SetCopyNo(copyNo);
         physicalVolume->SetTranslation(translation);
-        if (!hadRotation) {
+        if (not hadRotation) {
             physicalVolume->SetRotation(nullptr);
         } else if (physicalVolume->GetRotation() == nullptr) {
             physicalVolume->SetRotation(new G4RotationMatrix(rotation));
@@ -144,7 +149,7 @@ private:
         }
     }
 
-    auto AddVolumeInstance(const G4VPhysicalVolume* physicalVolume, Transform parentTransform,
+    auto AddVolumeInstance(const G4VPhysicalVolume* physicalVolume, const Transform& parentTransform,
                            std::uint32_t parentVolumeID, std::uint32_t depth, std::uint32_t copyNo,
                            const G4VSolid* solid, const G4Material* material) -> std::uint32_t {
         const auto transform{Compose(parentTransform, physicalVolume)};
@@ -172,15 +177,17 @@ private:
             volume.skinSurfaceID = AddSurface(skinSurface->GetSurfaceProperty());
         }
 
-        fVolumeIDs[physicalVolume].emplace_back(volume.volumeID);
-        fVolumeBounds.emplace(volume.volumeID, MakeBounds(fScene.FindGeometry(geometryID), transform));
+        const auto volumeID{volume.volumeID};
+        fVolumeIDs[physicalVolume].emplace_back(volumeID);
+        fVolumeBounds.emplace(volumeID, MakeBounds(fScene.FindGeometry(geometryID), transform));
         fScene.AddVolume(std::move(volume));
 
-        for (std::size_t i {}; i < logicalVolume->GetNoDaughters(); i++) {
-            AddVolume(logicalVolume->GetDaughter(i), transform, volume.volumeID, depth + 1);
+        for (std::size_t i{}; i < logicalVolume->GetNoDaughters(); i++) {
+            AddVolume(logicalVolume->GetDaughter(i), transform, volumeID, depth + 1);
         }
-        return volume.volumeID;
+        return volumeID;
     }
+    // NOLINTEND(misc-no-recursion)
 
     auto AddGeometry(const G4VSolid* solid, bool cache) -> std::uint32_t {
         if (solid == nullptr) {
@@ -205,14 +212,14 @@ private:
             G4int count{};
             std::array<G4Point3D, 16> points{};
             polyhedron->GetFacet(face, count, points.data());
-            if (count < 3 || count > static_cast<G4int>(points.size())) {
+            if (count < 3 or std::cmp_greater(count, points.size())) {
                 delete polyhedron;
                 throw std::runtime_error("invalid polyhedron facet for solid " + std::string{solid->GetName()});
             }
 
             const auto faceNormal{polyhedron->GetUnitNormal(face)};
             for (int point{1}; point + 1 < count; point++) {
-                const auto first{points.at(0)};
+                const auto& first{points.at(0)};
                 auto second{points.at(point)};
                 auto third{points.at(point + 1)};
                 const auto edge0{second - first};
@@ -222,7 +229,7 @@ private:
                     std::swap(second, third);
                     cross = (second - first).cross(third - first);
                 }
-                if (!(cross.mag2() > 0.0)) {
+                if (not(cross.mag2() > 0.0)) {
                     delete polyhedron;
                     throw std::runtime_error("degenerate polyhedron facet for solid " + std::string{solid->GetName()});
                 }
@@ -254,7 +261,7 @@ private:
     };
 
     static auto MakeBounds(const Geometry* geometry, const Transform& transform) -> Bounds {
-        if (geometry == nullptr || geometry->mesh.verticesMm.empty()) {
+        if (geometry == nullptr or geometry->mesh.verticesMm.empty()) {
             throw std::runtime_error("volume geometry has no mesh vertices");
         }
         Bounds bounds{};
@@ -271,9 +278,9 @@ private:
     }
 
     static auto BoundsOverlap(const Bounds& first, const Bounds& second, double tolerance) -> bool {
-        return first.min.x() <= second.max.x() + tolerance && second.min.x() <= first.max.x() + tolerance &&
-               first.min.y() <= second.max.y() + tolerance && second.min.y() <= first.max.y() + tolerance &&
-               first.min.z() <= second.max.z() + tolerance && second.min.z() <= first.max.z() + tolerance;
+        return first.min.x() <= second.max.x() + tolerance and second.min.x() <= first.max.x() + tolerance and
+               first.min.y() <= second.max.y() + tolerance and second.min.y() <= first.max.y() + tolerance and
+               first.min.z() <= second.max.z() + tolerance and second.min.z() <= first.max.z() + tolerance;
     }
 
     struct Point2 {
@@ -289,8 +296,8 @@ private:
         return {first.x - second.x, first.y - second.y};
     }
 
-    static auto TrianglePoints(const Geometry& geometry, const Volume& volume,
-                               std::size_t triangle) -> std::array<G4ThreeVector, 3> {
+    static auto TrianglePoints(const Geometry& geometry, const Volume& volume, std::size_t triangle)
+        -> std::array<G4ThreeVector, 3> {
         const auto base{3U * triangle};
         return {
             ToWorld(volume.transform, geometry.mesh.verticesMm.at(geometry.mesh.indices.at(base))),
@@ -323,7 +330,7 @@ private:
             return 0.0;
         }
         auto area{double{}};
-        for (std::size_t i {}; i < polygon.size(); i++) {
+        for (std::size_t i{}; i < polygon.size(); i++) {
             const auto next{(i + 1U) % polygon.size()};
             area += Cross2(polygon.at(i), polygon.at(next));
         }
@@ -333,10 +340,10 @@ private:
     static auto IntersectTriangles(const std::array<Point2, 3>& subject, const std::array<Point2, 3>& clip) -> double {
         std::vector<Point2> clipPolygon{clip.begin(), clip.end()};
         if (PolygonArea(clipPolygon) < 0.0) {
-            std::reverse(clipPolygon.begin(), clipPolygon.end());
+            std::ranges::reverse(clipPolygon);
         }
         std::vector<Point2> polygon{subject.begin(), subject.end()};
-        for (std::size_t i {}; i < clipPolygon.size(); i++) {
+        for (std::size_t i{}; i < clipPolygon.size(); i++) {
             if (polygon.empty()) {
                 return 0.0;
             }
@@ -374,7 +381,7 @@ private:
                                     double tolerance) -> bool {
         const auto firstNormalVector{(first.at(1) - first.at(0)).cross(first.at(2) - first.at(0))};
         const auto secondNormalVector{(second.at(1) - second.at(0)).cross(second.at(2) - second.at(0))};
-        if (!(firstNormalVector.mag2() > 0.0) || !(secondNormalVector.mag2() > 0.0)) {
+        if (not(firstNormalVector.mag2() > 0.0) or not(secondNormalVector.mag2() > 0.0)) {
             return false;
         }
         const auto firstNormal{firstNormalVector.unit()};
@@ -412,24 +419,24 @@ private:
     auto MarkCoincidentTriangles(const Volume& first, const Volume& second, double tolerance) -> bool {
         auto* firstGeometry{fScene.FindGeometry(first.geometryID)};
         auto* secondGeometry{fScene.FindGeometry(second.geometryID)};
-        if (firstGeometry == nullptr || secondGeometry == nullptr) {
+        if (firstGeometry == nullptr or secondGeometry == nullptr) {
             throw std::runtime_error("coincident volume references an unknown geometry");
         }
         const auto firstTriangleCount{firstGeometry->mesh.indices.size() / 3U};
         const auto secondTriangleCount{secondGeometry->mesh.indices.size() / 3U};
-        if (firstGeometry->mesh.triangleFlags.size() != firstTriangleCount ||
+        if (firstGeometry->mesh.triangleFlags.size() != firstTriangleCount or
             secondGeometry->mesh.triangleFlags.size() != secondTriangleCount) {
             throw std::runtime_error("geometry triangle flag count does not match triangle count");
         }
-        const auto parentChild{first.parentVolumeID == second.volumeID || second.parentVolumeID == first.volumeID};
+        const auto parentChild{first.parentVolumeID == second.volumeID or second.parentVolumeID == first.volumeID};
         std::vector<std::pair<std::size_t, std::size_t>> contacts{};
-        for (std::size_t i {}; i < firstTriangleCount; i++) {
+        for (std::size_t i{}; i < firstTriangleCount; i++) {
             const auto firstPoints{TrianglePoints(*firstGeometry, first, i)};
             const auto firstTriangleBounds{TriangleBounds(firstPoints)};
-            for (std::size_t secondTriangle {}; secondTriangle < secondTriangleCount; secondTriangle++) {
+            for (std::size_t secondTriangle{}; secondTriangle < secondTriangleCount; secondTriangle++) {
                 const auto secondPoints{TrianglePoints(*secondGeometry, second, secondTriangle)};
-                if (!BoundsOverlap(firstTriangleBounds, TriangleBounds(secondPoints), tolerance) ||
-                    !TrianglesCoincident(firstPoints, secondPoints, parentChild, tolerance)) {
+                if (not BoundsOverlap(firstTriangleBounds, TriangleBounds(secondPoints), tolerance) or
+                    not TrianglesCoincident(firstPoints, secondPoints, parentChild, tolerance)) {
                     continue;
                 }
                 contacts.emplace_back(i, secondTriangle);
@@ -443,7 +450,7 @@ private:
         fScene.EnsureUniqueGeometry(second.volumeID);
         firstGeometry = fScene.FindGeometry(first.geometryID);
         secondGeometry = fScene.FindGeometry(second.geometryID);
-        if (firstGeometry == nullptr || secondGeometry == nullptr) {
+        if (firstGeometry == nullptr or secondGeometry == nullptr) {
             throw std::runtime_error("coincident volume references an unknown geometry");
         }
         for (const auto& [firstTriangle, secondTriangle] : contacts) {
@@ -457,19 +464,19 @@ private:
         const auto tolerance{static_cast<double>(G4GeometryTolerance::GetInstance()->GetSurfaceTolerance() / mm)};
         const auto triangleTolerance{tolerance};
         const auto& volumes{fScene.Volumes()};
-        for (std::size_t first {}; first < volumes.size(); first++) {
+        for (std::size_t first{}; first < volumes.size(); first++) {
             for (std::size_t second{first + 1}; second < volumes.size(); second++) {
-                const auto sameParent{volumes.at(first).parentVolumeID != InvalidID &&
+                const auto sameParent{volumes.at(first).parentVolumeID != InvalidID and
                                       volumes.at(first).parentVolumeID == volumes.at(second).parentVolumeID};
-                const auto parentChild{volumes.at(first).parentVolumeID == volumes.at(second).volumeID ||
+                const auto parentChild{volumes.at(first).parentVolumeID == volumes.at(second).volumeID or
                                        volumes.at(second).parentVolumeID == volumes.at(first).volumeID};
-                if (!sameParent && !parentChild) {
+                if (not sameParent and not parentChild) {
                     continue;
                 }
                 const auto firstBounds{fVolumeBounds.at(volumes.at(first).volumeID)};
                 const auto secondBounds{fVolumeBounds.at(volumes.at(second).volumeID)};
                 if (BoundsOverlap(firstBounds, secondBounds, tolerance)) {
-                    if (!MarkCoincidentTriangles(volumes.at(first), volumes.at(second), triangleTolerance)) {
+                    if (not MarkCoincidentTriangles(volumes.at(first), volumes.at(second), triangleTolerance)) {
                         continue;
                     }
                     fScene.VolumeMayHaveCoincidentBoundary(volumes.at(first).volumeID, true);
@@ -495,21 +502,21 @@ private:
                 table, {"RAYLEIGH", "MIEHG", "WLSABSLENGTH", "WLSCOMPONENT", "WLSABSLENGTH2", "WLSCOMPONENT2"},
                 "material " + material->GetName());
             opticalMaterial.rindex = ReadProperty(table, "RINDEX", 1.0);
-            if (!opticalMaterial.rindex.Empty()) {
+            if (not opticalMaterial.rindex.Empty()) {
                 if (opticalMaterial.rindex.energyEv.size() != opticalMaterial.rindex.values.size()) {
                     throw std::runtime_error("material " + material->GetName() +
                                              " has mismatched RINDEX energy/value tables");
                 }
-                if (!std::all_of(opticalMaterial.rindex.energyEv.begin(), opticalMaterial.rindex.energyEv.end(),
-                                 [](const auto energy) { return std::isfinite(energy); })) {
+                if (not std::ranges::all_of(opticalMaterial.rindex.energyEv,
+                                            [](const auto energy) -> bool { return std::isfinite(energy); })) {
                     throw std::runtime_error("material " + material->GetName() + " has invalid RINDEX energies");
                 }
-                if (!std::all_of(opticalMaterial.rindex.values.begin(), opticalMaterial.rindex.values.end(),
-                                 [](const auto value) { return std::isfinite(value) && value > 0.0F; })) {
+                if (not std::ranges::all_of(opticalMaterial.rindex.values, [](const auto value) -> bool {
+                        return std::isfinite(value) and value > 0.0F;
+                    })) {
                     throw std::runtime_error("material " + material->GetName() + " has invalid RINDEX values");
                 }
-                opticalMaterial.rindexMax =
-                    *std::max_element(opticalMaterial.rindex.values.begin(), opticalMaterial.rindex.values.end());
+                opticalMaterial.rindexMax = *std::ranges::max_element(opticalMaterial.rindex.values);
             }
             opticalMaterial.groupVelocityMmPerNs = ReadProperty(table, "GROUPVEL", mm / ns);
             opticalMaterial.absLengthMm = ReadProperty(table, "ABSLENGTH", mm);
@@ -565,9 +572,9 @@ private:
 
         surface.modelValue = static_cast<float>(opticalSurface->GetModel() == glisur ? opticalSurface->GetPolish() :
                                                                                        opticalSurface->GetSigmaAlpha());
-        if (!std::isfinite(surface.modelValue) ||
-            (opticalSurface->GetModel() == glisur && (surface.modelValue < 0.0F || surface.modelValue > 1.0F)) ||
-            (opticalSurface->GetModel() == unified && surface.modelValue < 0.0F)) {
+        if (not std::isfinite(surface.modelValue) or
+            (opticalSurface->GetModel() == glisur and (surface.modelValue < 0.0F or surface.modelValue > 1.0F)) or
+            (opticalSurface->GetModel() == unified and surface.modelValue < 0.0F)) {
             throw std::runtime_error("GPU mesh backend received an invalid surface roughness "
                                      "parameter for surface " +
                                      opticalSurface->GetName());
@@ -604,7 +611,7 @@ private:
             ValidateProbability(surface.backscatter, "BACKSCATTERCONSTANT", opticalSurface->GetName());
             if (table->ConstPropertyExists("SURFACEROUGHNESS")) {
                 const auto roughness{table->GetConstProperty("SURFACEROUGHNESS")};
-                if (!std::isfinite(roughness) || roughness < 0.0) {
+                if (not std::isfinite(roughness) or roughness < 0.0) {
                     throw std::runtime_error("surface " + opticalSurface->GetName() + " has invalid SURFACEROUGHNESS");
                 }
                 surface.surfaceRoughness.energyEv.emplace_back(0.0F);
@@ -625,7 +632,7 @@ private:
         for (const auto& [volumes, surface] : *table) {
             const auto first{fVolumeIDs.find(volumes.first)};
             const auto second{fVolumeIDs.find(volumes.second)};
-            if (first == fVolumeIDs.end() || second == fVolumeIDs.end()) {
+            if (first == fVolumeIDs.end() or second == fVolumeIDs.end()) {
                 throw std::runtime_error("border surface refers to a volume outside the world");
             }
             const auto surfaceID{AddSurface(surface->GetSurfaceProperty())};
@@ -649,7 +656,7 @@ private:
         PropertyTable property{};
         const auto* vector{table->GetProperty(name)};
         if (vector == nullptr) {
-            if (!table->ConstPropertyExists(name)) {
+            if (not table->ConstPropertyExists(name)) {
                 return property;
             }
             property.energyEv.emplace_back(0.0F);
@@ -659,21 +666,22 @@ private:
         const auto length{vector->GetVectorLength()};
         property.energyEv.reserve(length);
         property.values.reserve(length);
-        for (std::size_t i {}; i < length; i++) {
+        for (std::size_t i{}; i < length; i++) {
             property.energyEv.emplace_back(static_cast<float>(vector->Energy(i) / eV));
             property.values.emplace_back(static_cast<float>((*vector)[i] / unit));
         }
         return property;
     }
 
-    static auto ValidateProbability(const PropertyTable& property, const char* propertyName,
-                                    const G4String& owner) -> void {
+    static auto ValidateProbability(const PropertyTable& property, const char* propertyName, const G4String& owner)
+        -> void {
         if (property.energyEv.size() != property.values.size()) {
             throw std::runtime_error("surface " + owner + " property " + propertyName +
                                      " has mismatched energy/value tables");
         }
-        if (!std::all_of(property.values.begin(), property.values.end(),
-                         [](const auto value) { return std::isfinite(value) && value >= 0.0F && value <= 1.0F; })) {
+        if (not std::ranges::all_of(property.values, [](const auto value) -> bool {
+                return std::isfinite(value) and value >= 0.0F and value <= 1.0F;
+            })) {
             throw std::runtime_error("surface " + owner + " property " + propertyName +
                                      " must be finite and within [0, 1]");
         }
@@ -682,13 +690,13 @@ private:
     static auto RejectUnsupportedProperties(const G4MaterialPropertiesTable* table,
                                             std::initializer_list<const char*> names, const G4String& owner) -> void {
         for (const auto* name : names) {
-            if (table->GetProperty(name) != nullptr || table->ConstPropertyExists(name)) {
+            if (table->GetProperty(name) != nullptr or table->ConstPropertyExists(name)) {
                 throw std::runtime_error("GPU optical transport does not support " + owner + " property " + name);
             }
         }
     }
 
-    static auto Compose(Transform parent, const G4VPhysicalVolume* physicalVolume) -> Transform {
+    static auto Compose(const Transform& parent, const G4VPhysicalVolume* physicalVolume) -> Transform {
         const auto rotation{physicalVolume->GetObjectRotationValue()};
         const Rotation localRotation{
             static_cast<float>(rotation.xx()), static_cast<float>(rotation.xy()), static_cast<float>(rotation.xz()),
