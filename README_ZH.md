@@ -15,65 +15,54 @@
   <a href="https://developer.nvidia.com/optix"><img src="https://img.shields.io/badge/OptiX-9.1-76B900.svg" alt="NVIDIA OptiX 9.1"></a>
 </p>
 
-G4GO 是一个以 Geant4 为物理与几何底层、使用 CUDA/OptiX 加速光学光子输运模拟的项目。
+G4GO 用 Geant4 描述粒子相互作用、探测器几何和材料，用 CUDA/OptiX 加速其中最耗时的光学光子输运。项目当前模拟一个  SiPM 阵列读出的单 CsI 闪烁晶体探测单元，并把能量沉积、光子产生数、探测数和到达时间写入 ROOT。
 
-项目面向单晶体光学探测单元，提供统一的 CPU/GPU optical backend、Geant4 event adapter 和 ROOT ntuple 输出。GPU backend 负责光学光子的批量输运，Geant4 继续负责粒子相互作用、几何定义、材料属性、事件管理和输出数据写入。
+同一套程序支持三种 optical backend：
 
-## 主要能力
-
-- 使用 Geant4 完成探测器建模、初级粒子产生、能量沉积和 CPU 光学输运。
-- 使用 CUDA 与 NVIDIA OptiX 9.1 执行 GPU 光学光子输运。
-- 支持 `auto`、`cpu` 和 `gpu` 三种 backend 选择策略。
-- 将 `CrystalHit` 和 `SensorHit` 写入 ROOT ntuple。
-- 提供光学边界单元测试、端到端 smoke test，以及包含 TOF 和传感器占用检查的 CPU/GPU 光学回归测试。
-
-## Backend
-
-| Backend | 光学光子处理 | 适用场景 | 失败行为 |
-| --- | --- | --- | --- |
-| `auto` | 构建了 GPU backend 时选择 OptiX，否则选择 Geant4 | 通用运行与 smoke test | OptiX 运行时错误直接上报 |
-| `cpu` | Geant4 原生 optical tracking | 基准输出、无 NVIDIA GPU 环境 | Geant4 错误直接上报 |
-| `gpu` | 捕获 Geant4 生成的光学光子并交给 OptiX | GPU 验证、性能测试、回归测试 | OptiX 不可用时直接失败 |
-
-## 依赖
-
-### 基础构建
-
-| 依赖 | 要求 | 用途 |
+| Backend | 如何处理光学光子 | 使用场景 |
 | --- | --- | --- |
-| CMake | 3.24 或更高 | 配置与构建 |
-| C++ compiler | 支持 C++20 | 编译 host 代码 |
-| Geant4 | 11.4.2 或兼容版本 | 物理、几何、事件与分析 |
-| Git 和网络访问 | 首次配置时可用 | 通过 `FetchContent` 获取 CLI11；启用 OptiX 时获取 headers |
+| `auto` | 构建中包含 OptiX 时使用 GPU，否则使用 Geant4 | 日常运行和快速检查 |
+| `cpu` | 全部交给 Geant4 tracking | 生成 CPU reference，或在没有 NVIDIA GPU 的机器上运行 |
+| `gpu` | Geant4 产生光子，CUDA/OptiX 批量完成输运 | GPU 验证、回归和性能测试 |
 
-### GPU backend
+## 从零开始
 
-- NVIDIA GPU 与版本号高于 R590 的 NVIDIA 驱动；OptiX runtime 由 NVIDIA 驱动提供。
-- CUDA Toolkit 12.8 或更高版本，包含 `nvcc` 和 `bin2c`。
-- OptiX 9.1 development headers 由 CMake 从 `NVIDIA/optix-dev` 获取；完整 OptiX SDK 对 G4GO 属于可选依赖。
-- `G4GO_CUDA_ARCHITECTURE` 与目标 GPU 的 compute capability 一致。
+下面的命令都从仓库根目录开始。完成构建后，运行命令统一在 `build/` 目录执行，这样 macro、测试脚本和输出路径都保持一致。
 
-### 测试与输出检查
+### 第 1 步：准备依赖
 
-- Bash 用于 CPU/GPU 回归测试编排。
-- `test/environment.sh` 用于一次检查 CMake、Geant4、CUDA、nvcc、GPU、驱动、OptiX 和 ROOT 环境。
-- ROOT 命令行程序用于回归比较，`rootls` 可用于检查输出文件。
+CPU 构建需要：
 
-## 构建
+- CMake 3.24 或更高版本；
+- 支持 C++20 的编译器；
+- Geant4 11.4.2；
+- Git 和网络访问，首次配置时 CMake 会获取 CLI11。
 
-### 检查构建环境
+GPU backend 还需要：
 
-在项目根目录执行环境检查：
+- NVIDIA GPU 和 R590 或更新的驱动；
+- CUDA Toolkit 12.8 或更高版本，并包含 `nvcc` 和 `bin2c`；
+- 与 GPU compute capability 对应的 CUDA architecture。OptiX 9.1 headers 会在首次配置时由 CMake 获取，OptiX runtime 由 NVIDIA 驱动提供。
+
+ROOT 不参与主程序构建，但运行 CPU/GPU 回归和检查 ROOT 输出时需要 ROOT 命令行工具。
+
+如果 Geant4 安装在自定义位置，先加载它的环境，例如：
+
+```bash
+source /path/to/geant4/bin/geant4.sh
+```
+
+### 第 2 步：检查当前环境
 
 ```bash
 ./test/environment.sh
 ```
 
-脚本显示当前主机探测到的实际版本和 GPU 型号，并以 `OK` 或 `FAIL` 标记项目要求是否满足。配置过 CMake 后，也可以从 `build` 目录执行复制到构建树中的 `./test/environment.sh`。
+脚本会列出实际检测到的 Geant4、CMake、CUDA、GPU、驱动、OptiX 和 ROOT，并用 `OK` 或 `FAIL` 标出是否满足当前项目要求。只准备运行 CPU backend 时，可以忽略 GPU、CUDA 和 OptiX 项的失败。
 
-### 配置 CUDA 编译器
+### 第 3 步：选择构建方式
 
-将 `CUDACXX` 设置为希望 CMake 使用的 CUDA Toolkit 中的 `nvcc`，并将同一 Toolkit 的 `bin` 目录加入 `PATH`，确保 `nvcc` 和 `bin2c` 来自同一套 CUDA 工具链：
+使用 GPU backend 时，先指定 CMake 应使用的 CUDA Toolkit：
 
 ```bash
 export CUDA_HOME=/usr/local/cuda
@@ -82,251 +71,283 @@ export PATH="${CUDA_HOME}/bin:${PATH}"
 nvcc --version
 ```
 
-`CUDA_HOME` 是便于 shell 使用的变量，CMake 用 `CUDACXX` 初始化 `CMAKE_CUDA_COMPILER`。请在第一次执行 CMake 配置前设置这些变量。切换 CUDA Toolkit 时，使用新的构建目录重新配置，避免 CMake 缓存继续使用之前的编译器；也可以在配置命令中显式传入 `-DCMAKE_CUDA_COMPILER="${CUDACXX}"`。
-
-### 启用 OptiX
+然后配置并构建。默认 architecture 是 `120`；使用其他 GPU 时，将下面的值改为对应的 compute capability，例如 RTX 4090 使用 `89`：
 
 ```bash
-mkdir -p build
-cd build
-cmake .. \
+cmake -S . -B build \
   -DG4GO_BUILD_UIVIS=OFF \
   -DG4GO_ENABLE_OPTIX=ON \
+  -DG4GO_CUDA_ARCHITECTURE=120 \
   -DCMAKE_CUDA_COMPILER="${CUDACXX}"
-cmake --build . -j
+cmake --build build -j
 ```
 
-`G4GO_CUDA_ARCHITECTURE` 使用目标 GPU 的 compute capability 数值，例如 `compute_89` 对应 `89`。
-
-### 仅使用 Geant4 backend
+只使用 Geant4 CPU backend 时，配置更简单：
 
 ```bash
-cd build
-cmake .. \
+cmake -S . -B build \
   -DG4GO_BUILD_UIVIS=OFF \
   -DG4GO_ENABLE_OPTIX=OFF
-cmake --build . -j
+cmake --build build -j
 ```
 
-### 常用 CMake 选项
+第一次配置后，CMake 会记住 CUDA compiler。切换 CUDA Toolkit 时应使用新的构建目录，或清理旧的 CMake cache 后重新配置。
 
-| 选项 | 默认值 | 说明 |
+常用配置项如下：
+
+| CMake 选项 | 默认值 | 作用 |
 | --- | --- | --- |
-| `G4GO_BUILD_UIVIS` | `ON` | 构建 Geant4 UI 与 visualization 支持 |
+| `G4GO_BUILD_UIVIS` | `ON` | 构建 Geant4 UI 和 visualization 支持 |
 | `G4GO_ENABLE_OPTIX` | `ON` | 尝试构建 CUDA/OptiX backend |
-| `G4GO_CUDA_ARCHITECTURE` | `120` | OptiX device program 的 CUDA compute architecture |
+| `G4GO_CUDA_ARCHITECTURE` | `120` | OptiX device program 的 CUDA architecture |
 | `G4GO_ENABLE_CLANG_TIDY` | `OFF` | 编译时启用 clang-tidy |
-| `BUILD_TESTING` | `ON` | 注册 CTest 测试 |
+| `BUILD_TESTING` | `ON` | 构建并注册 CTest 测试 |
 
-配置时，`scripts/` 会复制到 `build/scripts/`，测试运行文件（包括环境检查脚本）会复制到 `build/test/`。修改相关文件后重新执行 CMake 配置即可同步构建目录。
+### 第 4 步：确认程序可以运行
 
-安装可执行文件：
-
-```bash
-cd build
-cmake --install . --prefix /path/to/prefix
-```
-
-## 快速开始
-
-在构建目录运行单光子 smoke macro：
+先运行一个只发射单个光学光子的 smoke test：
 
 ```bash
 cd build
-./g4go --backend auto scripts/run_optical_test.mac
+./g4go --backend auto scripts/run_test_optics.mac
 ```
 
-使用 `--backend cpu` 或 `--backend gpu` 可显式选择 backend。
-
-启用 `G4GO_BUILD_UIVIS=ON` 后，可从包含 `vis.mac` 的目录启动交互式 visualization：
+需要确认指定 backend 时，分别运行：
 
 ```bash
-cd build/scripts
-../g4go
+./g4go --backend cpu scripts/run_test_optics.mac
+./g4go --backend gpu scripts/run_test_optics.mac
 ```
 
-## 命令行接口
+`gpu` 命令会在 OptiX 没有编入程序或 runtime 初始化失败时直接报错，因此它也适合验证 GPU 环境是否真正可用。
+
+### 第 5 步：运行一次模拟
+
+G4GO 的基本调用形式是：
 
 ```text
 g4go [OPTIONS] [macro]
 ```
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `-h, --help` | — | 显示帮助信息 |
-| `-b, --backend auto\|cpu\|gpu` | `auto` | 选择光学光子输运 backend |
-| `-s, --seed UINT64` | `0` | 设置 Geant4 和 OptiX 随机种子 |
-| `-t, --threads UINT32` | `0` | Geant4 worker 数量；`0` 表示使用检测到的 CPU core 数量 |
-| `--batch-photons UINT32` | `1000000` | GPU batch 的目标光子数 |
-| `--batch-timeout-ms UINT32` | `10` | 发射 GPU batch 前等待更多 event 的最长时间 |
-| `--max-photons UINT32` | `5000000` | 单事件允许捕获的最大光子数 |
-| `--max-bounces UINT32` | `4096` | 单光子的最大边界交互次数 |
-| `-d, --diagnostics` | disabled | 输出 capture、scheduler、CUDA stage、OptiX 和 transport counter 诊断 |
-| `--mesh-rotation-steps UINT32` | `360` | Geant4 polyhedron 旋转采样数，有效范围为 8 到 4096 |
-| `macro` | — | Geant4 macro 文件；无 UI 构建时必须提供 |
+例如，用 6 个 Geant4 worker 在 CPU backend 上运行随仓库提供的电子束回归 macro：
 
-内置 macro：
-
-| 文件 | 用途 | Analysis 文件名 |
-| --- | --- | --- |
-| `scripts/run_optical_test.mac` | 从晶体内部发射一个确定性的 optical photon | `run_optical_test.root` |
-| `scripts/run_eminus_regression.mac` | 5 MeV 电子束 CPU/GPU 回归，共 50000 个 event | `run_eminus_regression.root` |
-| `scripts/run_cpu_scaling.mac` | 1000-event CPU partial scaling 测量 | `run_cpu_scaling.root` |
-| `scripts/vis.mac` | 交互式几何与轨迹可视化 | `vis.root` |
-
-本文所有运行命令都在 `build` 目录执行，因此 `scripts/...` 指向 `build/scripts/...`，`test/...` 指向 `build/test/...`。ROOT 文件写入当前工作目录，文件名由 macro 中的 `/analysis/setFileName` 确定。
-
-
-
-## 探测器模型
-
-当前 `DetectorConstruction` 构造一个单晶体光学探测单元：
-
-- `3 cm × 3 cm × 8 cm` 的 `G4_CESIUM_IODIDE` 晶体。
-- 晶体光学参数包含折射率、吸收长度、闪烁发光谱、闪烁产额和时间常数。
-- 晶体前端依次连接硅脂耦合层、环氧窗口和 `3 mm × 3 mm × 0.1 mm` SiPM。
-- 晶体与包覆层、世界体及 SiPM 之间配置 optical surface 和探测效率曲线。
-
-材料属性和光学表面当前集中定义在 `src/detector/DetectorConstruction.cpp`。
-
-## ROOT 输出
-
-ROOT 文件包含两个 tree。tree 名使用 PascalCase，branch 名使用 lowerCamelCase；`Edep` 和 `nOptPho` 保留项目约定名称。
-
-| Tree | Branch | 含义 |
-| --- | --- | --- |
-| `CrystalHit` | `eventID` | Geant4 event ID |
-| `CrystalHit` | `moduleID` | 晶体模块 ID |
-| `CrystalHit` | `Edep` | 晶体能量沉积 |
-| `CrystalHit` | `nOptPho` | 该 event 的 SiPM 探测光子数 |
-| `SensorHit` | `eventID` | Geant4 event ID |
-| `SensorHit` | `sensorID` | event 内各 detection 的 SiPM copy number vector |
-| `SensorHit` | `timeOfFlight` | event 内各 detection 的光子到达时间 vector |
-
-`SensorHit` 为每个至少包含一个 detection 的 event 写入一行。`sensorID` 与 `timeOfFlight` vector 长度相同，
-相同索引的元素共同描述一次 detection；零 detection 的 event 不产生记录。
-
-## 架构
-
-```text
-G4GO/
-├── cmake/                  # CMake helper scripts
-├── include/g4go/
-│   ├── detector/           # 探测器公开接口
-│   ├── optical/            # backend 无关的光学数据结构与接口
-│   └── simulation/         # Geant4 action 公开接口
-├── scripts/                # Geant4 macro
-├── src/
-│   ├── detector/           # 几何、材料与 sensitive detector
-│   ├── optical/
-│   │   ├── geant4/         # event adapter、scene exporter 与 batch service
-│   │   └── optix/          # OptiX host/device transport
-│   └── simulation/         # run、event 与 analysis action
-└── test/                   # 单元、smoke 与回归测试
+```bash
+cd build
+./g4go --backend cpu --threads 6 scripts/run_regression_eminus.mac
 ```
 
-Geant4 是几何真值来源；scene exporter 将 solid 转换为 OptiX mesh，并保留 placement、material、surface、copy number 和 parent 信息。
+切换到 GPU 只需更换 backend：
 
-## GPU 光学范围与限制
+```bash
+./g4go --backend gpu --threads 6 scripts/run_regression_eminus.mac
+```
 
-当前 GPU backend 支持以下边界能力：
+仓库内置 macro 的用途如下：
 
-- `glisur` 和 `unified` surface model 下的 `polished` 与 `ground` finish。
-- `dielectric_metal` 和 `dielectric_dielectric` surface type。
-- 包含 S/P 偏振分量的 Fresnel 反射、折射和全反射。
-- `REFLECTIVITY`、`TRANSMITTANCE` 与 absorption 路径中的 `EFFICIENCY`。
-- GLISUR polish、UNIFIED sigma-alpha、specular lobe/spike/backscatter 参数。
+| Macro | 用途 | 规模与输出 |
+| --- | --- | --- |
+| `scripts/run_test_optics.mac` | 单光子 smoke test | 1 个 event，不写 ROOT |
+| `scripts/run_regression_eminus.mac` | CPU/GPU 正确性回归 | 5000 个 event，写入 `run_regression_eminus/` |
+| `scripts/run_benchmark_eminus.mac` | 完整性能测量 | 50000 个 event，写入 `run_benchmark_eminus/` |
+| `scripts/run_cpu_scaling.mac` | CPU scaling 估算 | 5000 个 event，写入 `run_cpu_scaling/` |
+| `scripts/vis.mac` | 交互式几何和轨迹显示 | UI/visualization 构建使用 |
 
-scene export 会显式拒绝当前未实现的 Rayleigh、Mie、WLS、LUT、DAVIS、dichroic、coated surface type/model 及 painted finish。达到 `--max-bounces` 的 photon 计入 `truncated`；无效状态计入 `invalid`，两者都会出现在 GPU backend 运行统计中。
+修改了 `scripts/` 或 `test/` 下的运行文件后，重新执行 `cmake -S . -B build`，把当前版本复制到 `build/scripts/` 和 `build/test/`。
 
-## 测试
+### 第 6 步：找到并查看输出
 
-构建完成后，在 `build` 目录运行快速测试：
+分析 macro 会在当前目录创建同名输出目录。由于 G4GO 关闭了 ROOT ntuple merging，多线程运行会得到一组 worker 文件：
+
+```text
+build/run_regression_eminus/
+├── run_regression_eminus_t0.root
+├── run_regression_eminus_t1.root
+└── ...
+```
+
+可以用 ROOT 查看文件内容：
+
+```bash
+rootls run_regression_eminus/run_regression_eminus_t0.root
+```
+
+每个 ROOT 文件包含两个 tree：
+
+| Tree | Branch | 内容 |
+| --- | --- | --- |
+| `CrystalHit` | `eventID`, `moduleID` | event 和晶体模块标识 |
+| `CrystalHit` | `Edep` | 晶体能量沉积 |
+| `CrystalHit` | `nOptPho` | 该 event 的 SiPM 探测光子数 |
+| `CrystalHit` | `nGenOptPho` | 该 event 的光学光子产生数 |
+| `SensorHit` | `eventID` | Geant4 event ID |
+| `SensorHit` | `sensorID` | 每次 detection 对应的 SiPM copy number vector |
+| `SensorHit` | `timeOfFlight` | 每次 detection 对应的到达时间 vector |
+
+`SensorHit` 只为至少发生一次 detection 的 event 写一行。`sensorID` 和 `timeOfFlight` 长度相同，相同下标共同描述一次 detection。
+
+## 常用工作流
+
+### 快速测试
+
+构建完成后先跑耗时较短的单元测试和 smoke test：
 
 ```bash
 cd build
 ctest --output-on-failure -L 'unit|smoke'
 ```
 
-| CTest | 标签 | 内容 |
-| --- | --- | --- |
-| `g4go_optical_boundary` | `unit;cpu` | Fresnel、Brewster 角、全反射、表面概率和 Lambertian 方向 |
-| `g4go_smoke_auto` | `smoke;integration;auto` | 单光子端到端初始化与输运 |
-| `g4go_noptpho_regression` | `regression;gpu;slow` | `GPU-1T-full` 和默认的 `GPU-6T-full` 分别与缓存或按需生成的 `CPU-6T-full` reference 比较 `Edep`、`nOptPho`、TOF 和传感器占用率 |
+当前包含 `g4go_optical_boundary` 和 `g4go_smoke_auto` 两个测试。CPU/GPU 回归耗时更长，由独立脚本运行。
 
-### 性能基准
+### CPU/GPU 正确性回归
 
-`test/benchmark.sh` 负责全部性能测量。它依次运行 `CPU-1T-partial`、`CPU-NT-partial`、`CPU-NT-full`、`GPU-1T-full` 和 `GPU-NT-full`，再输出实测 CPU scaling ratio 与线程数匹配的 GPU 加速比；脚本不会调用 ROOT 回归比较器。
+```bash
+cd build
+./test/regression.sh --threads 6
+```
+
+脚本会生成或复用同线程数的 CPU reference，再分别运行 `GPU-1T` 和 `GPU-6T`，比较 `Edep`、`nOptPho`、TOF 和 sensor occupancy。完整日志可用 `--verbose` 实时显示：
+
+```bash
+./test/regression.sh --threads 6 --verbose
+```
+
+结果保存在 `build/test/regression/<timestamp>/`：
+
+- `regression_summary.txt` 给出总结果和各项统计门限；
+- `figures/` 保存比较图；
+- `logs/` 保存每个阶段的日志；
+- `gpu_1t/` 和 `gpu_6t/` 保存本次 GPU ROOT dataset。
+
+CPU reference 缓存在 `build/test/regression/cpu_6t/`。可执行文件、macro、线程数或 event 数变化时，脚本会自动重新生成缓存。
+
+### 性能 benchmark
 
 ```bash
 cd build
 ./test/benchmark.sh --threads 6
 ```
 
-默认由操作系统调度 CPU。需要 GPU-local 自动绑核时使用 `--cpu-affinity auto`；该模式调用 `test/cpu_affinity.sh`，按 GPU NUMA、cpuset 和 physical core topology 为 worker 加上默认预留的 1 个辅助核。也可以直接指定 taskset CPU list：
+benchmark 依次测量 CPU partial scaling、CPU full run、GPU-1T full run 和 GPU-6T full run，再计算线程数匹配的加速比。它只负责性能测量，不执行 ROOT 正确性比较。
+
+默认交给操作系统调度 CPU。需要自动选择 GPU 所在 NUMA node 的 physical cores 时使用：
 
 ```bash
 ./test/benchmark.sh --threads 6 --cpu-affinity auto
+```
+
+也可以直接传给 `taskset` 一个 CPU list：
+
+```bash
 ./test/benchmark.sh --threads 6 --cpu-affinity 0-6
 ```
 
-benchmark 使用以下计算关系：
+结果保存在 `build/test/benchmark/<timestamp>/`。`benchmark_summary.txt` 记录运行配置、wall time、GPU transport 时间和加速比；需要 CUDA、scheduler 和 OptiX 的细分诊断时运行：
 
-  ```text
-   scaling ratio = CPU-1T-partial 时间 / CPU-NT-partial 时间
-   估算的 CPU-1T-full 时间 = CPU-NT-full 时间 × scaling ratio
-   GPU-1T 加速比 = 估算的 CPU-1T-full 时间 / GPU-1T-full 时间
-   GPU-NT 加速比 = CPU-NT-full 时间 / GPU-NT-full 时间
-  ```
+```bash
+G4GO_PERF_DIAGNOSTICS=1 ./test/benchmark.sh --threads 6
+```
 
-每次运行的 ROOT 输出和日志保存在 `build/test/benchmark/` 的时间戳目录中。`benchmark_summary.txt` 记录 CPU scaling、端到端 wall time、GPU transport time、ROOT output time 和加速比。设置 `G4GO_PERF_DIAGNOSTICS=1` 后还会生成 `performance_summary.txt`，记录 CUDA、scheduler、OptiX 阶段和 transport counter。
+此时同一结果目录还会生成 `performance_summary.txt`。加速比的配对关系是 `GPU-1T` 对 estimated `CPU-1T`，`GPU-6T` 对 `CPU-6T`。
 
-GPU phase 包含三类计时：
+### 交互式 visualization
 
-- `total_wall_time_s`：benchmark 驱动器测量的端到端进程 wall time。
-- `gpu_optical_transport_time_ms`：光学 backend 报告的累计 `transport_ms`，表示 transport pipeline 耗时，不等同于单独的 OptiX kernel 耗时。
-- `analysis_root_output_time_ms`：最终 ROOT `Write()` 和 `CloseFile()` 阶段的 `root_output_ms`。
-
-`taskset` 只限制整个进程可运行的 CPU，不保证某个核只运行 scheduler、master、CUDA helper 或 ROOT 线程。
-
-### CPU/GPU 回归
-
-`test/regression.sh` 负责正确性测试。它生成或复用缓存的 `CPU-NT` ROOT reference，运行 `GPU-1T` 和 `GPU-NT`，再比较 `Edep`、`nOptPho`、TOF 和传感器占用率；脚本不计算时间和加速比。
-
-使用默认 6 个 worker，或指定另一组匹配的 worker 数量：
+配置时启用 `G4GO_BUILD_UIVIS=ON`，构建后从 `build/` 目录启动。程序会自动加载 `scripts/vis.mac`：
 
 ```bash
 cd build
-./test/regression.sh
-./test/regression.sh --threads 4
+./g4go
 ```
 
-CTest 包装默认流程：
+### 静态检查
+
+项目提供两种 clang-tidy 运行方式。需要在每次编译 C++ 文件时同步检查，可以通过 CMake 启用：
 
 ```bash
-cd build
-ctest --output-on-failure \
-  -R '^g4go_noptpho_regression$'
+cmake -S . -B build -DG4GO_ENABLE_CLANG_TIDY=ON
+cmake --build build -j
 ```
 
-该测试要求两组 GPU 比较均通过，并检查对应的 ROOT 报告、汇总文件和图片。需要查看完整日志时，可直接运行：
+该选项会将 `.clang-tidy` 配置应用到所有项目 C++ target。`clang-tidy` 未安装时，CMake 配置会直接报错。
+
+需要一次检查整个项目时，安装 `clang-tidy` 和 `run-clang-tidy`，准备好普通 CMake 构建目录后执行：
 
 ```bash
-cd build
-./test/regression.sh --verbose
+cmake -S . -B build
+./test/static_analysis.sh --check
 ```
 
-每次运行的产物保存在 `build/test/regression/` 下的时间戳目录中；回归报告以 `gpu_1t` 和 `gpu_Nt` 文件名前缀区分，其中 `N` 是指定的 worker 数量，图片保存在 `figures/`，日志保存在 `logs/`。
+检查脚本使用 `build/compile_commands.json` 分析项目 C/C++ 文件。`--fix` 还需要 `clang-apply-replacements`，它会应用 `.clang-tidy` 中稳定且可自动修复的规则，使用前应先检查工作区状态。
 
-## WSL2 OptiX runtime 排障
+### 提交前格式检查
 
-WSL2 使用 Windows 主机 NVIDIA 驱动和 WSL 内的 CUDA Toolkit。环境准备参考 [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。缺少 `optixQueryFunctionTable` symbol 时会出现：
+`.pre-commit-config.yaml` 配置了 `clang-format` hook，用于在提交前检查并格式化暂存的 C/C++ 文件。安装并启用 pre-commit：
+
+```bash
+pipx install pre-commit
+pre-commit install
+```
+
+安装 hook 后，执行 `git commit` 时会自动运行。第一次运行会下载配置中指定的 clang-format 环境。也可以在提交前手动检查仓库中的所有文件：
+
+```bash
+pre-commit run --all-files
+```
+
+## 命令行参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `-b, --backend auto\|cpu\|gpu` | `auto` | 选择 optical backend |
+| `-s, --seed UINT64` | `0` | 设置 Geant4 和 OptiX 随机种子 |
+| `-t, --threads UINT32` | `0` | Geant4 worker 数；`0` 使用检测到的 CPU core 数量 |
+| `--batch-photons UINT32` | `1000000` | 每个 GPU batch 的目标光子数 |
+| `--batch-timeout-ms UINT32` | `10` | GPU batch 等待更多 event 的最长时间 |
+| `--max-photons UINT32` | `5000000` | 单个 event 最多捕获的光子数 |
+| `--max-bounces UINT32` | `4096` | 单个光子的最大边界交互次数 |
+| `-d, --diagnostics` | 关闭 | 输出 optical transport 性能诊断 |
+| `--mesh-rotation-steps UINT32` | `360` | Geant4 polyhedron 旋转采样数，范围为 8～4096 |
+| `macro` | — | Geant4 macro；关闭 UI 的构建必须提供 |
+
+完整且与当前二进制一致的帮助可通过 `./g4go --help` 查看。
+
+## 当前探测器模型
+
+当前几何是一个可独立运行的单晶体探测单元：
+
+- 主体为 `3 cm × 3 cm × 8 cm` 的 `G4_CESIUM_IODIDE` 晶体；
+- 晶体前端依次放置 `0.1 mm` 硅脂耦合层和 `0.2 mm` 环氧窗口；
+- 读出端为 `8 × 8` SiPM 阵列，每个单元尺寸为 `3 mm × 3 mm × 0.1 mm`；
+- 晶体包含折射率、吸收长度、闪烁光谱、产额和时间常数，**SiPM surface 包含随波长变化的光子探测效率（PDE）**。
+
+几何、材料和 optical surface 的当前定义集中在 `src/detector/DetectorConstruction.cpp`。修改探测器时，应同时检查 CPU Geant4 输运和 GPU scene export 是否支持所使用的 optical process 与 surface model。
+
+## 项目结构与职责
+
+```text
+G4GO/
+├── include/g4go/          # 对外头文件
+├── src/
+│   ├── detector/          # 几何、材料和 sensitive detector
+│   ├── optical/geant4/    # event adapter、scene export 和 batch scheduling
+│   ├── optical/optix/     # OptiX host/device transport
+│   └── simulation/        # Geant4 actions 和 ROOT analysis
+├── scripts/               # 可直接运行的 Geant4 macro
+└── test/                  # 单元测试、回归、benchmark 和环境工具
+```
+
+Geant4 始终是几何和材料的真值来源。GPU backend 启动时，scene exporter 把 Geant4 solid 转成 OptiX mesh，并保留 placement、material、surface、copy number 和父子关系；Geant4 继续负责非光学粒子的物理过程和 event 生命周期。
+
+当前 GPU 边界输运支持 `glisur`/`unified` model、`polished`/`ground` finish、`dielectric_metal`/`dielectric_dielectric` surface，以及带偏振的 Fresnel 反射、折射、全反射和常用表面概率属性。Rayleigh、Mie、WLS、LUT、DAVIS、dichroic、coated surface 和 painted finish 等尚未实现的配置会在 scene export 阶段明确报错。
+
+## WSL2 下的 OptiX 问题
+
+WSL2 使用 Windows 主机驱动提供的 OptiX runtime。出现下面的错误时，通常是 Windows NVIDIA 驱动中的 `libnvoptix` 版本过旧：
 
 ```text
 optixInit failed: OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND
 ```
 
-检查驱动、Toolkit 和 OptiX loader：
+检查当前环境：
 
 ```bash
 nvidia-smi
@@ -334,26 +355,31 @@ nvcc --version
 nm -D /usr/lib/wsl/lib/libnvoptix.so.1 | rg optixQueryFunctionTable
 ```
 
-缺少该 symbol 时更新 Windows NVIDIA 驱动，在 PowerShell 执行 `wsl --shutdown`，重新打开 WSL 后再次运行 GPU smoke test。
+缺少 `optixQueryFunctionTable` 时，更新 Windows NVIDIA 驱动，在 PowerShell 执行 `wsl --shutdown`，重新进入 WSL 后再次运行 GPU smoke test。环境准备可参考 [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。
 
 ## 贡献
 
-提交 issue 或 pull request 时请说明问题背景、复现方式、backend、Geant4/CUDA/OptiX 版本和验证输出。代码改动应保持模块边界，补充与改动直接相关的测试，并在提交前运行：
+提交 issue 或 pull request 时，请附上复现步骤、使用的 backend、Geant4/CUDA/OptiX 版本和验证结果。提交前至少运行与改动相关的测试以及：
 
 ```bash
-cd build
 git diff --check
-ctest --output-on-failure -L 'unit|smoke'
 ```
 
-提交信息遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)，例如：
+Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/). Choose a type that matches the purpose of the change:
 
-```text
-fix(optical): preserve photon polarization across reflection
-```
+- `feat`: add a new feature;
+- `fix`: fix a bug;
+- `docs`: change documentation only;
+- `style`: change formatting or style without affecting code meaning;
+- `refactor`: restructure code without fixing a bug or adding a feature;
+- `perf`: improve performance;
+- `test`: add missing tests or correct existing tests;
+- `build`: change the build system or external dependencies;
+- `ci`: change continuous-integration configuration or scripts;
+- `revert`: revert a previous commit.
 
 ## 许可证
 
 Copyright 2026 Siyuan Chen
 
-本项目采用 [Apache License 2.0](LICENSE)。完整许可条款见仓库根目录的 [LICENSE](LICENSE) 文件。
+本项目采用 [Apache License 2.0](LICENSE)。完整条款见仓库根目录的 [LICENSE](LICENSE)。
