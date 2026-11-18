@@ -156,7 +156,7 @@ cd build
 
 ### 第 6 步：找到并查看输出
 
-分析 macro 会在当前目录创建同名输出目录。由于 G4GO 关闭了 ROOT ntuple merging，多线程运行会得到一组 worker 文件：
+分析宏会在指定的父目录下创建与输出文件主名相同的目录。例如，`results/beam.root` 的输出位于 `results/beam/`。同一进程中，编号大于零的 run 会在文件主名后加上 `_r<runID>`，以便分别保留每次运行的数据。多线程运行按 worker 写入 ROOT 文件。
 
 ```text
 build/run_regression_eminus/
@@ -196,7 +196,13 @@ cd build
 ctest --output-on-failure -L 'unit|smoke'
 ```
 
-当前包含 `g4go_optical_boundary` 和 `g4go_smoke_auto` 两个测试。CPU/GPU 回归耗时更长，由独立脚本运行。
+在已加载 PyROOT 的环境中，从 `build/` 运行以下命令可检查同一后端的逐事件复现性。检查 Geant4 输运时使用 `--backend cpu`。
+
+```bash
+python3 test/seed_reproducibility.py --backend gpu
+```
+
+脚本使用种子 1234，以 1、2、6 个工作线程运行电子束，逐事件比较能量沉积、生成与探测光子数，并按记录顺序核对每个传感器编号和到达时间。脚本输出的目录内含逐事件 CSV、ROOT 文件和日志。修复事件播种逻辑后，同一种子生成的结果会与历史版本有所不同。
 
 ### CPU/GPU 正确性回归
 
@@ -280,7 +286,7 @@ cmake -S . -B build
 
 ### 提交前格式检查
 
-`.pre-commit-config.yaml` 配置了 `clang-format` hook，用于在提交前检查并格式化暂存的 C/C++ 文件。安装并启用 pre-commit：
+`.pre-commit-config.yaml` 配置了 `clang-format` hook，用于在提交前检查并格式化暂存的 C、C++ 和 CUDA 文件。安装并启用 pre-commit：
 
 ```bash
 pipx install pre-commit
@@ -341,7 +347,7 @@ Geant4 始终是几何和材料的真值来源。GPU backend 启动时，scene e
 
 ## WSL2 下的 OptiX 问题
 
-WSL2 使用 Windows 主机驱动提供的 OptiX runtime。出现下面的错误时，通常是 Windows NVIDIA 驱动中的 `libnvoptix` 版本过旧：
+WSL2 中，下面的错误表明当前加载的库缺少 OptiX 所需的入口。
 
 ```text
 optixInit failed: OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND
@@ -352,10 +358,10 @@ optixInit failed: OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND
 ```bash
 nvidia-smi
 nvcc --version
-nm -D /usr/lib/wsl/lib/libnvoptix.so.1 | rg optixQueryFunctionTable
+./test/environment.sh
 ```
 
-缺少 `optixQueryFunctionTable` 时，更新 Windows NVIDIA 驱动，在 PowerShell 执行 `wsl --shutdown`，重新进入 WSL 后再次运行 GPU smoke test。环境准备可参考 [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。
+环境检查通过 Python 3 按当前动态库搜索路径加载 `libnvoptix.so.1` 并查找 `optixQueryFunctionTable`。请在运行 G4GO 的终端检查 `LD_LIBRARY_PATH`，再执行 GPU 冒烟测试。环境准备可参考 [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)。
 
 ## 贡献
 

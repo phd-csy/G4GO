@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -uo pipefail
+set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 build_dir="$(cd -- "${script_dir}/.." && pwd)"
@@ -25,7 +25,7 @@ usage() {
 
 while (($# > 0)); do
     case "$1" in
-    -t|--threads)
+    -t | --threads)
         if (($# < 2)); then
             echo "Missing value for --threads" >&2
             exit 1
@@ -33,11 +33,11 @@ while (($# > 0)); do
         regression_threads="$2"
         shift 2
         ;;
-    -v|--verbose)
+    -v | --verbose)
         verbose=1
         shift
         ;;
-    -h|--help)
+    -h | --help)
         usage
         exit 0
         ;;
@@ -56,7 +56,7 @@ if [[ ! "$regression_threads" =~ ^[1-9][0-9]*$ ]] || ((regression_threads < 2));
     echo "--threads must be an integer of at least 2: $regression_threads" >&2
     exit 1
 fi
-if [[ ! "$batch_timeout_ms" =~ ^[0-9]+$ ]] || ((batch_timeout_ms > 10000)); then
+if [[ ! "$batch_timeout_ms" =~ ^[0-9]+$ ]] || ((10#$batch_timeout_ms > 10000)); then
     echo "G4GO_BATCH_TIMEOUT_MS must be an integer from 0 to 10000: $batch_timeout_ms" >&2
     exit 1
 fi
@@ -116,8 +116,11 @@ g4go_sha256="$("$sha256sum_executable" "$g4go" | awk '{print $1}')"
 regression_macro_sha256="$("$sha256sum_executable" "$regression_macro" | awk '{print $1}')"
 
 mkdir -p "$regression_dir" "$logs_dir" "$figures_dir"
-cd "$regression_dir" || exit 1
-: > "$regression_log"
+cd "$run_dir" || exit 1
+# Keep the shared CPU reference stable until both ROOT comparisons finish.
+exec {cache_lock}>"${cpu_reference_dir}.lock"
+flock -x "$cache_lock"
+: >"$regression_log"
 
 exec > >(tee -a "$regression_log") 2>&1
 
@@ -137,9 +140,9 @@ run_logged() {
     shift
     if ((verbose)); then
         "$@" 2>&1 | tee "$log_file"
-        return "${PIPESTATUS[0]}"
+    else
+        "$@" 2>&1 | tee "$log_file" | awk '/G4WT/ { print; fflush() }'
     fi
-    "$@" > >(tee "$log_file" | awk '/G4WT/ { print; fflush() }') 2>&1
 }
 
 has_root_worker_output() {
@@ -171,12 +174,13 @@ read_cache_value() {
 }
 
 write_cpu_cache() {
+    (cd "$cpu_reference_dir" && "$sha256sum_executable" -- run_regression_eminus_t*.root >workers.sha256)
     {
         echo "g4go_sha256=${g4go_sha256}"
         echo "regression_macro_sha256=${regression_macro_sha256}"
         echo "threads=${regression_threads}"
         echo "events=${target_events}"
-    } > "$cpu_cache_file"
+    } >"$cpu_cache_file"
 }
 
 run_phase() {
@@ -188,20 +192,23 @@ run_phase() {
     local event_count="$6"
     shift 6
 
-    rm -rf -- "$output_directory" "$destination_directory"
     echo "[${phase_name}] RUN events=${event_count}"
     local start_ns elapsed_seconds
     start_ns="$(date +%s%N)"
-    run_logged "$log_file" "$@"
-    local command_status="$?"
+    local command_status=0
+    run_logged "$log_file" "$@" || command_status=$?
     if ((command_status != 0)); then
         echo "[${phase_name}] FAIL events=${event_count} exit_code=${command_status}"
         fail_test "$command_status"
     fi
-    elapsed_seconds="$(format_duration "$(( $(date +%s%N) - start_ns ))")"
+    elapsed_seconds="$(format_duration "$(($(date +%s%N) - start_ns))")"
     if ! has_root_worker_output "$output_directory" "$output_stem"; then
         echo "[${phase_name}] ROOT worker output is missing: ${output_directory}/${output_stem}_t*.root"
         fail_test 1
+    fi
+    if [[ "$destination_directory" == "$cpu_reference_dir" ]]; then
+        rm -f -- "$cpu_cache_file"
+        rm -rf -- "$cpu_reference_dir"
     fi
     mv -- "$output_directory" "$destination_directory" || fail_test 1
     echo "[${phase_name}] PASS events=${event_count} wall time: ${elapsed_seconds} " \
@@ -216,12 +223,8 @@ run_comparison() {
     local compare_call summary_file figure_name
 
     compare_call="${compare_macro}(\"${cpu_reference_dataset}\",\"${gpu_dataset}\",\"${run_dir}\")"
-    run_logged "$log_file" "$root_executable" -l -b -q "$compare_call"
-    local command_status="$?"
-    if ((command_status != 0)); then
-        echo "[${phase_name}] FAIL exit_code=${command_status}"
-        return "$command_status"
-    fi
+    local command_status=0
+    run_logged "$log_file" "$root_executable" -l -b -q "$compare_call" || command_status=$?
 
     summary_file="${run_dir}/${label}_regression_summary.txt"
     mv -- "${run_dir}/regression_summary.txt" "$summary_file" || return 1
@@ -229,6 +232,10 @@ run_comparison() {
         mv -- "${figures_dir}/${figure_name}" \
             "${figures_dir}/${label}_${figure_name}" || return 1
     done
+    if ((command_status != 0)); then
+        echo "[${phase_name}] FAIL exit_code=${command_status}"
+        return "$command_status"
+    fi
     [[ -s "$summary_file" ]] || return 1
     echo "[${phase_name}] PASS"
 }
@@ -237,10 +244,12 @@ echo "[regression] target_events=${target_events} threads=${regression_threads}"
 
 cpu_reference_source=cached
 if ! has_root_worker_output "$cpu_reference_dir" run_regression_eminus ||
-   [[ "$(read_cache_value g4go_sha256)" != "$g4go_sha256" ]] ||
-   [[ "$(read_cache_value regression_macro_sha256)" != "$regression_macro_sha256" ]] ||
-   [[ "$(read_cache_value threads)" != "$regression_threads" ]] ||
-   [[ "$(read_cache_value events)" != "$target_events" ]]; then
+    [[ "$(read_cache_value g4go_sha256)" != "$g4go_sha256" ]] ||
+    [[ "$(read_cache_value regression_macro_sha256)" != "$regression_macro_sha256" ]] ||
+    [[ "$(read_cache_value threads)" != "$regression_threads" ]] ||
+    [[ "$(read_cache_value events)" != "$target_events" ]] ||
+    [[ ! -s "$cpu_reference_dir/workers.sha256" ]] ||
+    ! (cd "$cpu_reference_dir" && "$sha256sum_executable" --check --status workers.sha256); then
     run_phase "cpu-${regression_threads}t" "$cpu_log" run_regression_eminus run_regression_eminus \
         "$cpu_reference_dir" "$target_events" \
         "$g4go" --backend cpu --threads "$regression_threads" \
@@ -301,7 +310,7 @@ fi
         "Optical comparison: GPU-${regression_threads}T vs CPU-${regression_threads}T" \
         '--------------------------------------------------'
     cat "${run_dir}/gpu_${regression_threads}t_regression_summary.txt"
-} > "${run_dir}/regression_summary.txt"
+} >"${run_dir}/regression_summary.txt"
 rm -f -- "${run_dir}/gpu_1t_regression_summary.txt" \
     "${run_dir}/gpu_${regression_threads}t_regression_summary.txt"
 

@@ -1,5 +1,5 @@
 #include "OptiXBoundaryPhysics.cuh"
-#include "g4go/optical/PhotonTransport.hpp"
+#include "OptiXDeviceData.cuh"
 #include "g4go/optical/Scene.hpp"
 
 #include <cmath>
@@ -13,12 +13,7 @@
 
 auto main() -> int {
     using G4GO::Optical::DeviceVector3;
-    using G4GO::Optical::InvalidID;
     using G4GO::Optical::Scene;
-    using G4GO::Optical::Surface;
-    using G4GO::Optical::SurfaceFinish;
-    using G4GO::Optical::SurfaceModel;
-    using G4GO::Optical::SurfaceType;
     using G4GO::Optical::Volume;
     namespace Physics = G4GO::Optical::BoundaryPhysics;
 
@@ -72,7 +67,7 @@ auto main() -> int {
             require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.05F) ==
                         Physics::SurfaceOutcome::SurfaceInteraction,
                     "reflectivity must select surface interaction below R");
-            require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.75F) ==
+            require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.8F) ==
                         Physics::SurfaceOutcome::SurfaceInteraction,
                     "reflectivity must include the upper R threshold");
             require(Physics::ClassifySurface(0.8F, 0.1F, true, true, 0.85F) == Physics::SurfaceOutcome::DirectTransmit,
@@ -102,66 +97,23 @@ auto main() -> int {
 
         {
             Scene scene{};
-            Surface parentSkin{};
-            parentSkin.name = "parent-skin";
-            parentSkin.type = SurfaceType::DielectricDielectric;
-            parentSkin.model = SurfaceModel::Unified;
-            parentSkin.finish = SurfaceFinish::Polished;
-            const auto parentSkinID{scene.AddSurface(std::move(parentSkin))};
+            const auto parentSkinID{scene.AddSurface({.name = "parent-skin"})};
+            const auto daughterSkinID{scene.AddSurface({.name = "daughter-skin"})};
+            const auto siblingSkinID{scene.AddSurface({.name = "sibling-skin"})};
+            const auto parent{scene.AddVolume({.skinSurfaceID = parentSkinID})};
+            const auto daughter{scene.AddVolume({.parentVolumeID = parent, .skinSurfaceID = daughterSkinID})};
+            const auto sibling{scene.AddVolume({.parentVolumeID = parent, .skinSurfaceID = siblingSkinID})};
 
-            Surface daughterSkin{};
-            daughterSkin.name = "daughter-skin";
-            daughterSkin.type = SurfaceType::DielectricDielectric;
-            daughterSkin.model = SurfaceModel::Unified;
-            daughterSkin.finish = SurfaceFinish::Polished;
-            const auto daughterSkinID{scene.AddSurface(std::move(daughterSkin))};
-
-            Surface siblingSkin{};
-            siblingSkin.name = "sibling-skin";
-            siblingSkin.type = SurfaceType::DielectricDielectric;
-            siblingSkin.model = SurfaceModel::Unified;
-            siblingSkin.finish = SurfaceFinish::Polished;
-            const auto siblingSkinID{scene.AddSurface(std::move(siblingSkin))};
-
-            Surface border{};
-            border.name = "border";
-            border.type = SurfaceType::DielectricDielectric;
-            border.model = SurfaceModel::Unified;
-            border.finish = SurfaceFinish::Polished;
-            const auto borderID{scene.AddSurface(std::move(border))};
-
-            Volume parent{};
-            parent.volumeID = 0;
-            parent.geometryID = InvalidID;
-            parent.parentVolumeID = InvalidID;
-            parent.skinSurfaceID = parentSkinID;
-            scene.AddVolume(std::move(parent));
-
-            Volume daughter{};
-            daughter.volumeID = 1;
-            daughter.geometryID = InvalidID;
-            daughter.parentVolumeID = 0;
-            daughter.skinSurfaceID = daughterSkinID;
-            scene.AddVolume(std::move(daughter));
-
-            Volume sibling{};
-            sibling.volumeID = 2;
-            sibling.geometryID = InvalidID;
-            sibling.parentVolumeID = 0;
-            sibling.skinSurfaceID = siblingSkinID;
-            scene.AddVolume(std::move(sibling));
-
-            require(scene.FindBoundarySurface(0, 1) == scene.FindSurface(daughterSkinID),
-                    "entering a daughter must prefer the daughter skin "
-                    "surface");
-            require(scene.FindBoundarySurface(1, 0) == scene.FindSurface(daughterSkinID),
-                    "leaving a daughter must prefer the daughter skin "
-                    "surface");
-            require(scene.FindBoundarySurface(1, 2) == scene.FindSurface(daughterSkinID),
+            require(scene.FindBoundarySurface(parent, daughter) == scene.FindSurface(daughterSkinID),
+                    "entering a daughter must prefer the daughter skin surface");
+            require(scene.FindBoundarySurface(daughter, parent) == scene.FindSurface(daughterSkinID),
+                    "leaving a daughter must prefer the daughter skin surface");
+            require(scene.FindBoundarySurface(daughter, sibling) == scene.FindSurface(daughterSkinID),
                     "sibling crossing must prefer the source skin surface");
 
-            scene.AddSurfaceBinding({0, 1, borderID});
-            require(scene.FindBoundarySurface(0, 1) == scene.FindSurface(borderID),
+            const auto borderID{scene.AddSurface({.name = "border"})};
+            scene.AddSurfaceBinding({parent, daughter, borderID});
+            require(scene.FindBoundarySurface(parent, daughter) == scene.FindSurface(borderID),
                     "border surface must override skin surfaces");
         }
 
@@ -197,7 +149,6 @@ auto main() -> int {
             require(scene.FindGeometry(geometryID)->mesh.triangleFlags.at(0) == 1U,
                     "local flag edits must not affect shared geometry");
         }
-
     } catch (const std::exception& exception) {
         std::cerr << exception.what() << '\n';
         return EXIT_FAILURE;

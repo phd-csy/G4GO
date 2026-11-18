@@ -3,6 +3,7 @@
 #include "G4UserRunAction.hh"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 class G4Run;
@@ -33,6 +34,7 @@ private:
     std::vector<int> fDummySensorIDs{};
     std::vector<float> fDummySensorTimes{};
     bool fIsMaster;
+    std::string fConfiguredFileName{};
 };
 
 } // namespace G4GO::Simulation

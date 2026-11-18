@@ -166,9 +166,9 @@ auto AllocateComponentPhotons(G4int totalPhotonCount, std::size_t componentCount
         counts.at(0) = totalPhotonCount;
         return counts;
     }
-    const auto countFromYield{[totalPhotonCount](G4double yield) -> G4int {
-        const auto expected{yield * totalPhotonCount};
-        return static_cast<G4int>(std::clamp(expected, G4double{}, static_cast<G4double>(totalPhotonCount)));
+    const auto totalYield{yields.first + yields.second + yields.third};
+    const auto countFromYield{[totalPhotonCount, totalYield](G4double yield) -> G4int {
+        return static_cast<G4int>((yield / totalYield) * totalPhotonCount);
     }};
     counts.at(0) = countFromYield(yields.first);
     if (componentCount == 2U) {

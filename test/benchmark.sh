@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -uo pipefail
+set -euo pipefail
 
 usage() {
     printf '%s\n' \
@@ -39,47 +39,47 @@ verbose=0
 
 while (($# > 0)); do
     case "$1" in
-    -t|--threads)
+    -t | --threads)
         (($# >= 2)) || die "missing value for --threads"
         threads="$2"
         shift 2
         ;;
-    -t=*|--threads=*)
+    -t=* | --threads=*)
         threads="${1#*=}"
         shift
         ;;
-    -g|--gpu)
+    -g | --gpu)
         (($# >= 2)) || die "missing value for --gpu"
         gpu_index="$2"
         shift 2
         ;;
-    -g=*|--gpu=*)
+    -g=* | --gpu=*)
         gpu_index="${1#*=}"
         shift
         ;;
-    -a|--cpu-affinity)
+    -a | --cpu-affinity)
         (($# >= 2)) || die "missing value for --cpu-affinity"
         cpu_affinity="$2"
         shift 2
         ;;
-    -a=*|--cpu-affinity=*)
+    -a=* | --cpu-affinity=*)
         cpu_affinity="${1#*=}"
         shift
         ;;
-    -r|--reserve-cores)
+    -r | --reserve-cores)
         (($# >= 2)) || die "missing value for --reserve-cores"
         reserve_cores="$2"
         shift 2
         ;;
-    -r=*|--reserve-cores=*)
+    -r=* | --reserve-cores=*)
         reserve_cores="${1#*=}"
         shift
         ;;
-    -v|--verbose)
+    -v | --verbose)
         verbose=1
         shift
         ;;
-    --help|-h)
+    --help | -h)
         usage
         exit 0
         ;;
@@ -93,7 +93,7 @@ done
 ((threads >= 2)) || die "--threads must be at least 2; GPU-1T is measured separately"
 [[ "$gpu_index" =~ ^[0-9]+$ ]] || die "--gpu must be a non-negative integer: $gpu_index"
 [[ "$reserve_cores" =~ ^[0-9]+$ ]] || die "--reserve-cores must be a non-negative integer: $reserve_cores"
-[[ "$batch_timeout_ms" =~ ^[0-9]+$ ]] && ((batch_timeout_ms <= 10000)) ||
+[[ "$batch_timeout_ms" =~ ^[0-9]+$ ]] && ((10#$batch_timeout_ms <= 10000)) ||
     die "G4GO_BATCH_TIMEOUT_MS must be an integer from 0 to 10000: $batch_timeout_ms"
 [[ "$perf_diagnostics" == 0 || "$perf_diagnostics" == 1 ]] ||
     die "G4GO_PERF_DIAGNOSTICS must be 0 or 1: $perf_diagnostics"
@@ -135,7 +135,7 @@ auto)
     if ((verbose)); then
         affinity_arguments+=(--verbose)
     fi
-    cpu_list="$($affinity_helper "${affinity_arguments[@]}")" ||
+    cpu_list="$("$affinity_helper" "${affinity_arguments[@]}")" ||
         die "automatic CPU affinity failed; use --cpu-affinity none or provide a CPU list"
     ;;
 *)
@@ -169,7 +169,7 @@ gpu_1t_full_log="${logs_dir}/gpu_1t_full.log"
 gpu_threads_full_log="${logs_dir}/gpu_${threads}t_full.log"
 mkdir -p "$logs_dir"
 cd "$run_dir" || exit 1
-: > "$benchmark_log"
+: >"$benchmark_log"
 exec > >(tee -a "$benchmark_log") 2>&1
 
 fail_benchmark() {
@@ -184,9 +184,9 @@ run_logged() {
     shift
     if ((verbose)); then
         "$@" 2>&1 | tee "$log_file"
-        return "${PIPESTATUS[0]}"
+    else
+        "$@" 2>&1 | tee "$log_file" | awk '/G4WT/ { print; fflush() }'
     fi
-    "$@" > >(tee "$log_file" | awk '/G4WT/ { print; fflush() }') 2>&1
 }
 
 run_with_affinity() {
@@ -237,13 +237,13 @@ run_timed_phase() {
     rm -rf -- "$output_directory" "$destination_directory"
     echo "[${phase_name}] RUN events=${event_count}"
     start_ns="$(now_ns)"
-    run_logged "$log_file" run_with_affinity "$@"
-    command_status="$?"
+    command_status=0
+    run_logged "$log_file" run_with_affinity "$@" || command_status=$?
     if ((command_status != 0)); then
         echo "[${phase_name}] FAIL events=${event_count} exit_code=${command_status}"
         fail_benchmark "$command_status"
     fi
-    elapsed_seconds="$(seconds_from_ns "$(( $(now_ns) - start_ns ))")"
+    elapsed_seconds="$(seconds_from_ns "$(($(now_ns) - start_ns))")"
     if ! has_root_worker_output "$output_directory" "$output_stem"; then
         echo "[${phase_name}] ROOT worker output is missing: ${output_directory}/${output_stem}_t*.root"
         fail_benchmark 1
@@ -283,7 +283,7 @@ read_performance_value() {
     local key="$1"
     local log_file="$2"
     awk -v key="$key" '
-        index($0, "performance:") > 0 {
+        index($0, "[g4go] performance:") > 0 {
             line = $0
             sub(/^.*performance:[[:space:]]*/, "", line)
             count = split(line, fields, ", ")
@@ -302,8 +302,7 @@ write_performance_row() {
     local gpu_1t_value gpu_threads_value
     gpu_1t_value="$(read_performance_value "$key" "$gpu_1t_full_log")"
     gpu_threads_value="$(read_performance_value "$key" "$gpu_threads_full_log")"
-    [[ -n "$gpu_1t_value" ]] || gpu_1t_value="not recorded"
-    [[ -n "$gpu_threads_value" ]] || gpu_threads_value="not recorded"
+    [[ -n "$gpu_1t_value" && -n "$gpu_threads_value" ]] || die "missing GPU diagnostic: $key"
     printf '%-36s %18s %18s\n' "$label" "$gpu_1t_value" "$gpu_threads_value"
 }
 
@@ -354,7 +353,7 @@ gpu_1t_speedup="$(awk -v cpu="$cpu_1t_estimated_full_time_s" -v gpu="$gpu_1t_ful
 gpu_threads_speedup="$(awk -v cpu="$cpu_threads_full_elapsed_seconds" -v gpu="$gpu_threads_full_elapsed_seconds" \
     'BEGIN {if (cpu > 0.0 && gpu > 0.0) printf "%.6f", cpu / gpu}')"
 if ! is_positive_number "$cpu_scaling_ratio" || ! is_positive_number "$cpu_1t_estimated_full_time_s" ||
-   ! is_positive_number "$gpu_1t_speedup" || ! is_positive_number "$gpu_threads_speedup"; then
+    ! is_positive_number "$gpu_1t_speedup" || ! is_positive_number "$gpu_threads_speedup"; then
     echo "Unable to calculate CPU scaling or GPU speedup"
     fail_benchmark 1
 fi
@@ -410,7 +409,7 @@ fi
         "GPU-${threads}T vs CPU-${threads}T : ${gpu_threads_speedup} x" \
         '' \
         'Result: PASSED'
-} > "${run_dir}/benchmark_summary.txt"
+} >"${run_dir}/benchmark_summary.txt"
 
 if ((perf_diagnostics)); then
     {
@@ -420,37 +419,29 @@ if ((perf_diagnostics)); then
         printf '%-36s %18s %18s\n' 'GPU optical transport (ms)' "$gpu_1t_transport_ms" "$gpu_threads_transport_ms"
         printf '%s\n' '' 'CUDA and scheduler stages (ms)' '-----------------------------'
         printf '%-36s %18s %18s\n' 'Metric' 'GPU-1T' "GPU-${threads}T"
-        write_performance_row 'Capture total' capture_total_ms
-        write_performance_row 'Locate volume' capture_locate_volume_ms
-        write_performance_row 'Volume mapping' capture_volume_mapping_ms
-        write_performance_row 'Scheduler queue wait' scheduler_queue_wait_ms
-        write_performance_row 'Batch flatten' scheduler_batch_flatten_ms
-        write_performance_row 'Host to device' host_to_device_ms
-        write_performance_row 'Device memset' device_memset_ms
-        write_performance_row 'OptiX kernel' optix_kernel_ms
-        write_performance_row 'Device hit compaction' device_hit_compaction_ms
-        write_performance_row 'Device metadata to host' device_metadata_to_host_ms
-        write_performance_row 'Device hits to host' device_hits_to_host_ms
-        write_performance_row 'Device to host' device_to_host_ms
-        write_performance_row 'Host hit compaction' host_hit_compaction_ms
-        write_performance_row 'Scheduler input wait' scheduler_input_wait_ms
-        write_performance_row 'Scheduler GPU wait' scheduler_gpu_wait_ms
+        write_performance_row 'Capture total' 'capture total'
+        write_performance_row 'Locate volume' 'capture locate volume'
+        write_performance_row 'Volume mapping' 'capture volume mapping'
+        write_performance_row 'Scheduler queue wait' 'scheduler queue wait'
+        write_performance_row 'Batch flatten' 'scheduler batch flatten'
+        write_performance_row 'Host to device' 'host to device'
+        write_performance_row 'Device memset' 'device memset'
+        write_performance_row 'OptiX kernel' 'optix kernel'
+        write_performance_row 'Device hit compaction' 'device hit compaction'
+        write_performance_row 'Device metadata to host' 'device metadata to host'
+        write_performance_row 'Device hits to host' 'device hits to host'
+        write_performance_row 'Host hit compaction' 'host hit compaction'
+        write_performance_row 'Scheduler input wait' 'scheduler input wait'
+        write_performance_row 'Scheduler GPU wait' 'scheduler gpu wait'
         printf '%s\n' '' 'Transport counters' '------------------'
         printf '%-36s %18s %18s\n' 'Metric' 'GPU-1T' "GPU-${threads}T"
-        write_performance_row 'Total bounce count' total_bounce_count
-        write_performance_row 'Candidate trace count' coincident_candidate_trace_count
-        write_performance_row 'Candidate hit count' coincident_candidate_hit_count
-        write_performance_row 'Cerenkov photons' cerenkov_photon_count
-        write_performance_row 'Scintillation photons' scintillation_photon_count
-        write_performance_row 'Detected photons' detected_count
-        write_performance_row 'Absorbed photons' absorbed_count
-        write_performance_row 'Escaped photons' escaped_count
-        write_performance_row 'Truncated photons' truncated_count
-        write_performance_row 'Invalid states' invalid_state_count
-        write_performance_row 'Queue wait count' queue_wait_count
-        write_performance_row 'Average batch photons' average_batch_photons
-        write_performance_row 'Minimum batch photons' min_batch_photons
-    } > "${run_dir}/performance_summary.txt"
+        write_performance_row 'Total bounce count' 'total bounce count'
+        write_performance_row 'Candidate trace count' 'coincident candidate trace count'
+        write_performance_row 'Candidate hit count' 'coincident candidate hit count'
+        write_performance_row 'Queue wait count' 'queue wait count'
+        write_performance_row 'Average batch photons' 'average batch photons'
+        write_performance_row 'Minimum batch photons' 'min batch photons'
+    } >"${run_dir}/performance_summary.txt"
 fi
 
 echo "[benchmark] OUTPUT: PASSED"

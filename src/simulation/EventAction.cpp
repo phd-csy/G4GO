@@ -37,13 +37,13 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
                             ->ModuleID()};
     const auto eventID{event->GetEventID()};
     const auto generatedPhotonCount{static_cast<int>(fAdapter->EventStatistics().generatedCount)};
-    std::vector<CrystalHitOutput> crystalHits{};
-    crystalHits.reserve(moduleID);
+    std::vector<ScintillatorHitOutput> scintillatorHits{};
+    scintillatorHits.reserve(moduleID);
     for (int i{}; i < moduleID; ++i) {
         const auto energyDeposit{scintillatorHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
         if (energyDeposit > 0.) {
-            crystalHits.emplace_back(
-                CrystalHitOutput{eventID, i, static_cast<float>(energyDeposit), generatedPhotonCount});
+            scintillatorHits.emplace_back(
+                ScintillatorHitOutput{eventID, i, static_cast<float>(energyDeposit), generatedPhotonCount});
         }
     }
 
@@ -60,7 +60,7 @@ auto EventAction::EndOfEventAction(const G4Event* event) -> void {
         }
     }
 
-    fAnalysis->Enqueue(std::move(crystalHits), std::move(sensorHits), transportFuture);
+    fAnalysis->Enqueue(std::move(scintillatorHits), std::move(sensorHits), transportFuture);
     if (fAnalysis->PendingCount() >= fAdapter->Configuration().maxPendingEvents) {
         fAnalysis->WaitAndWriteNextEvent();
     } else {

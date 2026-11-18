@@ -108,8 +108,8 @@ G4GO_OPTICAL_HD inline auto EvaluateAbsorption(float efficiency, bool sensor, fl
     return SurfaceOutcome::Absorb;
 }
 
-G4GO_OPTICAL_HD inline auto SampleLambertian(DeviceVector3 normal, float radialSample,
-                                             float azimuthSample) -> DeviceVector3 {
+G4GO_OPTICAL_HD inline auto SampleLambertian(DeviceVector3 normal, float radialSample, float azimuthSample)
+    -> DeviceVector3 {
     constexpr auto twoPi{6.28318530717958647692F};
     normal = Normalize(normal);
     radialSample = ClampProbability(radialSample);

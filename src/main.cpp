@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -57,7 +58,9 @@ auto main(int argc, char** argv) -> int {
         ->check(CLI::IsMember({"auto", "cpu", "gpu"}))
         ->capture_default_str();
     app.add_option("-s,--seed", options.photonTransportConfig.seed, "Random seed")->capture_default_str();
-    app.add_option("-t,--threads", options.threads, "Number of Geant4 worker threads")->capture_default_str();
+    app.add_option("-t,--threads", options.threads, "Number of Geant4 worker threads")
+        ->check(CLI::Range(0, std::numeric_limits<G4int>::max()))
+        ->capture_default_str();
     app.add_option("--max-photons", options.photonTransportConfig.maxPhotonsPerEvent,
                    "Maximum number of captured optical photons")
         ->check(CLI::PositiveNumber)
@@ -109,6 +112,11 @@ auto main(int argc, char** argv) -> int {
     }
 
     const auto useOpticalOffload{UseOpticalOffload(options.photonTransportConfig.backend)};
+    if (options.photonTransportConfig.backend == G4GO::Optical::PhotonTransportBackend::OptiX and
+        not useOpticalOffload) {
+        G4cerr << "[g4go] GPU backend requested but OptiX is unavailable in this build" << G4endl;
+        return 1;
+    }
 
     const auto timer{new G4Timer()};
     timer->Start();
@@ -173,20 +181,15 @@ auto main(int argc, char** argv) -> int {
 
     G4UImanager* uiManager{G4UImanager::GetUIpointer()};
 
+    const auto commandStatus{
+        uiManager->ApplyCommand("/control/execute " + options.macroFile.value_or("scripts/vis.mac"))};
 #ifdef G4GO_USE_UIVIS
-    if (not ui) {
-        G4String command{"/control/execute "};
-        G4String fileName{*options.macroFile};
-        uiManager->ApplyCommand(command + fileName);
-    } else {
-        uiManager->ApplyCommand("/control/execute scripts/vis.mac");
-        ui->SessionStart();
+    if (ui != nullptr) {
+        if (commandStatus == 0) {
+            ui->SessionStart();
+        }
         delete ui;
     }
-#else
-    G4String command{"/control/execute "};
-    G4String fileName{*options.macroFile};
-    uiManager->ApplyCommand(command + fileName);
 #endif
 
     timer->Stop();
@@ -198,5 +201,5 @@ auto main(int argc, char** argv) -> int {
     delete runManager;
     delete timer;
 
-    return 0;
+    return commandStatus == 0 ? 0 : 1;
 }

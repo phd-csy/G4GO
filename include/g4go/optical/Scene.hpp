@@ -128,7 +128,6 @@ struct SurfaceBinding {
 class Scene final {
 public:
     Scene();
-    ~Scene() = default;
 
     auto AddMaterial(Material material) -> std::uint32_t;
     auto AddSurface(Surface surface) -> std::uint32_t;

@@ -117,10 +117,6 @@ if(G4GO_OPTIX_AVAILABLE)
     set(G4GO_OPTIX_GENERATED_DIR ${PROJECT_BINARY_DIR}/generated)
     set(G4GO_OPTIX_IR ${G4GO_OPTIX_GENERATED_DIR}/g4go_optical.optixir)
     set(G4GO_OPTIX_IR_HEADER ${G4GO_OPTIX_GENERATED_DIR}/g4go_optix_ir.h)
-    file(GLOB G4GO_OPTIX_DEVICE_FILES CONFIGURE_DEPENDS
-        "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cu"
-        "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cuh"
-    )
     file(GLOB G4GO_OPTIX_HOST_FILES CONFIGURE_DEPENDS
         "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cpp"
         "${PROJECT_SOURCE_DIR}/src/optical/optix/*.cuh"
@@ -139,10 +135,12 @@ if(G4GO_OPTIX_AVAILABLE)
                 -arch=compute_${G4GO_CUDA_ARCHITECTURE}
                 -I${PROJECT_SOURCE_DIR}/include
                 -I${optix_dev_SOURCE_DIR}/include
+                -MD -MF ${G4GO_OPTIX_IR}.d -MT ${G4GO_OPTIX_IR}
                 -c ${PROJECT_SOURCE_DIR}/src/optical/optix/OptiXTransportDevice.cu
                 -o ${G4GO_OPTIX_IR}
         DEPENDS
-            ${G4GO_OPTIX_DEVICE_FILES}
+            ${PROJECT_SOURCE_DIR}/src/optical/optix/OptiXTransportDevice.cu
+        DEPFILE ${G4GO_OPTIX_IR}.d
         COMMENT "Compiling OptiX device program"
         VERBATIM
     )
@@ -259,6 +257,7 @@ if(BUILD_TESTING)
         "${PROJECT_SOURCE_DIR}/test/static_analysis.sh"
         "${PROJECT_SOURCE_DIR}/test/TestOpticalTransport.cxx"
         "${PROJECT_SOURCE_DIR}/test/regression.sh"
+        "${PROJECT_SOURCE_DIR}/test/seed_reproducibility.py"
     )
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         ${G4GO_TEST_RUNTIME_FILES}
@@ -273,10 +272,17 @@ if(BUILD_TESTING)
 
     add_test(NAME g4go_smoke_auto
              COMMAND $<TARGET_FILE:g4go>
-                     ${PROJECT_BINARY_DIR}/scripts/run_test_optics.mac)
+                     --threads 1 ${PROJECT_BINARY_DIR}/scripts/run_test_optics.mac)
     set_tests_properties(g4go_smoke_auto PROPERTIES
         LABELS "smoke;integration;auto"
         TIMEOUT 60
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
 
+    add_test(NAME g4go_reject_missing_macro
+             COMMAND $<TARGET_FILE:g4go> --backend cpu --threads 1
+                     ${PROJECT_BINARY_DIR}/test/nonexistent.mac)
+    set_tests_properties(g4go_reject_missing_macro PROPERTIES
+        LABELS "smoke;integration;cpu"
+        WILL_FAIL TRUE
+        TIMEOUT 30)
 endif()

@@ -16,13 +16,6 @@ elif [[ -r "${script_dir}/../CMakeCache.txt" ]]; then
 else
     build_dir="${project_dir}/build"
 fi
-if [[ -r "${build_dir}/CMakeCache.txt" ]]; then
-    cmake_home_directory="$(sed -n \
-        's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "${build_dir}/CMakeCache.txt" | sed -n '1p')"
-    if [[ -n "${cmake_home_directory}" && -f "${cmake_home_directory}/CMakeLists.txt" ]]; then
-        project_dir="${cmake_home_directory}"
-    fi
-fi
 minimum_cmake_version="3.24"
 minimum_cuda_version="12.8"
 minimum_geant4_version="11.4.2"
@@ -43,16 +36,19 @@ usage() {
 
 while (($# > 0)); do
     case "$1" in
-    -b|--build-dir)
-        (($# >= 2)) || { printf 'error: missing value for --build-dir\n' >&2; exit 1; }
+    -b | --build-dir)
+        (($# >= 2)) || {
+            printf 'error: missing value for --build-dir\n' >&2
+            exit 1
+        }
         build_dir="$2"
         shift 2
         ;;
-    -b=*|--build-dir=*)
+    -b=* | --build-dir=*)
         build_dir="${1#*=}"
         shift
         ;;
-    -h|--help)
+    -h | --help)
         usage
         exit 0
         ;;
@@ -63,6 +59,14 @@ while (($# > 0)); do
         ;;
     esac
 done
+
+if [[ -r "${build_dir}/CMakeCache.txt" ]]; then
+    cmake_home_directory="$(sed -n \
+        's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "${build_dir}/CMakeCache.txt" | sed -n '1p')"
+    if [[ -n "${cmake_home_directory}" && -f "${cmake_home_directory}/CMakeLists.txt" ]]; then
+        project_dir="${cmake_home_directory}"
+    fi
+fi
 
 version_at_least() {
     local current="$1"
@@ -79,10 +83,10 @@ version_at_least() {
     required_minor="${required_minor:-0}"
     required_patch="${required_patch:-0}"
 
-    ((current_major > required_major ||
-      (current_major == required_major && current_minor > required_minor) ||
-      (current_major == required_major && current_minor == required_minor &&
-       current_patch >= required_patch)))
+    ((current_major > required_major || (\
+    current_major == required_major && current_minor > required_minor) || (\
+    current_major == required_major && current_minor == required_minor && \
+    current_patch >= required_patch)))
 }
 
 first_line() {
@@ -108,16 +112,16 @@ if [[ -z "${geant4_config}" ]] && [[ -r "${build_dir}/CMakeCache.txt" ]]; then
     geant4_dir="$(sed -n 's/^Geant4_DIR:PATH=//p' "${build_dir}/CMakeCache.txt" |
         first_line)"
     if [[ -n "${geant4_dir}" &&
-          -x "${geant4_dir%/lib/cmake/Geant4}/bin/geant4-config" ]]; then
+        -x "${geant4_dir%/lib/cmake/Geant4}/bin/geant4-config" ]]; then
         geant4_config="${geant4_dir%/lib/cmake/Geant4}/bin/geant4-config"
     fi
 fi
 geant4_version=""
 if [[ -n "${geant4_config}" ]]; then
-    geant4_version="$(${geant4_config} --version 2>/dev/null | first_line)"
+    geant4_version="$("${geant4_config}" --version 2>/dev/null | first_line)"
 fi
 if [[ -n "${geant4_version}" ]] &&
-   version_at_least "${geant4_version}" "${minimum_geant4_version}"; then
+    version_at_least "${geant4_version}" "${minimum_geant4_version}"; then
     record_row "Geant4" "${geant4_version}" "OK"
 elif [[ -n "${geant4_version}" ]]; then
     record_row "Geant4" "${geant4_version}" "FAIL"
@@ -128,11 +132,11 @@ fi
 cmake_version=""
 cmake_executable="$(command -v cmake || true)"
 if [[ -n "${cmake_executable}" ]]; then
-    cmake_version="$(${cmake_executable} --version 2>/dev/null |
+    cmake_version="$("${cmake_executable}" --version 2>/dev/null |
         first_line | sed -nE 's/.*version[[:space:]]+([0-9]+(\.[0-9]+){1,2}).*/\1/p')"
 fi
 if [[ -n "${cmake_version}" ]] &&
-   version_at_least "${cmake_version}" "${minimum_cmake_version}"; then
+    version_at_least "${cmake_version}" "${minimum_cmake_version}"; then
     record_row "CMake" "${cmake_version}" "OK"
 elif [[ -n "${cmake_version}" ]]; then
     record_row "CMake" "${cmake_version}" "FAIL"
@@ -150,22 +154,19 @@ if [[ -z "${bin2c_executable}" && -n "${nvcc_executable}" ]]; then
 fi
 cuda_version=""
 if [[ -n "${nvcc_executable}" ]]; then
-    cuda_version="$(${nvcc_executable} --version 2>/dev/null |
+    cuda_version="$("${nvcc_executable}" --version 2>/dev/null |
         sed -nE 's/.*release[[:space:]]+([0-9]+\.[0-9]+).*/\1/p' | first_line)"
 fi
-if [[ -n "${cuda_version}" && -n "${nvcc_executable}" &&
-      -n "${bin2c_executable}" ]] &&
-   version_at_least "${cuda_version}" "${minimum_cuda_version}"; then
+if [[ -z "${nvcc_executable}" ]]; then
+    record_row "CUDA" "missing nvcc" "FAIL"
+elif [[ -z "${bin2c_executable}" ]]; then
+    record_row "CUDA" "missing bin2c" "FAIL"
+elif [[ -z "${cuda_version}" ]]; then
+    record_row "CUDA" "unknown version" "FAIL"
+elif version_at_least "${cuda_version}" "${minimum_cuda_version}"; then
     record_row "CUDA" "${cuda_version}" "OK"
-elif [[ -n "${cuda_version}" ]]; then
+else
     record_row "CUDA" "${cuda_version}" "FAIL"
-else
-    record_row "CUDA" "missing" "FAIL"
-fi
-if [[ -n "${nvcc_executable}" ]]; then
-    record_row "nvcc" "" "OK"
-else
-    record_row "nvcc" "" "FAIL"
 fi
 
 nvidia_smi="$(command -v nvidia-smi || true)"
@@ -173,11 +174,11 @@ gpu_name=""
 compute_capability=""
 driver_version=""
 if [[ -n "${nvidia_smi}" ]]; then
-    gpu_name="$(${nvidia_smi} --query-gpu=name --format=csv,noheader,nounits 2>/dev/null |
+    gpu_name="$("${nvidia_smi}" --query-gpu=name --format=csv,noheader,nounits 2>/dev/null |
         first_line)"
-    compute_capability="$(${nvidia_smi} --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null |
+    compute_capability="$("${nvidia_smi}" --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null |
         first_line)"
-    driver_version="$(${nvidia_smi} --query-gpu=driver_version --format=csv,noheader,nounits 2>/dev/null |
+    driver_version="$("${nvidia_smi}" --query-gpu=driver_version --format=csv,noheader,nounits 2>/dev/null |
         first_line)"
 fi
 gpu_name="${gpu_name#NVIDIA GeForce }"
@@ -203,7 +204,7 @@ if [[ "${configured_architecture}" =~ ^([0-9]+)([0-9])$ ]]; then
     expected_compute_capability="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 fi
 if [[ -n "${compute_capability}" &&
-      "${compute_capability}" == "${expected_compute_capability}" ]]; then
+    "${compute_capability}" == "${expected_compute_capability}" ]]; then
     record_row "compute cap" "${compute_capability}" "OK"
 elif [[ -n "${compute_capability}" ]]; then
     record_row "compute cap" "${compute_capability}" "FAIL"
@@ -213,7 +214,7 @@ fi
 
 driver_major="${driver_version%%.*}"
 if [[ "${driver_major}" =~ ^[0-9]+$ ]] &&
-   ((driver_major >= minimum_driver_major)); then
+    ((driver_major >= minimum_driver_major)); then
     record_row "Driver" "${driver_version}" "OK"
 elif [[ -n "${driver_version}" ]]; then
     record_row "Driver" "${driver_version}" "FAIL"
@@ -232,8 +233,8 @@ optix_include_candidates=(
 )
 for candidate in "${optix_include_candidates[@]}"; do
     if [[ -f "${candidate}/optix.h" &&
-          -f "${candidate}/optix_stubs.h" &&
-          -f "${candidate}/optix_function_table_definition.h" ]]; then
+        -f "${candidate}/optix_stubs.h" &&
+        -f "${candidate}/optix_function_table_definition.h" ]]; then
         optix_include_dir="${candidate}"
         break
     fi
@@ -256,53 +257,34 @@ else
     record_row "OptiX headers" "missing" "FAIL"
 fi
 
-optix_runtime="${G4GO_OPTIX_RUNTIME_LIBRARY:-}"
-if [[ -z "${optix_runtime}" ]]; then
-    optix_runtime="$(ldconfig -p 2>/dev/null |
-        awk '/libnvoptix\.so/{print $NF; exit}')"
-fi
-if [[ -z "${optix_runtime}" ]]; then
-    for candidate in \
-        /usr/lib/wsl/lib/libnvoptix.so* \
-        /usr/lib/x86_64-linux-gnu/libnvoptix.so* \
-        /usr/lib/libnvoptix.so*; do
-        if [[ -f "${candidate}" || -L "${candidate}" ]]; then
-            optix_runtime="${candidate}"
-            break
-        fi
-    done
-fi
-
-optix_runtime_status=1
-if [[ -n "${optix_runtime}" && -r "${optix_runtime}" ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-        if python3 - "${optix_runtime}" >/dev/null 2>&1 <<'PY'
+optix_runtime="${G4GO_OPTIX_RUNTIME_LIBRARY:-libnvoptix.so.1}"
+if ! command -v python3 >/dev/null 2>&1; then
+    record_row "OptiX runtime" "needs python3" "FAIL"
+elif python3 - "$optix_runtime" <<'PY'
 import ctypes
 import sys
 
-ctypes.CDLL(sys.argv[1])
+try:
+    runtime = ctypes.CDLL(sys.argv[1])
+    runtime.optixQueryFunctionTable
+except (OSError, AttributeError) as error:
+    print(error, file=sys.stderr)
+    sys.exit(1)
 PY
-        then
-            optix_runtime_status=0
-        fi
-    else
-        optix_runtime_status=0
-    fi
-fi
-if ((optix_runtime_status == 0)); then
+then
     record_row "OptiX runtime" "" "OK"
 else
-    record_row "OptiX runtime" "missing" "FAIL"
+    record_row "OptiX runtime" "unavailable" "FAIL"
 fi
 
 root_executable="$(command -v root || true)"
 root_config="$(command -v root-config || true)"
 root_version=""
 if [[ -n "${root_config}" ]]; then
-    root_version="$(${root_config} --version 2>/dev/null | first_line)"
+    root_version="$("${root_config}" --version 2>/dev/null | first_line)"
 fi
 if [[ -z "${root_version}" && -n "${root_executable}" ]]; then
-    root_version="$(${root_executable} --version 2>/dev/null |
+    root_version="$("${root_executable}" --version 2>/dev/null |
         sed -nE 's/.*ROOT[[:space:]]+([0-9]+(\.[0-9]+){1,2}).*/\1/p' | first_line)"
 fi
 if [[ -n "${root_executable}" && -n "${root_version}" ]]; then

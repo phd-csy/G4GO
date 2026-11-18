@@ -156,7 +156,7 @@ After changing runtime files in `scripts/` or `test/`, run `cmake -S . -B build`
 
 ### Step 6: Find and inspect the output
 
-An analysis macro creates a same-named output directory under the current working directory. G4GO disables ROOT ntuple merging, so a multithreaded run produces a set of worker files:
+An analysis macro creates a directory named after the output stem under the requested parent directory. For example, `results/beam.root` writes worker files under `results/beam/`. Runs after run 0 append `_r<runID>` to the file stem to keep successive runs distinct. G4GO disables ROOT ntuple merging, so a multithreaded run produces a set of worker files:
 
 ```text
 build/run_regression_eminus/
@@ -196,7 +196,13 @@ cd build
 ctest --output-on-failure -L 'unit|smoke'
 ```
 
-The current tests are `g4go_optical_boundary` and `g4go_smoke_auto`. The longer CPU/GPU regression has its own driver script.
+To check event-by-event reproducibility on one backend, run the following from `build/` with PyROOT available. Use `--backend cpu` to check Geant4 transport.
+
+```bash
+python3 test/seed_reproducibility.py --backend gpu
+```
+
+The check runs the electron beam with seed 1234 and 1, 2, and 6 workers. It compares energy deposition, generated and detected photon counts, and each ordered sensor ID and arrival time. The printed result directory contains the per-event CSV, ROOT files and logs. The corrected event seeding changes historical fixed-seed results.
 
 ### CPU/GPU correctness regression
 
@@ -280,7 +286,7 @@ The script uses `build/compile_commands.json` to analyze project C/C++ files. `-
 
 ### Pre-commit formatting
 
-`.pre-commit-config.yaml` configures a `clang-format` hook that checks and formats staged C/C++ files before a commit. Install and enable pre-commit with:
+`.pre-commit-config.yaml` configures a `clang-format` hook that checks and formats staged C, C++, and CUDA files before a commit. Install and enable pre-commit with:
 
 ```bash
 pipx install pre-commit
@@ -343,7 +349,7 @@ The current GPU boundary transport supports the `glisur` and `unified` models, `
 
 ## OptiX troubleshooting on WSL2
 
-On WSL2, the Windows host driver provides the OptiX runtime. The following error commonly means that `libnvoptix` in the Windows NVIDIA driver is too old:
+On WSL2, the Windows host driver provides the OptiX runtime. The following error commonly means that `libnvoptix` in the loaded library does not export the entry point required by OptiX:
 
 ```text
 optixInit failed: OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND
@@ -354,10 +360,10 @@ Inspect the current environment:
 ```bash
 nvidia-smi
 nvcc --version
-nm -D /usr/lib/wsl/lib/libnvoptix.so.1 | rg optixQueryFunctionTable
+./test/environment.sh
 ```
 
-If `optixQueryFunctionTable` is missing, update the Windows NVIDIA driver, run `wsl --shutdown` in PowerShell, reopen WSL, and retry the GPU smoke test. See the [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html) for environment setup.
+The environment check uses Python 3 to load `libnvoptix.so.1` with the current library search path and resolve `optixQueryFunctionTable`. Check `LD_LIBRARY_PATH` in the shell that launches G4GO, then retry the GPU smoke test. See the [CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html) for environment setup.
 
 ## Contributing
 

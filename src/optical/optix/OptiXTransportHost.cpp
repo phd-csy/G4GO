@@ -463,21 +463,22 @@ public:
         contextOptions.logCallbackFunction = LogCallback;
         contextOptions.logCallbackLevel = 3;
         OptiXError(optixDeviceContextCreate(nullptr, &contextOptions, &fContext), "optixDeviceContextCreate");
-        CudaError(cudaStreamCreateWithFlags(&fSceneBuildStream, cudaStreamNonBlocking),
-                  "cudaStreamCreateWithFlags scene build");
         try {
+            CudaError(cudaStreamCreateWithFlags(&fSceneBuildStream, cudaStreamNonBlocking),
+                      "cudaStreamCreateWithFlags scene build");
             fSlot = std::make_unique<TransportSlot>(fConfiguration.enablePerformanceDiagnostics);
+            CreatePipeline();
+            CreateSbt();
         } catch (...) {
-            cudaStreamDestroy(fSceneBuildStream);
-            fSceneBuildStream = nullptr;
+            Release();
             throw;
         }
-
-        CreatePipeline();
-        CreateSbt();
     }
 
-    ~Impl() {
+    ~Impl() { Release(); }
+
+private:
+    auto Release() -> void {
         if (fSceneBuildStream != nullptr) {
             cudaStreamSynchronize(fSceneBuildStream);
         }
@@ -508,6 +509,7 @@ public:
         }
     }
 
+public:
     auto PrepareScene(const Scene& scene) -> void {
         std::scoped_lock lock{fSceneMutex};
         if (fSceneAddress != &scene) {
@@ -551,14 +553,12 @@ public:
         auto& fHostEmissions{slot.hostEmissions};
         auto& fHostEmissionOffsets{slot.hostEmissionOffsets};
         auto& fHostEmissionEventIndices{slot.hostEmissionEventIndices};
-        auto& fHostCompactHits{slot.hostCompactHits};
         auto& fHostHitCount{slot.hostHitCount};
         auto& fHostStats{slot.hostStats};
         auto& fHostEventStats{slot.hostEventStats};
         auto& fHostEmissionCapacity{slot.hostEmissionCapacity};
         auto& fHostEmissionOffsetCapacity{slot.hostEmissionOffsetCapacity};
         auto& fHostEmissionEventIndexCapacity{slot.hostEmissionEventIndexCapacity};
-        auto& fHostCompactHitCapacity{slot.hostCompactHitCapacity};
         auto& fHostHitCountCapacity{slot.hostHitCountCapacity};
         auto& fHostStatsCapacity{slot.hostStatsCapacity};
         auto& fHostEventStatsCapacity{slot.hostEventStatsCapacity};
@@ -680,8 +680,6 @@ public:
         EnsureAllocation(fEventStatsAllocation, fEventStatsCapacity, batch.eventIDs.size(),
                          sizeof(DeviceEventTransportStats));
         EnsureAllocation(fLaunchParamsAllocation, fLaunchParamsCapacity, 1, sizeof(OptixLaunchParams));
-        EnsurePinnedAllocation(fHostCompactHits, fHostCompactHitCapacity, static_cast<std::size_t>(photonCount),
-                               "cudaMallocHost compact hits");
         EnsurePinnedAllocation(fHostHitCount, fHostHitCountCapacity, 1, "cudaMallocHost hit count");
         EnsurePinnedAllocation(fHostStats, fHostStatsCapacity, 1, "cudaMallocHost transport stats");
         EnsurePinnedAllocation(fHostEventStats, fHostEventStatsCapacity, batch.eventIDs.size(),
@@ -797,6 +795,8 @@ public:
         if (compactHitCount > photonCount) {
             throw std::runtime_error("OptiX hit compaction returned an invalid hit count");
         }
+        EnsurePinnedAllocation(slot.hostCompactHits, slot.hostCompactHitCapacity, compactHitCount,
+                               "cudaMallocHost compact hits");
         RecordCudaTimerStart(slot.hitsToHostTimer, stream);
         if (compactHitCount > 0) {
             CudaError(cudaMemcpyAsync(slot.hostCompactHits, DevicePointer(slot.compactedHitAllocation->Pointer()),
@@ -906,7 +906,7 @@ private:
         if (moduleStatus != OPTIX_SUCCESS) {
             throw std::runtime_error(std::string("optixModuleCreate failed: ") + optixGetErrorName(moduleStatus) +
                                      " (" + optixGetErrorString(moduleStatus) + ") " +
-                                     std::string(log.data(), logSize));
+                                     std::string(log.data(), std::min(logSize, log.size())));
         }
 
         OptixProgramGroupOptions programOptions{};
@@ -949,7 +949,7 @@ private:
         if (pipelineStatus != OPTIX_SUCCESS) {
             throw std::runtime_error(std::string("optixPipelineCreate failed: ") + optixGetErrorName(pipelineStatus) +
                                      " (" + optixGetErrorString(pipelineStatus) + ") " +
-                                     std::string(log.data(), logSize));
+                                     std::string(log.data(), std::min(logSize, log.size())));
         }
         OptiXError(optixPipelineSetStackSizeFromCallDepths(fPipeline, 1, 0, 0, 0, 2),
                    "optixPipelineSetStackSizeFromCallDepths");
@@ -964,7 +964,8 @@ private:
             optixProgramGroupCreate(fContext, &description, 1, &options, log.data(), &logSize, &programGroup)};
         if (status != OPTIX_SUCCESS) {
             throw std::runtime_error(std::string(operation) + " failed: " + optixGetErrorName(status) + " (" +
-                                     optixGetErrorString(status) + ") " + std::string(log.data(), logSize));
+                                     optixGetErrorString(status) + ") " +
+                                     std::string(log.data(), std::min(logSize, log.size())));
         }
         return programGroup;
     }

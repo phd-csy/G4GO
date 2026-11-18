@@ -77,29 +77,29 @@ verbose=0
 
 while (($# > 0)); do
     case "$1" in
-    -g|--gpu)
+    -g | --gpu)
         (($# >= 2)) || die "missing value for --gpu"
         gpu_index="$2"
         shift 2
         ;;
-    -g=*|--gpu=*)
+    -g=* | --gpu=*)
         gpu_index="${1#*=}"
         shift
         ;;
-    -c|--cores)
+    -c | --cores)
         (($# >= 2)) || die "missing value for --cores"
         requested_cores="$2"
         shift 2
         ;;
-    -c=*|--cores=*)
+    -c=* | --cores=*)
         requested_cores="${1#*=}"
         shift
         ;;
-    -v|--verbose)
+    -v | --verbose)
         verbose=1
         shift
         ;;
-    --help|-h)
+    --help | -h)
         usage
         exit 0
         ;;
@@ -208,7 +208,7 @@ parsed_cpu_rows=0
 while IFS=, read -r cpu core socket node extra; do
     [[ -n "${cpu}" && "${cpu}" != \#* ]] || continue
     if [[ ! "${cpu}" =~ ^[0-9]+$ || ! "${core}" =~ ^[0-9]+$ ||
-          ! "${socket}" =~ ^[0-9]+$ || ! "${node}" =~ ^[0-9]+$ ]]; then
+        ! "${socket}" =~ ^[0-9]+$ || ! "${node}" =~ ^[0-9]+$ ]]; then
         continue
     fi
 
@@ -251,7 +251,10 @@ for ((index = 0; index < requested_cores; ++index)); do
     selected_sockets+=("${gpu_local_sockets[index]}")
     selected_nodes+=("${gpu_local_nodes[index]}")
 done
-selected_cpu_list="$(IFS=,; printf '%s' "${selected_cpus[*]}")"
+selected_cpu_list="$(
+    IFS=,
+    printf '%s' "${selected_cpus[*]}"
+)"
 
 smt_status="disabled"
 for logical_count in "${all_core_counts[@]}"; do
@@ -267,7 +270,7 @@ cpu_quota_file="/sys/fs/cgroup/cpu.max"
 if [[ ! -r "${cpu_quota_file}" ]]; then
     current_cgroup_path="$(awk -F: '$1 == "0" {print $3; exit}' /proc/self/cgroup)"
     if [[ "${current_cgroup_path}" == /* &&
-          -r "/sys/fs/cgroup${current_cgroup_path}/cpu.max" ]]; then
+        -r "/sys/fs/cgroup${current_cgroup_path}/cpu.max" ]]; then
         cpu_quota_file="/sys/fs/cgroup${current_cgroup_path}/cpu.max"
     fi
 fi

@@ -10,6 +10,7 @@
 #include "TROOT.h"
 #include "TSystem.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -154,8 +155,6 @@ auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const 
         auto gpuNOptPhoTotal{
             gpuData.Define("nOptPho64", [](int value) { return static_cast<std::uint64_t>(value); }, {"nOptPho"})
                 .Sum<std::uint64_t>("nOptPho64")};
-        auto cpuInvalidNOptPho{cpuData.Filter([](int value) { return value < 0; }, {"nOptPho"}).Count()};
-        auto gpuInvalidNOptPho{gpuData.Filter([](int value) { return value < 0; }, {"nOptPho"}).Count()};
         auto cpuNOptPhoHistogram{
             cpuData.Histo1D({"cpu_nOptPho", nOptPhoTitle, nOptPhoBins, 0.0, nOptPhoMaximum}, "nOptPho")};
         auto gpuNOptPhoHistogram{
@@ -167,10 +166,8 @@ auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const 
         const auto edepTitle{"event total energy deposition;Edep [MeV];Events"};
         auto cpuEdepStats{cpuData.Stats<double>("Edep")};
         auto gpuEdepStats{gpuData.Stats<double>("Edep")};
-        auto cpuInvalidEdep{
-            cpuData.Filter([](double value) { return not std::isfinite(value) or value < 0.0; }, {"Edep"}).Count()};
-        auto gpuInvalidEdep{
-            gpuData.Filter([](double value) { return not std::isfinite(value) or value < 0.0; }, {"Edep"}).Count()};
+        auto cpuNonFiniteEdep{cpuData.Filter([](double value) { return not std::isfinite(value); }, {"Edep"}).Count()};
+        auto gpuNonFiniteEdep{gpuData.Filter([](double value) { return not std::isfinite(value); }, {"Edep"}).Count()};
         auto cpuEdepHistogram{cpuData.Histo1D({"cpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
         auto gpuEdepHistogram{gpuData.Histo1D({"gpu_event_total_Edep", edepTitle, edepBins, 0.0, edepMaximum}, "Edep")};
 
@@ -201,16 +198,9 @@ auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const 
                         {"timeOfFlight"})
                 .Define("sensorValid",
                         [](const ROOT::RVec<int>& sensorIDs, const ROOT::RVec<float>& times) {
-                            if (sensorIDs.empty() or sensorIDs.size() != times.size()) {
-                                return false;
-                            }
-                            for (std::size_t i{}; i < times.size(); i++) {
-                                if (sensorIDs[i] < 0 or sensorIDs[i] >= 64 or not std::isfinite(times[i]) or
-                                    times[i] < 0.0F) {
-                                    return false;
-                                }
-                            }
-                            return true;
+                            return not sensorIDs.empty() and sensorIDs.size() == times.size() and
+                                   std::all_of(times.begin(), times.end(),
+                                               [](float time) { return std::isfinite(time) and time >= 0.0F; });
                         },
                         {"sensorID", "timeOfFlight"});
         }};
@@ -269,16 +259,15 @@ auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const 
         if (cpuTotal == 0U or gpuTotal == 0U) {
             throw std::runtime_error("nOptPho total is zero");
         }
-        const auto nOptPhoRangeValid{*cpuInvalidNOptPho == 0U and *gpuInvalidNOptPho == 0U and
-                                     not HasOutOfRange(*cpuNOptPhoHistogram) and
+        const auto nOptPhoRangeValid{not HasOutOfRange(*cpuNOptPhoHistogram) and
                                      not HasOutOfRange(*gpuNOptPhoHistogram)};
-        const auto edepRangeValid{*cpuInvalidEdep == 0U and *gpuInvalidEdep == 0U and
+        const auto edepRangeValid{*cpuNonFiniteEdep == 0U and *gpuNonFiniteEdep == 0U and
                                   not HasOutOfRange(*cpuEdepHistogram) and not HasOutOfRange(*gpuEdepHistogram)};
-        const auto tofRangeValid{*cpuInvalidSensorRows == 0U and *gpuInvalidSensorRows == 0U and
-                                 not HasOutOfRange(*cpuTofHistogram) and not HasOutOfRange(*gpuTofHistogram)};
         const auto occupancyRangeValid{*cpuInvalidSensorRows == 0U and *gpuInvalidSensorRows == 0U and
                                        not HasOutOfRange(*cpuOccupancyHistogram) and
                                        not HasOutOfRange(*gpuOccupancyHistogram)};
+        const auto tofRangeValid{occupancyRangeValid and not HasOutOfRange(*cpuTofHistogram) and
+                                 not HasOutOfRange(*gpuTofHistogram)};
 
         const auto nOptPhoPValue{cpuNOptPhoHistogram->Chi2Test(&*gpuNOptPhoHistogram, "UU P OF")};
         const auto tofPValue{cpuTofHistogram->Chi2Test(&*gpuTofHistogram, "UU P OF")};

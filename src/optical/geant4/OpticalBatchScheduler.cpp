@@ -413,6 +413,8 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
             eventStatistics.detectedCount != detectionCounts.at(i)) {
             throw std::runtime_error("OptiX event detected count does not match compacted hits");
         }
+    }
+    for (std::size_t i{}; i < requests.size(); ++i) {
         requests.at(i).promise->set_value(std::move(eventOutputs.at(i)));
     }
 

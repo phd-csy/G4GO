@@ -21,6 +21,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -30,6 +31,35 @@
 namespace G4GO::Optical {
 
 namespace {
+
+class PlacementState final {
+public:
+    explicit PlacementState(G4VPhysicalVolume& volume) :
+        fVolume{&volume},
+        fRotation{volume.GetRotation()},
+        fFrame{fRotation != nullptr ? *fRotation : G4RotationMatrix{}},
+        fTranslation{volume.GetTranslation()},
+        fCopyNo{volume.GetCopyNo()} {}
+
+    PlacementState(const PlacementState&) = delete;
+    auto operator=(const PlacementState&) -> PlacementState& = delete;
+
+    ~PlacementState() {
+        if (fRotation != nullptr) {
+            *fRotation = fFrame;
+        }
+        fVolume->SetRotation(fRotation);
+        fVolume->SetTranslation(fTranslation);
+        fVolume->SetCopyNo(fCopyNo);
+    }
+
+private:
+    G4VPhysicalVolume* fVolume;
+    G4RotationMatrix* fRotation;
+    G4RotationMatrix fFrame;
+    G4ThreeVector fTranslation;
+    G4int fCopyNo;
+};
 
 class SceneBuilder final {
 public:
@@ -62,7 +92,7 @@ public:
             throw;
         }
         G4Polyhedron::SetNumberOfRotationSteps(previousRotationSteps);
-        return fScene;
+        return std::move(fScene);
     }
 
 private:
@@ -86,10 +116,7 @@ private:
             // Geant4 exposes replica transformations through a mutating API and requires restoring the volume.
             auto* mutableVolume{
                 const_cast<G4VPhysicalVolume*>(physicalVolume)}; // NOLINT(cppcoreguidelines-pro-type-const-cast)
-            const auto savedRotation{physicalVolume->GetObjectRotationValue()};
-            const auto hadRotation{physicalVolume->GetObjectRotation() != nullptr};
-            const auto savedTranslation{physicalVolume->GetObjectTranslation()};
-            const auto savedCopyNo{physicalVolume->GetCopyNo()};
+            const PlacementState savedPlacement{*mutableVolume};
             G4ReplicaNavigation replicaNavigation{};
             auto* parameterisation{physicalVolume->IsParameterised() ? physicalVolume->GetParameterisation() : nullptr};
             std::uint32_t firstVolumeID{InvalidID};
@@ -101,11 +128,19 @@ private:
                     replicaNavigation.ComputeTransformation(copyNo, mutableVolume);
                 }
                 const auto* solid{physicalVolume->GetLogicalVolume()->GetSolid()};
+                std::unique_ptr<G4VSolid> copySolid{};
                 if (parameterisation != nullptr) {
                     if (const auto* parameterisedSolid{parameterisation->ComputeSolid(copyNo, mutableVolume)};
                         parameterisedSolid != nullptr) {
                         solid = parameterisedSolid;
                     }
+                    copySolid.reset(solid != nullptr ? solid->Clone() : nullptr);
+                    if (not copySolid) {
+                        throw std::runtime_error("cannot clone parameterised solid for " +
+                                                 std::string{physicalVolume->GetName()});
+                    }
+                    copySolid->ComputeDimensions(parameterisation, copyNo, mutableVolume);
+                    solid = copySolid.get();
                 }
                 const auto* material{physicalVolume->GetLogicalVolume()->GetMaterial()};
                 if (parameterisation != nullptr) {
@@ -120,7 +155,6 @@ private:
                     firstVolumeID = volumeID;
                 }
             }
-            RestorePhysicalVolume(mutableVolume, savedRotation, savedTranslation, savedCopyNo, hadRotation);
             return firstVolumeID;
         }
         return AddVolumeInstance(physicalVolume, parentTransform, parentVolumeID, depth,
@@ -136,26 +170,13 @@ private:
         return static_cast<std::uint32_t>(fScene.Volumes().size());
     }
 
-    static auto RestorePhysicalVolume(G4VPhysicalVolume* physicalVolume, const G4RotationMatrix& rotation,
-                                      const G4ThreeVector& translation, G4int copyNo, bool hadRotation) -> void {
-        physicalVolume->SetCopyNo(copyNo);
-        physicalVolume->SetTranslation(translation);
-        if (not hadRotation) {
-            physicalVolume->SetRotation(nullptr);
-        } else if (physicalVolume->GetRotation() == nullptr) {
-            physicalVolume->SetRotation(new G4RotationMatrix(rotation));
-        } else {
-            *physicalVolume->GetRotation() = rotation;
-        }
-    }
-
     auto AddVolumeInstance(const G4VPhysicalVolume* physicalVolume, const Transform& parentTransform,
                            std::uint32_t parentVolumeID, std::uint32_t depth, std::uint32_t copyNo,
                            const G4VSolid* solid, const G4Material* material) -> std::uint32_t {
         const auto transform{Compose(parentTransform, physicalVolume)};
         const auto* logicalVolume{physicalVolume->GetLogicalVolume()};
 
-        const auto geometryID{AddGeometry(solid, true)};
+        const auto geometryID{AddGeometry(solid, not physicalVolume->IsParameterised())};
         const auto materialID{AddMaterial(material)};
 
         Volume volume{};
@@ -199,7 +220,7 @@ private:
             }
         }
 
-        auto* polyhedron{solid->CreatePolyhedron()};
+        const std::unique_ptr<G4Polyhedron> polyhedron{solid->CreatePolyhedron()};
         if (polyhedron == nullptr) {
             throw std::runtime_error("unable to create polyhedron for solid " + std::string{solid->GetName()});
         }
@@ -213,7 +234,6 @@ private:
             std::array<G4Point3D, 16> points{};
             polyhedron->GetFacet(face, count, points.data());
             if (count < 3 or std::cmp_greater(count, points.size())) {
-                delete polyhedron;
                 throw std::runtime_error("invalid polyhedron facet for solid " + std::string{solid->GetName()});
             }
 
@@ -230,7 +250,6 @@ private:
                     cross = (second - first).cross(third - first);
                 }
                 if (not(cross.mag2() > 0.0)) {
-                    delete polyhedron;
                     throw std::runtime_error("degenerate polyhedron facet for solid " + std::string{solid->GetName()});
                 }
                 const auto base{static_cast<std::uint32_t>(geometry.mesh.verticesMm.size())};
@@ -241,7 +260,6 @@ private:
                 geometry.mesh.triangleFlags.emplace_back(0);
             }
         }
-        delete polyhedron;
 
         if (geometry.mesh.indices.empty()) {
             throw std::runtime_error("polyhedron has no triangles for solid " + std::string{solid->GetName()});

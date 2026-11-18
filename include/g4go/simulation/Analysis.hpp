@@ -8,7 +8,7 @@
 
 namespace G4GO::Simulation {
 
-struct CrystalHitOutput {
+struct ScintillatorHitOutput {
     int eventID{};
     int moduleID{};
     float energyDeposit{};
@@ -23,7 +23,7 @@ struct SensorHitOutput {
 
 class Analysis final {
 public:
-    auto Enqueue(std::vector<CrystalHitOutput> crystalHitOutput, std::vector<SensorHitOutput> sensorHitOutput,
+    auto Enqueue(std::vector<ScintillatorHitOutput> scintillatorHitOutput, std::vector<SensorHitOutput> sensorHitOutput,
                  G4GO::Optical::PhotonTransportFuture transportFuture) -> void;
     auto WriteReadyEvents() -> void;
     auto WaitAndWriteNextEvent() -> void;
@@ -34,7 +34,7 @@ public:
 
 private:
     struct PendingEvent {
-        std::vector<CrystalHitOutput> crystalHitOutput{};
+        std::vector<ScintillatorHitOutput> scintillatorHitOutput{};
         std::vector<SensorHitOutput> sensorHitOutput{};
         G4GO::Optical::PhotonTransportFuture transportFuture{};
     };

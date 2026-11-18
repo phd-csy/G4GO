@@ -1,12 +1,14 @@
 #include "g4go/simulation/RunAction.hpp"
 
 #include "G4AnalysisManager.hh"
+#include "G4Run.hh"
 #include "G4ios.hh"
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
 #include "g4go/optical/geant4/OpticalBatchScheduler.hpp"
 #include "g4go/simulation/Analysis.hpp"
 
 #include <filesystem>
+#include <stdexcept>
 #include <utility>
 
 namespace G4GO::Simulation {
@@ -43,7 +45,7 @@ RunAction::RunAction(std::shared_ptr<G4GO::Optical::OpticalBatchScheduler> batch
     analysisManager->FinishNtuple();
 }
 
-auto RunAction::BeginOfRunAction(const G4Run*) -> void {
+auto RunAction::BeginOfRunAction(const G4Run* run) -> void {
     if (fAdapter) {
         fAdapter->BeginRun();
     } else if (fBatchScheduler) {
@@ -51,17 +53,21 @@ auto RunAction::BeginOfRunAction(const G4Run*) -> void {
     }
 
     auto analysisManager{G4AnalysisManager::Instance()};
-    const std::filesystem::path fileName{analysisManager->GetFileName().c_str()};
-    if (fileName.empty()) {
+    fConfiguredFileName = analysisManager->GetFileName();
+    if (fConfiguredFileName.empty()) {
         return;
     }
-    const auto outputFileName{fileName.filename()};
-    const auto& outputDirectory{outputFileName};
-    if (not outputDirectory.empty()) {
-        std::filesystem::create_directories(outputDirectory);
-        analysisManager->SetFileName((outputDirectory / outputFileName).string());
+    const std::filesystem::path fileName{fConfiguredFileName};
+    const auto directory{fileName.parent_path() / fileName.stem()};
+    std::filesystem::create_directories(directory);
+    auto output{directory / fileName.filename()};
+    if (run->GetRunID() > 0) {
+        output = directory /
+                 (fileName.stem().string() + "_r" + std::to_string(run->GetRunID()) + fileName.extension().string());
     }
-    analysisManager->OpenFile();
+    if (not analysisManager->OpenFile(output.string())) {
+        throw std::runtime_error("unable to open analysis output: " + output.string());
+    }
 }
 
 auto RunAction::EndOfRunAction(const G4Run*) -> void {
@@ -80,9 +86,12 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                    << ", scintillation_photon_count=" << performance.scintillationPhotonCount << G4endl;
         }
     }
-    if (fIsMaster and fBatchScheduler and
-        fBatchScheduler->SelectedBackend() != G4GO::Optical::PhotonTransportBackend::Geant4) {
+    const auto ownsScheduler{fIsMaster or IsMaster()};
+    if (ownsScheduler and fBatchScheduler) {
         fBatchScheduler->EndRun();
+    }
+    if (ownsScheduler and fBatchScheduler and
+        fBatchScheduler->SelectedBackend() != G4GO::Optical::PhotonTransportBackend::Geant4) {
         const auto& statistics{fBatchScheduler->RunStatistics()};
         const auto& batches{fBatchScheduler->BatchStatistics()};
         G4cout << "[g4go] optical backend: " << G4GO::Optical::ToString(fBatchScheduler->SelectedBackend())
@@ -103,25 +112,15 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
                    << ", capture volume mapping=" << performance.captureVolumeMappingMs
                    << ", scheduler queue wait=" << performance.schedulerQueueWaitMs
                    << ", scheduler batch flatten=" << performance.schedulerBatchFlattenMs
-                   << ", scheduler batch flatten bytes=" << performance.schedulerBatchFlattenBytes
                    << ", host to device=" << performance.hostToDeviceMs
-                   << ", host to device bytes=" << performance.hostToDeviceBytes
                    << ", device memset=" << performance.deviceMemsetMs << ", optix kernel=" << performance.optiXKernelMs
                    << ", device hit compaction=" << performance.deviceHitCompactionMs
-                   << ", device to host=" << performance.deviceToHostMs
                    << ", device metadata to host=" << performance.deviceMetadataToHostMs
-                   << ", device metadata to host bytes=" << performance.deviceMetadataToHostBytes
                    << ", device hits to host=" << performance.deviceHitsToHostMs
-                   << ", device hits to host bytes=" << performance.deviceHitsToHostBytes
                    << ", host hit compaction=" << performance.hostHitCompactionMs
                    << ", total bounce count=" << performance.totalBounceCount
                    << ", coincident candidate trace count=" << performance.coincidentCandidateTraceCount
                    << ", coincident candidate hit count=" << performance.coincidentCandidateHitCount
-                   << ", cerenkov photon count=" << performance.cerenkovPhotonCount
-                   << ", scintillation photon count=" << performance.scintillationPhotonCount
-                   << ", detected count=" << statistics.detectedCount << ", absorbed count=" << statistics.absorbedCount
-                   << ", escaped count=" << statistics.escapedCount << ", truncated count=" << statistics.truncatedCount
-                   << ", invalid state count=" << statistics.invalidStateCount
                    << ", queue wait count=" << batches.totalQueueWaitCount
                    << ", scheduler input wait=" << batches.schedulerInputWaitMs
                    << ", scheduler gpu wait=" << batches.schedulerGpuWaitMs
@@ -134,8 +133,12 @@ auto RunAction::EndOfRunAction(const G4Run*) -> void {
     if (not analysisManager->IsOpenFile()) {
         return;
     }
-    analysisManager->Write();
-    analysisManager->CloseFile();
+    const auto written{analysisManager->Write()};
+    const auto closed{analysisManager->CloseFile()};
+    if (not written or not closed) {
+        throw std::runtime_error("unable to finish analysis output: " + fConfiguredFileName);
+    }
+    analysisManager->SetFileName(fConfiguredFileName);
 }
 
 } // namespace G4GO::Simulation

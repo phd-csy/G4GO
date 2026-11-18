@@ -43,7 +43,7 @@ case "$1" in
 --check)
     mode="check"
     ;;
---help|-h)
+--help | -h)
     usage
     exit 0
     ;;
@@ -133,7 +133,10 @@ if [[ "$mode" == fix ]]; then
 
         google-readability-namespace-comments
     )
-    checks="$(IFS=,; printf '%s' "${auto_fix_checks[*]}")"
+    checks="$(
+        IFS=,
+        printf '%s' "${auto_fix_checks[*]}"
+    )"
     say "applying stable clang-tidy fixes"
     "$run_clang_tidy" "${common_arguments[@]}" "-checks=${checks}" -fix
 else

@@ -8,10 +8,11 @@
 
 namespace G4GO::Simulation {
 
-auto Analysis::Enqueue(std::vector<CrystalHitOutput> crystalHitOutput, std::vector<SensorHitOutput> sensorHitOutput,
+auto Analysis::Enqueue(std::vector<ScintillatorHitOutput> scintillatorHitOutput,
+                       std::vector<SensorHitOutput> sensorHitOutput,
                        G4GO::Optical::PhotonTransportFuture transportFuture) -> void {
     fPendingEvents.emplace_back(
-        PendingEvent{std::move(crystalHitOutput), std::move(sensorHitOutput), std::move(transportFuture)});
+        PendingEvent{std::move(scintillatorHitOutput), std::move(sensorHitOutput), std::move(transportFuture)});
 }
 
 auto Analysis::WriteReadyEvents() -> void { ProcessReadyEvents(false); }
@@ -47,14 +48,17 @@ auto Analysis::WriteEvent(const PendingEvent& event) -> void {
     const auto* transportOutput{event.transportFuture.valid() ? &event.transportFuture.get() : nullptr};
 
     auto analysisManager{G4AnalysisManager::Instance()};
+    if (not analysisManager->IsOpenFile()) {
+        return;
+    }
     const auto detectedCount{transportOutput != nullptr ? transportOutput->statistics.detectedCount :
                                                           event.sensorHitOutput.size()};
-    for (const auto& crystalHit : event.crystalHitOutput) {
-        analysisManager->FillNtupleIColumn(0, 0, crystalHit.eventID);
-        analysisManager->FillNtupleIColumn(0, 1, crystalHit.moduleID);
-        analysisManager->FillNtupleDColumn(0, 2, crystalHit.energyDeposit);
+    for (const auto& scintillatorHit : event.scintillatorHitOutput) {
+        analysisManager->FillNtupleIColumn(0, 0, scintillatorHit.eventID);
+        analysisManager->FillNtupleIColumn(0, 1, scintillatorHit.moduleID);
+        analysisManager->FillNtupleDColumn(0, 2, scintillatorHit.energyDeposit);
         analysisManager->FillNtupleIColumn(0, 3, static_cast<int>(detectedCount));
-        analysisManager->FillNtupleIColumn(0, 4, crystalHit.generatedPhotonCount);
+        analysisManager->FillNtupleIColumn(0, 4, scintillatorHit.generatedPhotonCount);
         analysisManager->AddNtupleRow(0);
     }
 
