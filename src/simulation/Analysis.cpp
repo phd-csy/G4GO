@@ -58,7 +58,10 @@ auto Analysis::WriteEvent(const PendingEvent& event) -> void {
         analysisManager->FillNtupleIColumn(0, 1, scintillatorHit.moduleID);
         analysisManager->FillNtupleDColumn(0, 2, scintillatorHit.energyDeposit);
         analysisManager->FillNtupleIColumn(0, 3, static_cast<int>(detectedCount));
-        analysisManager->FillNtupleIColumn(0, 4, scintillatorHit.generatedPhotonCount);
+        analysisManager->FillNtupleIColumn(0, 4,
+                                           transportOutput ?
+                                               static_cast<int>(transportOutput->statistics.generatedCount) :
+                                               scintillatorHit.generatedPhotonCount);
         analysisManager->AddNtupleRow(0);
     }
 

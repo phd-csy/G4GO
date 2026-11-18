@@ -328,6 +328,7 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
             eventMaxBounceCount = std::max(eventMaxBounceCount, sourceStatistics.maxBounceCount);
         }
         auto& destination{eventOutputs.at(requestIndex).statistics};
+        destination.generatedCount += sourceStatistics.generatedCount;
         const auto destinationSourceFields{destination.validFields};
         const auto outputFields{eventOutput.statistics.validFields};
         const auto assignIfValid{[&](PhotonTransportStatisticField field, std::uint64_t& destinationValue,
@@ -431,6 +432,7 @@ auto OpticalBatchScheduler::CompleteBatch(std::vector<TransportRequest>& request
 
     {
         std::scoped_lock lock{fMutex};
+        fRunStatistics.generatedCount += batchStatistics.generatedCount;
         fRunStatistics.detectedCount += batchStatistics.detectedCount;
         fRunStatistics.absorbedCount += batchStatistics.absorbedCount;
         fRunStatistics.escapedCount += batchStatistics.escapedCount;

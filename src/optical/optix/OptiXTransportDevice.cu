@@ -429,13 +429,20 @@ __device__ auto GeneratePhoton(const DeviceOpticalEmission& emission, std::uint3
         return photon;
     }
 
-    if (emission.type == 2U) {
+    if (emission.type == 2U || emission.type == 3U) {
         const auto* material{FindMaterial(emission.materialID)};
-        if (material == nullptr || emission.spectrumID >= 3U) {
+        const auto shifting{emission.type == 3U};
+        if (material == nullptr || emission.spectrumID >= (shifting ? 2U : 3U)) {
+            photon.energyEv = 0.0F;
             return photon;
         }
-        photon.energyEv = SampleSpectrum(material->scintillationSpectrum.at(emission.spectrumID),
-                                         Uniform(gLaunchParams.seed, photonKey, 0U, 20U, draw++));
+        const auto& spectrum{shifting ? material->wlsSpectrum.at(emission.spectrumID) :
+                                        material->scintillationSpectrum.at(emission.spectrumID)};
+        const auto limit{shifting ? SampleProperty(spectrum, emission.energyEv, 0.0F) : 1.0F};
+        photon.energyEv = SampleSpectrum(spectrum, limit * Uniform(gLaunchParams.seed, photonKey, 0U, 20U, draw++));
+        if (shifting) {
+            photon.energyEv = fminf(photon.energyEv, emission.energyEv);
+        }
         const auto cosTheta{1.0F - 2.0F * Uniform(gLaunchParams.seed, photonKey, 0U, 20U, draw++)};
         const auto sinTheta{sqrtf(fmaxf(0.0F, 1.0F - cosTheta * cosTheta))};
         const auto phi{6.28318530717958647692F * Uniform(gLaunchParams.seed, photonKey, 0U, 20U, draw++)};
@@ -452,6 +459,10 @@ __device__ auto GeneratePhoton(const DeviceOpticalEmission& emission, std::uint3
         photon.direction = localDirection;
         photon.polarization = localPolarization;
 
+        if (shifting) {
+            photon.timeNs -= emission.decayTimeNs * logf(Uniform(gLaunchParams.seed, photonKey, 0U, 20U, draw++));
+            return photon;
+        }
         const auto positionFraction{emission.charge == 0.0F ? 1.0F :
                                                               Uniform(gLaunchParams.seed, photonKey, 0U, 20U, draw++)};
         photon.positionMm = Add(emission.positionMm, Scale(emission.stepDeltaMm, positionFraction));
@@ -778,8 +789,37 @@ __global__ auto __raygen__rg() -> void {
 
         const auto absorptionDistance{
             SampleAbsorption(*currentMaterial, photon.energyEv, gLaunchParams.seed, photonKey, bounce)};
-        if (absorptionDistance < distance) {
-            photon.timeNs += absorptionDistance / velocity;
+        auto bulkDistance{absorptionDistance};
+        auto wlsChannel{0U};
+        for (unsigned channel{}; channel < currentMaterial->wlsChannelCount; ++channel) {
+            const auto& lengths{currentMaterial->wlsAbsLengthMm.at(channel)};
+            if (lengths.count == 0U) {
+                continue;
+            }
+            const auto length{SampleProperty(lengths, photon.energyEv, CUDART_INF_F)};
+            const auto u{fminf(Uniform(gLaunchParams.seed, photonKey, bounce, 30U + channel, 0U), 0x1.fffffep-1F)};
+            const auto path{-length * logf(u)};
+            if (path < bulkDistance) {
+                bulkDistance = path;
+                wlsChannel = channel + 1U;
+            }
+        }
+        if (bulkDistance < distance) {
+            photon.timeNs += bulkDistance / velocity;
+            if (wlsChannel != 0U) {
+                const auto& spectrum{currentMaterial->wlsSpectrum.at(wlsChannel - 1U)};
+                if (spectrum.count != 0U && photon.energyEv >= spectrum.energyEv[0]) {
+                    gLaunchParams.hits[photonID] = {Add(position, Scale(direction, bulkDistance)),
+                                                    photon.timeNs,
+                                                    {},
+                                                    photon.energyEv,
+                                                    photon.eventID,
+                                                    photon.photonID,
+                                                    currentVolumeID,
+                                                    wlsChannel};
+                    gLaunchParams.hitFlags[photonID] = 1;
+                }
+            }
             RecordAbsorbed(photonEventIndex);
             break;
         }

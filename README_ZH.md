@@ -343,7 +343,13 @@ G4GO/
 
 Geant4 始终是几何和材料的真值来源。GPU backend 启动时，scene exporter 把 Geant4 solid 转成 OptiX mesh，并保留 placement、material、surface、copy number 和父子关系；Geant4 继续负责非光学粒子的物理过程和 event 生命周期。
 
-当前 GPU 边界输运支持 `glisur`/`unified` model、`polished`/`ground` finish、`dielectric_metal`/`dielectric_dielectric` surface，以及带偏振的 Fresnel 反射、折射、全反射和常用表面概率属性。Rayleigh、Mie、WLS、LUT、DAVIS、dichroic、coated surface 和 painted finish 等尚未实现的配置会在 scene export 阶段明确报错。
+当前 GPU 边界输运支持 `glisur`/`unified` model、`polished`/`ground` finish、`dielectric_metal`/`dielectric_dielectric` surface，以及带偏振的 Fresnel 反射、折射、全反射和常用表面概率属性。Rayleigh、Mie、LUT、DAVIS、dichroic、coated surface 和 painted finish 等尚未实现的配置会在 scene export 阶段明确报错。
+
+切伦科夫发射由材料的 `RINDEX` 和带电粒子的速度决定。GPU 接受单精度速度舍入到光速的相对论极限。
+
+两个后端均从 Geant4 材料属性表读取波长位移参数。`WLSABSLENGTH` 给出吸收长度随光子能量的变化，`WLSCOMPONENT` 给出再发射相对强度随能量的变化，`WLSTIMECONSTANT` 给出发射延迟。`delta` 时间分布使用固定延迟，`exponential` 分布使用该常数作为平均延迟。省略 `WLSMEANNUMBERPHOTONS` 时，每次满足能量条件的吸收产生一个光子。设置该参数时，光子数服从指定均值的泊松分布。仅设置吸收长度时，光子被吸收后终止。第二个过程在同名属性后加 `2`。两个过程与普通吸收及边界竞争，再发射光子的能量上限为被吸收光子的能量。
+
+GPU 的 `generated` 和 ROOT 的 `nGenOptPho` 包含波长位移次级光子，`captured` 记录 Geant4 交给 GPU 的光子数。每次波长位移吸收均计入 `absorbed`，每个事件的光子上限包含再发射的光子。
 
 ## WSL2 下的 OptiX 问题
 

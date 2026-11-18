@@ -15,6 +15,7 @@ enum class OpticalEmissionType : std::uint8_t {
     Direct,
     Cerenkov,
     Scintillation,
+    WavelengthShift,
 };
 
 enum class PhotonTransportStatisticField : std::uint8_t {

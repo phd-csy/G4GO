@@ -31,7 +31,8 @@ struct DevicePhotonHit {
 
     std::uint32_t eventID{};
     std::uint32_t photonID{};
-    std::uint32_t sensorID{};
+    std::uint32_t targetID{};   // Sensor copy number or volume index at WLS absorption.
+    std::uint32_t wlsChannel{}; // Zero for a detection, one or two for a WLS interaction.
 };
 
 struct alignas(16) DeviceOpticalEmission {
@@ -78,6 +79,9 @@ struct DeviceMaterial {
     DeviceProperty groupVelocityMmPerNs{};
     DeviceProperty absLengthMm{};
     std::array<DeviceProperty, 3> scintillationSpectrum{};
+    std::uint32_t wlsChannelCount{};
+    std::array<DeviceProperty, 2> wlsAbsLengthMm{};
+    std::array<DeviceProperty, 2> wlsSpectrum{};
 };
 
 struct DeviceSurface {
@@ -186,7 +190,7 @@ struct OptixLaunchParams {
 };
 
 static_assert(sizeof(DevicePhoton) == 60);
-static_assert(sizeof(DevicePhotonHit) == 44);
+static_assert(sizeof(DevicePhotonHit) == 48);
 static_assert(sizeof(DeviceOpticalEmission) == 128);
 
 } // namespace G4GO::Optical

@@ -345,7 +345,13 @@ G4GO/
 
 Geant4 remains the source of truth for geometry and materials. When the GPU backend starts, the scene exporter converts Geant4 solids into OptiX meshes while preserving placements, materials, surfaces, copy numbers, and parent relationships. Geant4 continues to own non-optical particle physics and the event lifecycle.
 
-The current GPU boundary transport supports the `glisur` and `unified` models, `polished` and `ground` finishes, `dielectric_metal` and `dielectric_dielectric` surfaces, polarized Fresnel reflection and refraction, total internal reflection, and common surface-probability properties. Unsupported configurations such as Rayleigh, Mie, WLS, LUT, DAVIS, dichroic and coated surfaces, and painted finishes produce an explicit error during scene export.
+The current GPU boundary transport supports the `glisur` and `unified` models, `polished` and `ground` finishes, `dielectric_metal` and `dielectric_dielectric` surfaces, polarized Fresnel reflection and refraction, total internal reflection, and common surface-probability properties. Unsupported configurations such as Rayleigh, Mie, LUT, DAVIS, dichroic and coated surfaces, and painted finishes produce an explicit error during scene export.
+
+Cherenkov emission uses the material's `RINDEX` and the charged particle's speed. The GPU accepts the relativistic limit when single-precision velocity rounds to the speed of light.
+
+Both backends read wavelength shifting from the Geant4 material properties table. Supply `WLSABSLENGTH` (length versus photon energy), `WLSCOMPONENT` (relative emission intensity versus energy), and `WLSTIMECONSTANT`. The `delta` profile adds the time constant to each emission time and the `exponential` profile uses it as the mean delay. The optional `WLSMEANNUMBERPHOTONS` selects a Poisson yield. Omitting it produces one photon per eligible absorption. An absorption length alone produces absorption without re-emission. Append `2` to the property names for the second process. Both channels compete with ordinary absorption and boundaries. The emitted energy is limited by the absorbed energy.
+
+On the GPU, `generated` and the ROOT column `nGenOptPho` include WLS secondaries. `captured` counts photons transferred from Geant4. Each WLS absorption counts in `absorbed`, including absorptions followed by re-emission. The per-event photon limit also applies to WLS descendants.
 
 ## OptiX troubleshooting on WSL2
 

@@ -18,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -775,6 +776,103 @@ public:
     }
 
     auto CompleteOldestBatch() -> PhotonTransportOutput {
+        std::vector<DevicePhotonHit> shifts;
+        auto result{CompleteWave(shifts)};
+        if (shifts.empty()) {
+            return result;
+        }
+
+        // Compaction preserves launch order. Assign secondary IDs per event in parent order so
+        // a different batch composition or worker count cannot change the children's random streams.
+        std::vector<std::uint32_t> eventIDs;
+        std::unordered_map<std::uint32_t, std::uint32_t> eventIndices;
+        for (const auto& event : result.eventStatistics) {
+            eventIndices.emplace(event.eventID, static_cast<std::uint32_t>(eventIDs.size()));
+            eventIDs.push_back(event.eventID);
+        }
+        std::vector<std::uint64_t> nextIDs(eventIDs.size());
+        for (std::size_t i{}; i < fSlot->hostLaunchParams.emissionCount; ++i) {
+            const auto& source{fSlot->hostEmissions[i]};
+            auto& next{nextIDs.at(fSlot->hostEmissionEventIndices[i])};
+            next = std::max(next, static_cast<std::uint64_t>(source.firstPhotonID) + source.photonCount);
+        }
+
+        while (not shifts.empty()) {
+            std::vector<OpticalEmission> emissions;
+            std::vector<std::uint32_t> indices;
+            emissions.reserve(shifts.size());
+            indices.reserve(shifts.size());
+            for (const auto& site : shifts) {
+                const auto index{eventIndices.at(site.eventID)};
+                const auto& volume{fSceneAddress->Volumes().at(site.targetID)};
+                const auto channel{site.wlsChannel - 1U};
+                const auto& wls{fSceneAddress->Materials().at(volume.materialID).wavelengthShifts.at(channel)};
+                std::uint64_t count{1};
+                if (wls.meanPhotons) {
+                    if (*wls.meanPhotons == 0.) {
+                        continue;
+                    }
+                    std::seed_seq seeds{static_cast<std::uint32_t>(fConfiguration.seed),
+                                        static_cast<std::uint32_t>(fConfiguration.seed >> 32U), site.eventID,
+                                        site.photonID};
+                    std::mt19937_64 engine{seeds};
+                    count = std::poisson_distribution<std::uint64_t>{*wls.meanPhotons}(engine);
+                    if (count == 0) {
+                        continue;
+                    }
+                }
+                auto& next{nextIDs.at(index)};
+                if (next + count > fConfiguration.maxPhotonsPerEvent) {
+                    throw std::runtime_error("WLS exceeds the photon limit for event " + std::to_string(site.eventID));
+                }
+                OpticalEmission emission{};
+                emission.type = OpticalEmissionType::WavelengthShift;
+                emission.positionMm = site.positionMm;
+                emission.timeNs = site.timeNs + (wls.exponentialTime ? 0.0F : wls.timeConstantNs);
+                emission.decayTimeNs = wls.exponentialTime ? wls.timeConstantNs : 0.0F;
+                emission.energyEv = site.energyEv;
+                emission.eventID = site.eventID;
+                emission.firstPhotonID = static_cast<std::uint32_t>(next);
+                emission.photonCount = static_cast<std::uint32_t>(count);
+                emission.volumeID = volume.volumeID;
+                emission.materialID = volume.materialID;
+                emission.spectrumID = channel;
+                next += count;
+                emissions.emplace_back(emission);
+                indices.emplace_back(index);
+            }
+            if (emissions.empty()) {
+                break;
+            }
+            shifts.clear();
+            EnqueueEmissions(*fSceneAddress, {emissions, eventIDs, indices});
+            auto wave{CompleteWave(shifts)};
+            AddSecondaryStatistics(result.statistics, wave.statistics);
+            for (std::size_t i{}; i < eventIDs.size(); ++i) {
+                AddSecondaryStatistics(result.eventStatistics.at(i).statistics, wave.eventStatistics.at(i).statistics);
+            }
+            result.performance.Accumulate(wave.performance);
+            result.detections.insert(result.detections.end(), wave.detections.begin(), wave.detections.end());
+        }
+        return result;
+    }
+
+private:
+    static auto AddSecondaryStatistics(PhotonTransportStatistics& total, const PhotonTransportStatistics& wave)
+        -> void {
+        total.generatedCount += wave.capturedCount;
+        total.detectedCount += wave.detectedCount;
+        total.absorbedCount += wave.absorbedCount;
+        total.escapedCount += wave.escapedCount;
+        total.truncatedCount += wave.truncatedCount;
+        total.invalidStateCount += wave.invalidStateCount;
+        total.zeroStepCount += wave.zeroStepCount;
+        total.maxBounceCount = std::max(total.maxBounceCount, wave.maxBounceCount);
+        total.transportTimeMs += wave.transportTimeMs;
+        total.validFields |= StatisticFieldBit(PhotonTransportStatisticField::Generated);
+    }
+
+    auto CompleteWave(std::vector<DevicePhotonHit>& shifts) -> PhotonTransportOutput {
         if (not fSlot->busy) {
             throw std::logic_error("OptiX transport queue is empty");
         }
@@ -862,6 +960,10 @@ public:
         output.detections.reserve(compactHitCount);
         for (std::size_t i{}; i < compactHitCount; i++) {
             const auto& hit{slot.hostCompactHits[i]};
+            if (hit.wlsChannel != 0U) {
+                shifts.push_back(hit);
+                continue;
+            }
             output.detections.emplace_back(PhotonDetection{
                 {hit.positionMm.at(0), hit.positionMm.at(1), hit.positionMm.at(2)},
                 hit.timeNs,
@@ -869,7 +971,7 @@ public:
                 hit.energyEv,
                 hit.eventID,
                 hit.photonID,
-                hit.sensorID,
+                hit.targetID,
             });
         }
         output.performance.hostHitCompactionMs =
@@ -1044,17 +1146,27 @@ private:
         std::vector<DeviceMaterial> materials{};
         materials.reserve(scene.Materials().size());
         for (const auto& material : scene.Materials()) {
-            materials.emplace_back(DeviceMaterial{
-                UploadProperty(material.rindex, fSceneAllocations),
-                material.rindexMax,
-                UploadProperty(material.groupVelocityMmPerNs, fSceneAllocations),
-                UploadProperty(material.absLengthMm, fSceneAllocations),
-                {
-                                                           UploadSpectrumProperty(material.scintillationSpectrum.at(0), fSceneAllocations),
-                                                           UploadSpectrumProperty(material.scintillationSpectrum.at(1), fSceneAllocations),
-                                                           UploadSpectrumProperty(material.scintillationSpectrum.at(2), fSceneAllocations),
-                                                           },
-            });
+            auto& device{materials.emplace_back()};
+            device.rindex = UploadProperty(material.rindex, fSceneAllocations);
+            device.rindexMax = material.rindexMax;
+            device.groupVelocityMmPerNs = UploadProperty(material.groupVelocityMmPerNs, fSceneAllocations);
+            device.absLengthMm = UploadProperty(material.absLengthMm, fSceneAllocations);
+            for (std::size_t i{}; i < material.scintillationSpectrum.size(); ++i) {
+                device.scintillationSpectrum.at(i) =
+                    UploadSpectrumProperty(material.scintillationSpectrum.at(i), fSceneAllocations);
+            }
+            for (std::size_t channel{}; channel < material.wavelengthShifts.size(); ++channel) {
+                const auto& wls{material.wavelengthShifts.at(channel)};
+                if (wls.absLengthMm.Empty()) {
+                    continue;
+                }
+                device.wlsChannelCount = static_cast<std::uint32_t>(channel + 1U);
+                device.wlsAbsLengthMm.at(channel) = UploadProperty(wls.absLengthMm, fSceneAllocations);
+                device.wlsSpectrum.at(channel) = UploadSpectrumProperty(wls.spectrum, fSceneAllocations);
+                if (not wls.spectrum.Empty() and device.wlsSpectrum.at(channel).count == 0) {
+                    throw std::runtime_error("invalid WLS emission spectrum in " + material.name);
+                }
+            }
         }
         return materials;
     }

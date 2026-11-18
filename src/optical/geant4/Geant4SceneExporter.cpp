@@ -6,6 +6,7 @@
 #include "G4LogicalVolume.hh"
 #include "G4Material.hh"
 #include "G4MaterialPropertiesTable.hh"
+#include "G4OpticalParameters.hh"
 #include "G4OpticalSurface.hh"
 #include "G4Polyhedron.hh"
 #include "G4ReplicaNavigation.hh"
@@ -535,9 +536,54 @@ private:
         opticalMaterial.name = material->GetName();
         const auto* table{material->GetMaterialPropertiesTable()};
         if (table != nullptr) {
-            RejectUnsupportedProperties(
-                table, {"RAYLEIGH", "MIEHG", "WLSABSLENGTH", "WLSCOMPONENT", "WLSABSLENGTH2", "WLSCOMPONENT2"},
-                "material " + material->GetName());
+            RejectUnsupportedProperties(table, {"RAYLEIGH", "MIEHG"}, "material " + material->GetName());
+            const auto* parameters{G4OpticalParameters::Instance()};
+            for (std::size_t i{}; i < opticalMaterial.wavelengthShifts.size(); ++i) {
+                const std::string suffix{i == 0 ? "" : "2"};
+                if (not parameters->GetProcessActivation("OpWLS" + suffix)) {
+                    continue;
+                }
+                auto& wls{opticalMaterial.wavelengthShifts.at(i)};
+                wls.absLengthMm = ReadProperty(table, ("WLSABSLENGTH" + suffix).c_str(), mm);
+                if (wls.absLengthMm.Empty()) {
+                    continue;
+                }
+                for (auto& length : wls.absLengthMm.values) {
+                    if (not(length > 0.0F)) {
+                        throw std::runtime_error("invalid WLS absorption length in " + material->GetName());
+                    }
+                    length = std::min(length, std::numeric_limits<float>::max());
+                }
+                wls.spectrum = ReadProperty(table, ("WLSCOMPONENT" + suffix).c_str(), 1.0);
+                if (wls.spectrum.Empty()) {
+                    continue;
+                }
+                if (not std::ranges::all_of(
+                        wls.spectrum.values,
+                        [](float intensity) { return std::isfinite(intensity) and intensity >= 0.0F; }) or
+                    not std::ranges::any_of(wls.spectrum.values, [](float intensity) { return intensity > 0.0F; })) {
+                    throw std::runtime_error("invalid WLS emission intensity in " + material->GetName());
+                }
+                const auto meanName{"WLSMEANNUMBERPHOTONS" + suffix};
+                if (table->ConstPropertyExists(meanName)) {
+                    wls.meanPhotons = table->GetConstProperty(meanName);
+                    if (not std::isfinite(*wls.meanPhotons) or *wls.meanPhotons < 0.0 or
+                        *wls.meanPhotons > std::numeric_limits<std::uint32_t>::max()) {
+                        throw std::runtime_error("invalid " + meanName + " in " + material->GetName());
+                    }
+                }
+                const auto timeName{"WLSTIMECONSTANT" + suffix};
+                if (not table->ConstPropertyExists(timeName)) {
+                    throw std::runtime_error("missing " + timeName + " in " + material->GetName());
+                }
+                const auto delay{table->GetConstProperty(timeName) / ns};
+                if (not std::isfinite(delay) or delay < 0.0 or delay > std::numeric_limits<float>::max()) {
+                    throw std::runtime_error("invalid " + timeName + " in " + material->GetName());
+                }
+                const auto profile{i == 0 ? parameters->GetWLSTimeProfile() : parameters->GetWLS2TimeProfile()};
+                wls.timeConstantNs = static_cast<float>(delay);
+                wls.exponentialTime = profile == "exponential";
+            }
             opticalMaterial.rindex = ReadProperty(table, "RINDEX", 1.0);
             if (not opticalMaterial.rindex.Empty()) {
                 if (opticalMaterial.rindex.energyEv.size() != opticalMaterial.rindex.values.size()) {

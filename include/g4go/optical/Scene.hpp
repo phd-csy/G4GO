@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,14 @@ struct PropertyTable {
     auto Constant() const -> bool;
 };
 
+struct WavelengthShift {
+    PropertyTable absLengthMm{};
+    PropertyTable spectrum{};
+    std::optional<double> meanPhotons{};
+    float timeConstantNs{};
+    bool exponentialTime{};
+};
+
 struct Material {
     std::string name{};
     PropertyTable rindex{};
@@ -73,6 +82,7 @@ struct Material {
     PropertyTable groupVelocityMmPerNs{};
     PropertyTable absLengthMm{};
     std::array<PropertyTable, 3> scintillationSpectrum{};
+    std::array<WavelengthShift, 2> wavelengthShifts{};
 };
 
 struct Surface {
