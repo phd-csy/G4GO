@@ -365,7 +365,7 @@ __device__ auto GeneratePhoton(const DeviceOpticalEmission& emission, std::uint3
         }
         const auto preVelocity{emission.preVelocityMmPerNs};
         const auto beta{(preVelocity + 0.5F * emission.deltaVelocityMmPerNs) / speedOfLightMmPerNs};
-        if (!(beta > 0.0F) || !(beta < 1.0F) || material->rindex.count == 0) {
+        if (!(beta > 0.0F) || beta > 1.0F || material->rindex.count == 0) {
             return photon;
         }
         const auto& rindex{material->rindex};
