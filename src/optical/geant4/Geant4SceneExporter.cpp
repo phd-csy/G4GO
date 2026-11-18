@@ -190,7 +190,8 @@ private:
         volume.depth = depth;
         volume.transform = transform;
         const auto* sensitiveDetector{logicalVolume->GetSensitiveDetector()};
-        if (dynamic_cast<const G4GO::Detector::SensorSD*>(sensitiveDetector) != nullptr) {
+        if (dynamic_cast<const G4GO::Detector::SensorSD*>(sensitiveDetector) != nullptr and
+            sensitiveDetector->isActive()) {
             volume.sensorID = volume.copyNo;
         }
 

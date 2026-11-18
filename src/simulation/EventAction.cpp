@@ -1,10 +1,9 @@
 #include "g4go/simulation/EventAction.hpp"
 
 #include "G4Event.hh"
-#include "G4RunManager.hh"
+#include "G4HCofThisEvent.hh"
 #include "G4SDManager.hh"
 #include "G4SystemOfUnits.hh"
-#include "g4go/detector/DetectorConstruction.hpp"
 #include "g4go/detector/ScintillatorHit.hpp"
 #include "g4go/detector/SensorHit.hpp"
 #include "g4go/optical/geant4/Geant4EventAdapter.hpp"
@@ -25,30 +24,31 @@ auto EventAction::BeginOfEventAction(const G4Event* event) -> void { fAdapter->B
 auto EventAction::EndOfEventAction(const G4Event* event) -> void {
     const auto transportFuture{fAdapter->EndEvent()};
 
-    auto scintillatorHitsCollectionID{G4SDManager::GetSDMpointer()->GetCollectionID("ScintillatorHitsCollection")};
-    auto scintillatorHC{
-        static_cast<G4GO::Detector::ScintillatorHC*>(event->GetHCofThisEvent()->GetHC(scintillatorHitsCollectionID))};
-
-    auto sensorHitsCollectionID{G4SDManager::GetSDMpointer()->GetCollectionID("SensorHitsCollection")};
-    auto sensorHC{static_cast<G4GO::Detector::SensorHC*>(event->GetHCofThisEvent()->GetHC(sensorHitsCollectionID))};
-
-    const auto moduleID{static_cast<const G4GO::Detector::DetectorConstruction*>(
-                            G4RunManager::GetRunManager()->GetUserDetectorConstruction())
-                            ->ModuleID()};
+    auto* collections{event->GetHCofThisEvent()};
+    const auto collection{[collections](const char* name) -> G4VHitsCollection* {
+        if (collections == nullptr) {
+            return nullptr;
+        }
+        const auto id{G4SDManager::GetSDMpointer()->GetCollectionID(name)};
+        return id >= 0 and static_cast<std::size_t>(id) < collections->GetCapacity() ? collections->GetHC(id) : nullptr;
+    }};
+    const auto* scintillatorHC{static_cast<G4GO::Detector::ScintillatorHC*>(collection("ScintillatorHitsCollection"))};
+    const auto* sensorHC{static_cast<G4GO::Detector::SensorHC*>(collection("SensorHitsCollection"))};
     const auto eventID{event->GetEventID()};
     const auto generatedPhotonCount{static_cast<int>(fAdapter->EventStatistics().generatedCount)};
     std::vector<ScintillatorHitOutput> scintillatorHits{};
-    scintillatorHits.reserve(moduleID);
-    for (int i{}; i < moduleID; ++i) {
-        const auto energyDeposit{scintillatorHC->GetVector()->at(static_cast<std::size_t>(i))->EnergyDeposit()};
+    const auto moduleCount{scintillatorHC ? scintillatorHC->entries() : 0U};
+    scintillatorHits.reserve(moduleCount);
+    for (std::size_t i{}; i < moduleCount; ++i) {
+        const auto energyDeposit{(*scintillatorHC)[i]->EnergyDeposit()};
         if (energyDeposit > 0.) {
-            scintillatorHits.emplace_back(
-                ScintillatorHitOutput{eventID, i, static_cast<float>(energyDeposit), generatedPhotonCount});
+            scintillatorHits.emplace_back(ScintillatorHitOutput{
+                eventID, static_cast<int>(i), static_cast<float>(energyDeposit), generatedPhotonCount});
         }
     }
 
     std::vector<SensorHitOutput> sensorHits{};
-    if (not transportFuture.valid()) {
+    if (sensorHC != nullptr and not transportFuture.valid()) {
         sensorHits.reserve(sensorHC->entries());
         for (std::size_t i{}; i < sensorHC->entries(); i++) {
             const auto* sensorHit{sensorHC->GetVector()->at(i)};
