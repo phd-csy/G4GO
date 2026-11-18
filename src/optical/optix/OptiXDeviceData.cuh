@@ -81,6 +81,7 @@ struct DeviceMaterial {
     std::array<DeviceProperty, 3> scintillationSpectrum{};
     std::uint32_t wlsChannelCount{};
     std::array<DeviceProperty, 2> wlsAbsLengthMm{};
+    std::array<const std::array<float, 2>*, 2> wlsSplineCorrectionMm{};
     std::array<DeviceProperty, 2> wlsSpectrum{};
 };
 

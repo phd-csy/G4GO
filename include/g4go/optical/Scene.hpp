@@ -69,6 +69,7 @@ struct PropertyTable {
 
 struct WavelengthShift {
     PropertyTable absLengthMm{};
+    std::vector<std::array<float, 2>> splineCorrectionMm{};
     PropertyTable spectrum{};
     std::optional<double> meanPhotons{};
     float timeConstantNs{};

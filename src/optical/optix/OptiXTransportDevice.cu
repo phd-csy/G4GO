@@ -195,11 +195,12 @@ __device__ auto ResolveTopology(std::uint32_t currentVolumeID, std::uint32_t hit
     return invalidID;
 }
 
-__device__ auto SampleProperty(const DeviceProperty& property, float energy, float defaultValue) -> float {
+__device__ auto SampleProperty(const DeviceProperty& property, float energy, float defaultValue,
+                               const std::array<float, 2>* spline = nullptr) -> float {
     if (property.count == 0 || property.energyEv == nullptr || property.values == nullptr) {
         return defaultValue;
     }
-    if (property.constant != 0 || energy <= property.energyEv[0]) {
+    if ((property.constant != 0 && spline == nullptr) || energy <= property.energyEv[0]) {
         return property.values[0];
     }
     const auto last{property.count - 1U};
@@ -212,7 +213,12 @@ __device__ auto SampleProperty(const DeviceProperty& property, float energy, flo
     }
     const auto fraction{(energy - property.energyEv[index]) /
                         (property.energyEv[index + 1U] - property.energyEv[index])};
-    return property.values[index] + fraction * (property.values[index + 1U] - property.values[index]);
+    const auto linear{property.values[index] + fraction * (property.values[index + 1U] - property.values[index])};
+    if (spline == nullptr) {
+        return linear;
+    }
+    const auto& correction{spline[index]};
+    return linear + fraction * (1.0F - fraction) * ((1.0F - fraction) * correction[0] + fraction * correction[1]);
 }
 
 __device__ auto FindSurfaceID(std::uint32_t fromVolumeID, std::uint32_t toVolumeID) -> std::uint32_t {
@@ -796,7 +802,12 @@ __global__ auto __raygen__rg() -> void {
             if (lengths.count == 0U) {
                 continue;
             }
-            const auto length{SampleProperty(lengths, photon.energyEv, CUDART_INF_F)};
+            const auto length{SampleProperty(lengths, photon.energyEv, CUDART_INF_F,
+                                             currentMaterial->wlsSplineCorrectionMm.at(channel))};
+            if (!(length > 0.0F)) {
+                RecordInvalid(photonEventIndex);
+                return;
+            }
             const auto u{fminf(Uniform(gLaunchParams.seed, photonKey, bounce, 30U + channel, 0U), 0x1.fffffep-1F)};
             const auto path{-length * logf(u)};
             if (path < bulkDistance) {

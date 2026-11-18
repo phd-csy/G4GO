@@ -1162,6 +1162,8 @@ private:
                 }
                 device.wlsChannelCount = static_cast<std::uint32_t>(channel + 1U);
                 device.wlsAbsLengthMm.at(channel) = UploadProperty(wls.absLengthMm, fSceneAllocations);
+                device.wlsSplineCorrectionMm.at(channel) = DevicePointerAs<const std::array<float, 2>>(
+                    Upload<std::array<float, 2>>(wls.splineCorrectionMm, fSceneAllocations));
                 device.wlsSpectrum.at(channel) = UploadSpectrumProperty(wls.spectrum, fSceneAllocations);
                 if (not wls.spectrum.Empty() and device.wlsSpectrum.at(channel).count == 0) {
                     throw std::runtime_error("invalid WLS emission spectrum in " + material.name);

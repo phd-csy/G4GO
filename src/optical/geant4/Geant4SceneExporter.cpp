@@ -544,7 +544,8 @@ private:
                     continue;
                 }
                 auto& wls{opticalMaterial.wavelengthShifts.at(i)};
-                wls.absLengthMm = ReadProperty(table, ("WLSABSLENGTH" + suffix).c_str(), mm);
+                const auto lengthName{"WLSABSLENGTH" + suffix};
+                wls.absLengthMm = ReadProperty(table, lengthName.c_str(), mm);
                 if (wls.absLengthMm.Empty()) {
                     continue;
                 }
@@ -553,6 +554,10 @@ private:
                         throw std::runtime_error("invalid WLS absorption length in " + material->GetName());
                     }
                     length = std::min(length, std::numeric_limits<float>::max());
+                }
+                const auto* lengths{table->GetProperty(lengthName)};
+                if (lengths != nullptr and lengths->GetSpline()) {
+                    wls.splineCorrectionMm = ReadSplineCorrections(*lengths);
                 }
                 wls.spectrum = ReadProperty(table, ("WLSCOMPONENT" + suffix).c_str(), 1.0);
                 if (wls.spectrum.Empty()) {
@@ -733,6 +738,27 @@ private:
             point.y() / mm,
             point.z() / mm,
         };
+    }
+
+    static auto ReadSplineCorrections(const G4MaterialPropertyVector& lengths) -> std::vector<std::array<float, 2>> {
+        std::vector<std::array<float, 2>> corrections;
+        for (std::size_t i{1}; i < lengths.GetVectorLength(); ++i) {
+            const auto x0{lengths.Energy(i - 1)}, x1{lengths.Energy(i)};
+            const auto y0{lengths[i - 1]}, y1{lengths[i]};
+            // Inside each knot interval the difference from the chord is t(1-t) times a linear function.
+            // Recover that function from Geant4's own spline, including its endpoint conditions.
+            const auto residual{[&](double t) {
+                return (lengths.Value(std::lerp(x0, x1, t)) - std::lerp(y0, y1, t)) / (t * (1.0 - t) * mm);
+            }};
+            const auto first{residual(1.0 / 3.0)}, second{residual(2.0 / 3.0)};
+            const auto left{2.0 * first - second}, right{2.0 * second - first};
+            if (not std::isfinite(left) or not std::isfinite(right) or
+                std::max(std::abs(left), std::abs(right)) > std::numeric_limits<float>::max()) {
+                throw std::runtime_error("WLS absorption spline exceeds the GPU floating-point range");
+            }
+            corrections.push_back({static_cast<float>(left), static_cast<float>(right)});
+        }
+        return corrections;
     }
 
     static auto ReadProperty(const G4MaterialPropertiesTable* table, const char* name, double unit) -> PropertyTable {
