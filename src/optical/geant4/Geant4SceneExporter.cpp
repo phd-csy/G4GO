@@ -11,6 +11,7 @@
 #include "G4ReplicaNavigation.hh"
 #include "G4SystemOfUnits.hh"
 #include "G4ThreeVector.hh"
+#include "G4Tubs.hh"
 #include "G4VPVParameterisation.hh"
 #include "G4VPhysicalVolume.hh"
 #include "G4VSolid.hh"
@@ -119,6 +120,11 @@ private:
             const PlacementState savedPlacement{*mutableVolume};
             G4ReplicaNavigation replicaNavigation{};
             auto* parameterisation{physicalVolume->IsParameterised() ? physicalVolume->GetParameterisation() : nullptr};
+            EAxis axis{};
+            G4int replicas{};
+            G4double width{}, offset{};
+            G4bool consuming{};
+            physicalVolume->GetReplicationData(axis, replicas, width, offset, consuming);
             std::uint32_t firstVolumeID{InvalidID};
             for (int copyNo{}; copyNo < multiplicity; copyNo++) {
                 mutableVolume->SetCopyNo(copyNo);
@@ -140,6 +146,17 @@ private:
                                                  std::string{physicalVolume->GetName()});
                     }
                     copySolid->ComputeDimensions(parameterisation, copyNo, mutableVolume);
+                } else if (axis == kRho) {
+                    const auto* tube{dynamic_cast<const G4Tubs*>(solid)};
+                    if (tube == nullptr) {
+                        throw std::runtime_error("radial replica requires a G4Tubs solid: " +
+                                                 std::string{physicalVolume->GetName()});
+                    }
+                    copySolid = std::make_unique<G4Tubs>(tube->GetName(), offset + copyNo * width,
+                                                         offset + (copyNo + 1) * width, tube->GetZHalfLength(),
+                                                         tube->GetStartPhiAngle(), tube->GetDeltaPhiAngle());
+                }
+                if (copySolid) {
                     solid = copySolid.get();
                 }
                 const auto* material{physicalVolume->GetLogicalVolume()->GetMaterial()};
@@ -176,7 +193,8 @@ private:
         const auto transform{Compose(parentTransform, physicalVolume)};
         const auto* logicalVolume{physicalVolume->GetLogicalVolume()};
 
-        const auto geometryID{AddGeometry(solid, not physicalVolume->IsParameterised())};
+        const auto geometryID{
+            AddGeometry(solid, not physicalVolume->IsParameterised() and solid == logicalVolume->GetSolid())};
         const auto materialID{AddMaterial(material)};
 
         Volume volume{};
