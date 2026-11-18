@@ -59,7 +59,17 @@ auto RunAction::BeginOfRunAction(const G4Run* run) -> void {
     }
     const std::filesystem::path fileName{fConfiguredFileName};
     const auto directory{fileName.parent_path() / fileName.stem()};
-    std::filesystem::create_directories(directory);
+    if (fIsMaster or IsMaster()) {
+        const auto absoluteDirectory{std::filesystem::weakly_canonical(std::filesystem::absolute(directory))};
+        if (not fOutputDirectories.contains(absoluteDirectory)) {
+            std::filesystem::create_directories(absoluteDirectory.parent_path());
+            if (not std::filesystem::create_directory(absoluteDirectory)) {
+                throw std::runtime_error("analysis output directory already exists: " + absoluteDirectory.string() +
+                                         ". Choose a new output name or parent directory.");
+            }
+            fOutputDirectories.insert(absoluteDirectory);
+        }
+    }
     auto output{directory / fileName.filename()};
     if (run->GetRunID() > 0) {
         output = directory /

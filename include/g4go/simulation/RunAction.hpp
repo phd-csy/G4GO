@@ -2,7 +2,9 @@
 
 #include "G4UserRunAction.hh"
 
+#include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -35,6 +37,7 @@ private:
     std::vector<float> fDummySensorTimes{};
     bool fIsMaster;
     std::string fConfiguredFileName{};
+    std::set<std::filesystem::path> fOutputDirectories{};
 };
 
 } // namespace G4GO::Simulation

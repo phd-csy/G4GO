@@ -181,8 +181,13 @@ auto main(int argc, char** argv) -> int {
 
     G4UImanager* uiManager{G4UImanager::GetUIpointer()};
 
-    const auto commandStatus{
-        uiManager->ApplyCommand("/control/execute " + options.macroFile.value_or("scripts/vis.mac"))};
+    G4int commandStatus{};
+    try {
+        commandStatus = uiManager->ApplyCommand("/control/execute " + options.macroFile.value_or("scripts/vis.mac"));
+    } catch (const std::exception& error) {
+        G4cerr << "[g4go] " << error.what() << G4endl;
+        commandStatus = 1;
+    }
 #ifdef G4GO_USE_UIVIS
     if (ui != nullptr) {
         if (commandStatus == 0) {

@@ -156,7 +156,7 @@ After changing runtime files in `scripts/` or `test/`, run `cmake -S . -B build`
 
 ### Step 6: Find and inspect the output
 
-An analysis macro creates a directory named after the output stem under the requested parent directory. For example, `results/beam.root` writes worker files under `results/beam/`. Runs after run 0 append `_r<runID>` to the file stem to keep successive runs distinct. G4GO disables ROOT ntuple merging, so a multithreaded run produces a set of worker files:
+An analysis macro creates a directory named after the output stem under the requested parent directory. For example, `results/beam.root` writes worker files under `results/beam/`. The first run in each process requires a new output directory. For a second job, choose a different output name or parent directory. Runs after run 0 append `_r<runID>` to the file stem to keep successive runs distinct. G4GO disables ROOT ntuple merging, so a multithreaded run produces a set of worker files:
 
 ```text
 build/run_regression_eminus/

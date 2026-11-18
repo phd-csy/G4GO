@@ -156,7 +156,7 @@ cd build
 
 ### 第 6 步：找到并查看输出
 
-分析宏会在指定的父目录下创建与输出文件主名相同的目录。例如，`results/beam.root` 的输出位于 `results/beam/`。同一进程中，编号大于零的 run 会在文件主名后加上 `_r<runID>`，以便分别保留每次运行的数据。多线程运行按 worker 写入 ROOT 文件。
+分析宏会在指定的父目录下创建与输出文件主名相同的目录。例如，`results/beam.root` 的输出位于 `results/beam/`。每个进程首次写入时会独占新建的输出目录。再次启动作业时，请使用新的输出名或父目录。同一进程中，编号大于零的 run 会在文件主名后加上 `_r<runID>`，以便分别保留每次运行的数据。多线程运行按 worker 写入 ROOT 文件。
 
 ```text
 build/run_regression_eminus/
