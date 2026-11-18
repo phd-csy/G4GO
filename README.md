@@ -353,6 +353,8 @@ Both backends read wavelength shifting from the Geant4 material properties table
 
 On the GPU, `generated` and the ROOT column `nGenOptPho` include WLS secondaries. `captured` counts photons transferred from Geant4. Each WLS absorption counts in `absorbed`, including absorptions followed by re-emission. The per-event photon limit also applies to WLS descendants.
 
+Geant4 11.4.2 includes runnable optical examples under `examples/extended/optical`. The `/opnovice2/` commands belong to the example application. In a G4GO detector, set the corresponding properties on the Geant4 material table. [1 MeV electron and Cherenkov settings](https://raw.githubusercontent.com/Geant4/geant4/v11.4.2/examples/extended/optical/OpNovice2/electron.mac) · [Two WLS processes with a 7 eV photon](https://raw.githubusercontent.com/Geant4/geant4/v11.4.2/examples/extended/optical/OpNovice2/wls.mac) · [PMMA fibre material table in C++](https://raw.githubusercontent.com/Geant4/geant4/v11.4.2/examples/extended/optical/wls/src/WLSMaterials.cc)
+
 ## OptiX troubleshooting on WSL2
 
 On WSL2, the Windows host driver provides the OptiX runtime. The following error commonly means that `libnvoptix` in the loaded library does not export the entry point required by OptiX:

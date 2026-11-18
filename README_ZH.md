@@ -351,6 +351,8 @@ Geant4 始终是几何和材料的真值来源。GPU backend 启动时，scene e
 
 GPU 的 `generated` 和 ROOT 的 `nGenOptPho` 包含波长位移次级光子，`captured` 记录 Geant4 交给 GPU 的光子数。每次波长位移吸收均计入 `absorbed`，每个事件的光子上限包含再发射的光子。
 
+Geant4 11.4.2 的 `examples/extended/optical` 包含可运行的光学示例。`/opnovice2/` 命令由示例程序注册。在 G4GO 探测器中，相应参数通过 Geant4 材料属性表设置。[1 MeV 电子与切伦科夫参数](https://raw.githubusercontent.com/Geant4/geant4/v11.4.2/examples/extended/optical/OpNovice2/electron.mac) · [7 eV 光子与两个波长位移过程](https://raw.githubusercontent.com/Geant4/geant4/v11.4.2/examples/extended/optical/OpNovice2/wls.mac) · [PMMA 光纤的 C++ 材料表](https://raw.githubusercontent.com/Geant4/geant4/v11.4.2/examples/extended/optical/wls/src/WLSMaterials.cc)
+
 ## WSL2 下的 OptiX 问题
 
 WSL2 中，下面的错误表明当前加载的库缺少 OptiX 所需的入口。
