@@ -21,13 +21,14 @@ class Event(NamedTuple):
     ordered_hits_sha256: str
 
 
-def read_events(directory, threads, count):
+def read_events(directory, threads, count, run=0):
     crystals = {}
     sensors = {}
     hit = struct.Struct("<if")
     stem = "run_regression_eminus"
+    basename = f"{stem}_r{run}" if run else stem
     for worker in range(threads):
-        path = directory / stem / f"{stem}_t{worker}.root"
+        path = directory / stem / f"{basename}_t{worker}.root"
         if not path.is_file():
             raise RuntimeError(f"Missing ROOT output for worker {worker}: {path}")
         with ROOT.TFile.Open(str(path)) as source:
@@ -96,51 +97,49 @@ def main():
             "Expected exactly one /run/beamOn command in the electron-beam macro"
         )
     macro = output / "beam.mac"
-    macro.write_text(text, encoding="utf-8")
+    macro.write_text(text + f"\n/run/beamOn {args.events}\n", encoding="utf-8")
 
     runs = {}
+    jobs = [(1234, 1), (1234, 2), (1234, 6), (1235, 1), (1234 + (1 << 32), 1)]
     with (output / "events.csv").open("w", encoding="utf-8", newline="") as table:
         writer = csv.writer(table)
-        writer.writerow(("threads", "eventID", *Event._fields))
-        for threads in (1, 2, 6):
-            directory = output / f"{threads}t"
+        writer.writerow(("seed", "threads", "runID", "eventID", *Event._fields))
+        for seed, threads in jobs:
+            directory = output / f"{seed}-{threads}t"
             directory.mkdir()
             command = [
-                str(build / "g4go"),
-                "--seed",
-                "1234",
-                "--backend",
-                args.backend,
-                "--threads",
-                str(threads),
-                str(macro),
+                str(build / "g4go"), "--seed", str(seed), "--backend", args.backend,
+                "--threads", str(threads), str(macro),
             ]
             with (directory / "run.log").open("wb") as log:
-                subprocess.run(
-                    command,
-                    cwd=directory,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    check=True,
-                )
-            runs[threads] = read_events(directory, threads, args.events)
-            for event, record in sorted(runs[threads].items()):
-                writer.writerow((threads, event, *record))
+                subprocess.run(command, cwd=directory, stdout=log, stderr=subprocess.STDOUT, check=True)
+            for run in (0, 1):
+                events = read_events(directory, threads, args.events, run)
+                runs[seed, threads, run] = events
+                for event, record in sorted(events.items()):
+                    writer.writerow((seed, threads, run, event, *record))
 
-    differences = []
-    for threads in (2, 6):
+    for run in (0, 1):
         for event in range(args.events):
-            reference, candidate = runs[1][event], runs[threads][event]
-            if reference != candidate:
-                differences.append(
-                    f"FAIL event {event}, 1 vs {threads} workers: {reference} != {candidate}"
-                )
-                break
-    if differences:
-        raise SystemExit("\n".join(differences))
-    print(
-        f"PASS: {args.events} complete events match for 1, 2 and 6 workers ({args.backend}, seed 1234)"
-    )
+            reference = runs[1234, 1, run][event]
+            for threads in (2, 6):
+                candidate = runs[1234, threads, run][event]
+                if candidate != reference:
+                    raise SystemExit(f"FAIL run {run}, event {event}, 1 vs {threads} workers: "
+                                     f"{reference} != {candidate}")
+
+    seen = {}
+    for seed, threads in jobs:
+        if threads != 1:
+            continue
+        for run in (0, 1):
+            for event, record in runs[seed, threads, run].items():
+                key = (seed, run, event)
+                if record in seen:
+                    raise SystemExit(f"Repeated event history: {key} and {seen[record]}")
+                seen[record] = key
+    print(f"PASS: both {args.events}-event runs match for 1, 2 and 6 workers "
+          f"({args.backend}); {len(seen)} distinct histories across seeds and runs")
 
 
 if __name__ == "__main__":

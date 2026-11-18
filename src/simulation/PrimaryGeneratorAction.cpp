@@ -3,9 +3,12 @@
 #include "CLHEP/Random/MTwistEngine.h"
 #include "G4Event.hh"
 #include "G4GeneralParticleSource.hh"
+#include "G4Run.hh"
+#include "G4RunManager.hh"
 #include "Randomize.hh"
 
 #include <cstdint>
+#include <random>
 #include <stdexcept>
 #include <string>
 
@@ -17,15 +20,17 @@ PrimaryGeneratorAction::PrimaryGeneratorAction(std::uint64_t seed) :
     fSeed{seed} {}
 
 auto PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent) -> void {
-    const auto eventSeed{fSeed + static_cast<std::uint64_t>(anEvent->GetEventID())};
-    // MTwistEngine::setSeed replaces the state words but keeps the current draw index.
-    // Restore the initial position so the event cannot inherit a previous event's draws.
-    static const auto initialState{CLHEP::MTwistEngine{0L}.put()};
-    if (not G4Random::getTheEngine()->get(initialState)) {
+    const auto runID{G4RunManager::GetRunManager()->GetCurrentRun()->GetRunID()};
+    std::seed_seq seeds{static_cast<std::uint32_t>(fSeed), static_cast<std::uint32_t>(fSeed >> 32U),
+                        static_cast<std::uint32_t>(runID), static_cast<std::uint32_t>(anEvent->GetEventID())};
+    // CLHEP serializes the engine ID, 624 state words and the next draw index, in that order.
+    // Preserve the ID and start every event at the same index, independent of its worker's history.
+    static thread_local auto state{CLHEP::MTwistEngine{0L}.put()};
+    seeds.generate(state.begin() + 1, state.end() - 1);
+    if (not G4Random::getTheEngine()->get(state)) {
         throw std::runtime_error("Could not restore the MTwistEngine state for event " +
                                  std::to_string(anEvent->GetEventID()));
     }
-    G4Random::setTheSeed(static_cast<long>(eventSeed));
     fParticleGun->GeneratePrimaryVertex(anEvent);
 }
 

@@ -1,5 +1,7 @@
 #include "g4go/optical/geant4/OpticalBatchScheduler.hpp"
 
+#include "G4Run.hh"
+#include "G4RunManager.hh"
 #include "G4TransportationManager.hh"
 #include "Geant4SceneExporter.hpp"
 
@@ -8,9 +10,11 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -95,7 +99,14 @@ auto OpticalBatchScheduler::BeginRun() -> void {
         std::rethrow_exception(error);
     }
 
-    fGpuThread = std::thread([this]() -> void { ProcessBatches(); });
+    const auto runID{G4RunManager::GetRunManager()->GetCurrentRun()->GetRunID()};
+    std::seed_seq seeds{static_cast<std::uint32_t>(fConfiguration.seed),
+                        static_cast<std::uint32_t>(fConfiguration.seed >> 32U), static_cast<std::uint32_t>(runID)};
+    std::array<std::uint32_t, 2> key{};
+    seeds.generate(key.begin(), key.end());
+    auto runConfiguration{fConfiguration};
+    runConfiguration.seed = (static_cast<std::uint64_t>(key[1]) << 32U) | key[0];
+    fGpuThread = std::thread([this, runConfiguration]() -> void { ProcessBatches(runConfiguration); });
     fCondition.wait(lock, [this]() -> bool { return fReady; });
     if (fFailure != nullptr) {
         const auto error{fFailure};
@@ -555,8 +566,8 @@ auto OpticalBatchScheduler::EnqueueRequests(const std::vector<TransportRequest>&
 }
 #endif
 
-auto OpticalBatchScheduler::ProcessBatches() -> void {
 #ifdef G4GO_ENABLE_OPTIX
+auto OpticalBatchScheduler::ProcessBatches(const PhotonTransportConfig& runConfiguration) -> void {
     struct InFlightBatch {
         std::vector<TransportRequest> requests{};
         std::size_t photonCount{};
@@ -566,7 +577,7 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
     std::size_t photonCount{};
     std::optional<InFlightBatch> inFlightBatch{};
     try {
-        fPhotonTransport = std::make_unique<OptiXTransportHost>(fConfiguration);
+        fPhotonTransport = std::make_unique<OptiXTransportHost>(runConfiguration);
         fPhotonTransport->PrepareScene(fScene);
         {
             std::scoped_lock lock{fMutex};
@@ -616,8 +627,8 @@ auto OpticalBatchScheduler::ProcessBatches() -> void {
         FailPendingRequests(error);
         fCondition.notify_all();
     }
-#endif
 }
+#endif
 
 auto OpticalBatchScheduler::FailPendingRequests(const std::exception_ptr& error) -> void {
     std::deque<TransportRequest> pending{};

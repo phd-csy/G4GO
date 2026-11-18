@@ -58,8 +58,8 @@ private:
         std::chrono::steady_clock::time_point queuedAt{};
     };
 
-    auto ProcessBatches() -> void;
 #ifdef G4GO_ENABLE_OPTIX
+    auto ProcessBatches(const PhotonTransportConfig& runConfiguration) -> void;
     auto CompleteOldestBatch(std::vector<TransportRequest>& requests, std::size_t photonCount) -> void;
     auto CollectRequests(std::vector<TransportRequest>& requests, std::size_t& photonCount) -> bool;
     auto EnqueueRequests(const std::vector<TransportRequest>& requests) -> void;
