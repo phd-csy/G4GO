@@ -11,6 +11,7 @@
 #include "TSystem.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -18,10 +19,53 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace {
+
+using CrystalRecord = std::array<int, 3>;
+using SensorRecord = std::pair<int, std::uint64_t>;
+
+auto CheckEvents(const std::vector<CrystalRecord>& crystals, const std::vector<SensorRecord>& sensors,
+                 std::size_t expected, const std::string& backend) -> std::size_t {
+    std::set<std::pair<int, int>> modules;
+    std::map<int, int> detections;
+    for (const auto& [event, module, count] : crystals) {
+        if (event < 0 or module < 0 or count < 0 or not modules.emplace(event, module).second) {
+            throw std::runtime_error(backend + " invalid or duplicate CrystalHit at event " + std::to_string(event));
+        }
+        if (detections.emplace(event, count).first->second != count) {
+            throw std::runtime_error(backend + " inconsistent nOptPho at event " + std::to_string(event));
+        }
+    }
+    if (expected == 0) {
+        expected = detections.size();
+    }
+    if (detections.size() != expected or detections.empty() or
+        static_cast<std::size_t>(detections.rbegin()->first) != expected - 1) {
+        throw std::runtime_error(backend + " incomplete CrystalHit event coverage (expected " +
+                                 std::to_string(expected) + " events from ID 0)");
+    }
+    for (const auto& [event, count] : sensors) {
+        const auto found{detections.find(event)};
+        if (found == detections.end() or count == 0 or static_cast<std::uint64_t>(found->second) != count) {
+            throw std::runtime_error(backend + " invalid SensorHit or nOptPho mismatch at event " +
+                                     std::to_string(event));
+        }
+        detections.erase(found);
+    }
+    for (const auto& [event, count] : detections) {
+        if (count != 0) {
+            throw std::runtime_error(backend + " missing SensorHit at event " + std::to_string(event));
+        }
+    }
+    return expected;
+}
 
 auto ZScore(double pValue) -> double {
     return pValue == 0.0 ? std::numeric_limits<double>::infinity() : -TMath::NormQuantile(pValue / 2.0);
@@ -129,7 +173,8 @@ auto DrawComparison(const TH1D& cpuHistogram, const TH1D& gpuHistogram, const ch
 
 } // namespace
 
-auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const char* outputDirectory = ".") -> void {
+auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const char* outputDirectory = ".",
+                          std::size_t expectedEvents = 0) -> void {
     gROOT->SetBatch(kTRUE);
     gErrorIgnoreLevel = kWarning;
 
@@ -225,7 +270,27 @@ auto TestOpticalTransport(const char* cpuDataset, const char* gpuDataset, const 
         auto gpuOccupancyHistogram{gpuSensor.Histo1D(
             {"gpu_sensorOccupancy", "sensor occupancy;sensor ID;Entries", 64, 0.0, 64.0}, "sensorID")};
 
+        const auto crystalRecords{[](ROOT::RDF::RNode data) {
+            return data
+                .Define("crystalRecord", [](int e, int m, int n) { return CrystalRecord{e, m, n}; },
+                        {"eventID", "moduleID", "nOptPho"})
+                .Take<CrystalRecord>("crystalRecord");
+        }};
+        const auto sensorRecords{[](ROOT::RDF::RNode data) {
+            return data
+                .Define("sensorRecord", [](int e, std::uint64_t n) { return SensorRecord{e, n}; },
+                        {"eventID", "sensorCount"})
+                .Take<SensorRecord>("sensorRecord");
+        }};
+        auto cpuCrystals{crystalRecords(cpuData)};
+        auto gpuCrystals{crystalRecords(gpuData)};
+        auto cpuSensors{sensorRecords(cpuSensor)};
+        auto gpuSensors{sensorRecords(gpuSensor)};
+
         ROOT::RDF::RunGraphs({cpuNOptPhoHistogram, gpuNOptPhoHistogram, cpuTofHistogram, gpuTofHistogram});
+
+        const auto eventCount{CheckEvents(*cpuCrystals, *cpuSensors, expectedEvents, "CPU")};
+        CheckEvents(*gpuCrystals, *gpuSensors, eventCount, "GPU");
 
         const auto cpuEntries{static_cast<std::uint64_t>(cpuNOptPhoStats->GetN())};
         const auto gpuEntries{static_cast<std::uint64_t>(gpuNOptPhoStats->GetN())};

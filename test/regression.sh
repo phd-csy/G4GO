@@ -222,10 +222,14 @@ run_comparison() {
     local gpu_dataset="$4"
     local compare_call summary_file figure_name
 
-    compare_call="${compare_macro}(\"${cpu_reference_dataset}\",\"${gpu_dataset}\",\"${run_dir}\")"
+    compare_call="${compare_macro}(\"${cpu_reference_dataset}\",\"${gpu_dataset}\",\"${run_dir}\",${target_events})"
     local command_status=0
     run_logged "$log_file" "$root_executable" -l -b -q "$compare_call" || command_status=$?
 
+    if ((command_status != 0)) && [[ ! -f "${run_dir}/regression_summary.txt" ]]; then
+        tail -n 4 "$log_file" >&2
+        return "$command_status"
+    fi
     summary_file="${run_dir}/${label}_regression_summary.txt"
     mv -- "${run_dir}/regression_summary.txt" "$summary_file" || return 1
     for figure_name in noptpho_comparison.png tof_comparison.png edep_comparison.png; do
